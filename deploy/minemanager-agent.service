@@ -1,0 +1,47 @@
+# MineManager agent — the ONLY MineManager daemon on a node.
+#
+# systemd supervises the agent (auto-restart, start-on-boot); the agent in turn
+# supervises the Minecraft servers/proxies in their own tmux sessions. Do NOT
+# create per-server systemd units — that's the agent's job (see PLAN.md, §4).
+#
+# Install:
+#   sudo cp deploy/minemanager-agent.service /etc/systemd/system/
+#   sudoedit /etc/systemd/system/minemanager-agent.service   # set User + env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now minemanager-agent
+#
+# First enrollment: put the one-time token from the hub UI into the
+# EnvironmentFile as MM_ENROLL_TOKEN, start once, then remove it (the agent
+# persists the long-lived credential to identity.json and no longer needs it).
+
+[Unit]
+Description=MineManager agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Run as the unprivileged Minecraft user (NOT root). The agent spawns servers
+# as its own children under this user — no sudo/polkit needed.
+User=minecraft
+Group=minecraft
+
+# MM_HUB_URL, MM_ENROLL_TOKEN (first run only), MM_AGENT_DATA_DIR, etc.
+EnvironmentFile=/etc/minemanager/agent.env
+
+ExecStart=/opt/minemanager/venv/bin/minemanager-agent
+Restart=always
+RestartSec=3
+
+# Hardening (the agent needs to write only its data dir + the server dirs).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+# Grant write access to the agent's state dir and wherever your servers live.
+# Adjust ReadWritePaths to your server root(s), e.g. /srv/minecraft.
+ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft
+
+[Install]
+WantedBy=multi-user.target

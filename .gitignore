@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# MineManager local state / secrets (never commit)
+_devdata/
+_itest/
+*.db
+*.db-wal
+*.db-shm
+secret.key
+identity.json
+agent.env
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.idea/
+.vscode/

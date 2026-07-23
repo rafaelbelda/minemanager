@@ -1,0 +1,15 @@
+[project]
+name = "minemanager-shared"
+version = "0.1.0"
+description = "Shared wire-protocol models for MineManager hub and agent"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["minemanager_shared*"]

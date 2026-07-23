@@ -1,2 +1,60 @@
-# minemanager
-A local app with a web interface to manage Minecraft servers and proxy's
+# MineManager
+
+Self-hosted control plane for a small–medium Minecraft network running Paper/Vanilla
+servers and Velocity proxies, across one or more Linux machines.
+
+Notice: Being written with AI collaboration. In BETA.
+
+> Architecture, scope, and decisions live in [`PLAN.md`](PLAN.md). Read it first.
+
+## What it does (v1, manage-only)
+
+From a web UI, per server/proxy: **power** (start/stop/restart), a live
+**console** (real pty, RCON secondary), **file** management (jailed to the
+instance root), **log** tailing, and config editing. Works whether the node is
+local or remote — every node runs an agent; the hub talks to them over a
+persistent WebSocket.
+
+## Layout
+
+| Path       | What                                                              |
+|------------|------------------------------------------------------------------|
+| `shared/`  | Wire-protocol models shared by hub and agent (single source).    |
+| `hub/`     | FastAPI control plane: state (SQLite), agent registry, secrets.  |
+| `agent/`   | Per-node daemon: tmux supervisor, console, files, RCON.          |
+| `deploy/`  | systemd unit + install docs (the agent is the only daemon).      |
+
+## Process model in one line
+
+**systemd supervises the agent; the agent supervises the servers** (each in its
+own tmux session). The hub is the source of truth for *declared* state; agents
+own *runtime* state. See PLAN.md §4.
+
+## Dev quickstart
+
+```bash
+python -m pip install -e shared -e hub -e agent   # editable installs
+
+# terminal 1 — hub
+MM_DATA_DIR=./_devdata uvicorn minemanager_hub.main:app --port 8730 --reload
+
+# create a node in the API to get an enrollment token
+curl -sX POST localhost:8730/api/nodes -H 'content-type: application/json' \
+  -d '{"name":"box-a"}'
+
+# terminal 2 — agent (needs tmux for real server control; file ops work anywhere)
+MM_HUB_URL=ws://127.0.0.1:8730/ws/agent \
+MM_ENROLL_TOKEN=<token-from-above> \
+MM_AGENT_DATA_DIR=./_agentdata \
+  python -m minemanager_agent.main
+```
+
+The web UI (HTML/CSS/JS) is built separately against this API — it is not part
+of this repo yet.
+
+## Status
+
+v1 backend scaffold: shared protocol, hub (REST + agent WebSocket + secret
+vault), and agent (connection, tmux supervisor with crash-loop protection,
+jailed files, RCON) are implemented and covered by integration tests. Roadmap
+and v2 (provisioning) are in PLAN.md.

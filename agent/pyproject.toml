@@ -1,0 +1,19 @@
+[project]
+name = "minemanager-agent"
+version = "0.1.0"
+description = "MineManager agent — per-node daemon that supervises Minecraft servers"
+requires-python = ">=3.11"
+dependencies = [
+    "minemanager-shared",
+    "websockets>=12",
+]
+
+[project.scripts]
+minemanager-agent = "minemanager_agent.main:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["minemanager_agent*"]
