@@ -257,6 +257,23 @@ minemanager/
 
 ---
 
+## 11b. Known v1 / BETA gaps (tracked)
+
+Deliberately deferred; the UI is being built to degrade gracefully around these
+(see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md) §6):
+
+- **Instance edit** — no `PATCH`; change via delete + recreate for now.
+- **Binary file upload** — agent supports it; no hub REST endpoint yet.
+- **Historical logs** — read `logs/latest.log` via the files API; no dedicated
+  log endpoint. Live tail is WS-only.
+- **Console attach on reconnect** — the agent tails a server's log only from the
+  moment it *starts* it; a server already running when the agent (re)connects
+  won't stream console until restarted.
+- **Desired-state reconciliation** — `desired_running` is recorded but not
+  pushed back to an agent on reconnect (no auto-restore yet).
+- **RCON REST surface** — agent supports `rcon.command`; not exposed via REST.
+- **Audit log** — model exists but is not populated or exposed.
+
 ## 12. Open items to confirm as we build
 
 - Exact secret-encryption key delivery (env var vs. key file) — pick during hub
