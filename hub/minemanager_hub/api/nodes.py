@@ -15,6 +15,7 @@ from minemanager_hub.api.schemas import (
     EnrollmentOut,
     InstanceCreate,
     InstanceOut,
+    InstanceUpdate,
     NodeCreate,
     NodeOut,
 )
@@ -132,6 +133,27 @@ def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
             rcon_port=body.rcon_port,
         )
         db.add(inst)
+        db.flush()
+        return _instance_out(inst)
+
+
+@router.patch("/instances/{instance_id}", response_model=InstanceOut)
+def update_instance(instance_id: str, body: InstanceUpdate) -> InstanceOut:
+    """Partial update of an instance's declared spec.
+
+    Only fields present in the request are changed. Changes to ``root_dir`` or
+    ``start_command`` take effect on the instance's next start — a running
+    session keeps the spec it was launched with.
+    """
+    changes = body.model_dump(exclude_unset=True)
+    with session_scope() as db:
+        inst = db.get(Instance, instance_id)
+        if inst is None:
+            raise HTTPException(404, "instance not found")
+        if "type" in changes and changes["type"] is not None:
+            changes["type"] = changes["type"].value  # enum -> stored string
+        for field, value in changes.items():
+            setattr(inst, field, value)
         db.flush()
         return _instance_out(inst)
 

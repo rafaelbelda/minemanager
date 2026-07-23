@@ -115,7 +115,13 @@ Base: `/api`. Request/response bodies are JSON. FastAPI errors are
 |---|---|---|---|
 | GET | `/api/nodes/{node_id}/instances` | — | `InstanceOut[]` |
 | POST | `/api/nodes/{node_id}/instances` | `InstanceCreate` | `201` `InstanceOut` |
+| PATCH | `/api/instances/{instance_id}` | `InstanceUpdate` (partial) | `InstanceOut` |
 | DELETE | `/api/instances/{instance_id}` | — | `204` |
+
+`InstanceUpdate` is a partial update — send only the fields you want to change
+(`name`, `type`, `root_dir`, `start_command`, `auto_restart`, `rcon_host`,
+`rcon_port`). Changes to `root_dir`/`start_command` apply on the instance's
+**next start**; a running session keeps the spec it launched with.
 
 `InstanceCreate`:
 ```json
@@ -215,27 +221,24 @@ Recommended UI wiring:
 
 Build the UI so these degrade gracefully (hide, disable, or mark "coming soon"):
 
-1. **Editing an instance** — no `PATCH`. To change `start_command`, `root_dir`,
-   `auto_restart`, or RCON settings, the current path is delete + recreate.
-   (A `PATCH /api/instances/{id}` is planned.)
-2. **Binary file upload** — the agent supports it, but there is **no REST
+1. **Binary file upload** — the agent supports it, but there is **no REST
    endpoint** yet. Text create/edit works via `files/write`. Treat upload of
    binary (jars, zips) as "coming soon".
-3. **Historical logs** — no dedicated endpoint. Use `files/read` on
+2. **Historical logs** — no dedicated endpoint. Use `files/read` on
    `logs/latest.log`. Live tailing is WS-only.
-4. **Console output before a start** — the agent starts tailing when it *starts*
+3. **Console output before a start** — the agent starts tailing when it *starts*
    an instance this session. If a server was already running before the agent
    connected (or agent restarted), console output won't stream until the next
    `power/restart`. Show a hint like "restart to attach console" when a running
    instance has no recent output.
-5. **`desired_running`** is currently operator-intent bookkeeping only; the hub
+4. **`desired_running`** is currently operator-intent bookkeeping only; the hub
    does not yet auto-reconcile it to the agent on reconnect. Don't present it as
    a guarantee the server will be restored automatically.
-6. **RCON tab** — RCON is secondary. There is no REST endpoint exposed for
+5. **RCON tab** — RCON is secondary. There is no REST endpoint exposed for
    ad-hoc RCON yet (the agent supports `rcon.command`). Primary console is the
    `console` POST + events WS. Treat an RCON console as optional/future.
-7. **Audit log** — model exists but isn't populated or exposed. No history view yet.
-8. **No pagination** anywhere (small-scale by design — fine to render full lists).
+6. **Audit log** — model exists but isn't populated or exposed. No history view yet.
+7. **No pagination** anywhere (small-scale by design — fine to render full lists).
 
 ---
 
@@ -265,8 +268,9 @@ node's `online` flag (from `GET /api/nodes`) and/or recent heartbeats.
    `POST console`. Show current `state` from `state.changed`.
 4. **File manager** — breadcrumb + `files list`; text editor via `read`/`write`
    (great for `server.properties`, `velocity.toml`, `*.yml`); delete with confirm.
-5. **Settings/secrets** — set `rcon_password` / `forwarding_secret` (write-only),
-   toggle `auto_restart` (needs the PATCH endpoint — see gaps).
+5. **Settings/secrets** — edit the instance spec via `PATCH` (name, start
+   command, root dir, `auto_restart`, RCON); set `rcon_password` /
+   `forwarding_secret` (write-only).
 
 ---
 
@@ -280,6 +284,7 @@ POST   /api/nodes/{node_id}/reenroll               -> EnrollmentOut
 DELETE /api/nodes/{node_id}                         (204)
 GET    /api/nodes/{node_id}/instances
 POST   /api/nodes/{node_id}/instances              InstanceCreate -> InstanceOut (201)
+PATCH  /api/instances/{instance_id}                InstanceUpdate -> InstanceOut
 DELETE /api/instances/{instance_id}                 (204)
 POST   /api/instances/{instance_id}/power/{start|stop|restart|kill}
 POST   /api/instances/{instance_id}/console        {line}

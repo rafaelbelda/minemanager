@@ -44,6 +44,18 @@ class InstanceCreate(BaseModel):
     rcon_port: Optional[int] = None
 
 
+class InstanceUpdate(BaseModel):
+    """Partial update — only the fields present are changed (PATCH semantics)."""
+
+    name: Optional[str] = None
+    type: Optional[InstanceType] = None
+    root_dir: Optional[str] = None
+    start_command: Optional[str] = None
+    auto_restart: Optional[bool] = None
+    rcon_host: Optional[str] = None
+    rcon_port: Optional[int] = None
+
+
 class InstanceOut(BaseModel):
     id: str
     node_id: str

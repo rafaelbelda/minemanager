@@ -262,7 +262,6 @@ minemanager/
 Deliberately deferred; the UI is being built to degrade gracefully around these
 (see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md) §6):
 
-- **Instance edit** — no `PATCH`; change via delete + recreate for now.
 - **Binary file upload** — agent supports it; no hub REST endpoint yet.
 - **Historical logs** — read `logs/latest.log` via the files API; no dedicated
   log endpoint. Live tail is WS-only.
