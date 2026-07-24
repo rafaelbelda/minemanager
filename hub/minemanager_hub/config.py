@@ -12,6 +12,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _default_web_dir() -> Path:
+    """Where the static web UI lives (served same-origin by the hub).
+
+    Defaults to ``<repo>/web`` so a source checkout or editable install just
+    works; set ``MM_WEB_DIR`` when the UI is deployed elsewhere.
+    """
+    env = os.environ.get("MM_WEB_DIR")
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[2] / "web"
+
+
 def _default_data_dir() -> Path:
     """Where the hub keeps its SQLite DB and any local state."""
     env = os.environ.get("MM_DATA_DIR")
@@ -24,6 +36,7 @@ def _default_data_dir() -> Path:
 @dataclass
 class Settings:
     data_dir: Path = field(default_factory=_default_data_dir)
+    web_dir: Path = field(default_factory=_default_web_dir)
     host: str = field(default_factory=lambda: os.environ.get("MM_HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: int(os.environ.get("MM_PORT", "8730")))
 

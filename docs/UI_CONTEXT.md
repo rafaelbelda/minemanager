@@ -1,8 +1,9 @@
 # MineManager — UI Build Context (Web Frontend)
 
-Everything the web UI needs to talk to the MineManager hub. The UI is a separate
-HTML/CSS/JS app; this backend exposes a REST + WebSocket API. Read
-[`../PLAN.md`](../PLAN.md) for the architecture; this doc is the API contract.
+Everything the web UI needs to talk to the MineManager hub. The UI is a plain
+HTML/CSS/JS app in [`../web/`](../web/), served same-origin by the hub; this
+backend exposes a REST + WebSocket API. Read [`../PLAN.md`](../PLAN.md) for the
+architecture; this doc is the API contract.
 
 **Status: BETA.** Some endpoints listed under [Known gaps](#known-gaps--not-yet-built)
 are intentionally not built yet — build the UI so those areas degrade gracefully.
@@ -30,7 +31,8 @@ streams.**
 ## 2. Base URL, auth, CORS
 
 - All REST paths are under **`/api`**. The agent transport lives under `/ws`
-  (not for the UI).
+  (not for the UI). Everything else at `/` is the static UI, mounted last so
+  `/api`, `/ws` and `/docs` always win.
 - **Authentication:** none at the app layer. The hub runs behind **Authelia +
   WireGuard**; the reverse proxy authenticates the user. The UI does **not**
   implement login, send tokens, or manage sessions. Assume the user is already

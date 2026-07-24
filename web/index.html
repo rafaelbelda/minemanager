@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MineManager</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='5'%20fill='%23ff5227'/%3E%3Cpath%20d='M16%206.5L25.5%2016%2016%2025.5%206.5%2016z'%20fill='%230e0e10'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ===== TOPBAR ===== -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">&#9670;</div>
+      <span class="brand-name">MINEMANAGER</span>
+      <span class="brand-ver" id="brand-ver">v0.0.0 &middot; BETA</span>
+    </div>
+    <div class="spacer"></div>
+    <div class="hub-health">
+      <span class="dot" id="health-dot" style="width:7px;height:7px;background:#6b6b67"></span>
+      <span id="health-text">connecting&hellip;</span>
+      <span class="sep">&middot;</span>
+      <span id="health-origin"></span>
+    </div>
+    <div class="divider-v"></div>
+    <button class="btn btn-primary" id="btn-add-node">
+      <span style="font-size:15px;line-height:1">+</span> Add node
+    </button>
+    <div class="avatar" id="avatar">mm</div>
+  </header>
+
+  <!-- ===== BODY ===== -->
+  <div class="body">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar">
+      <div class="sidebar-head">
+        <div class="sidebar-head-row">
+          <span class="label">INFRASTRUCTURE</span>
+          <span class="sidebar-count" id="side-count">0/0 online</span>
+        </div>
+        <div class="filter">
+          <span class="filter-icon">&#8981;</span>
+          <input id="filter" type="text" placeholder="Filter nodes &amp; instances&hellip;" autocomplete="off" spellcheck="false">
+        </div>
+      </div>
+
+      <div class="tree-hub">
+        <div class="row" id="row-hub">
+          <span class="row-mark">&#9670;</span>
+          <span class="row-title">Hub</span>
+          <span class="spacer"></span>
+          <span class="row-sub" id="row-hub-count">0 inst</span>
+        </div>
+      </div>
+
+      <div class="tree" id="tree"></div>
+
+      <div class="sidebar-foot">
+        <span class="dot dot-sm" id="ws-dot" style="background:#6b6b67"></span>
+        <span id="ws-text">events ws &middot; idle</span>
+      </div>
+    </aside>
+
+    <!-- ===== MAIN ===== -->
+    <main class="main" id="main">
+
+      <!-- ---------- HUB VIEW ---------- -->
+      <section class="view hidden" id="view-hub">
+        <div class="scroll pad">
+          <div class="page-head">
+            <div>
+              <div class="label" style="margin-bottom:8px">CONTROL PLANE</div>
+              <h1 class="page-title">Infrastructure</h1>
+            </div>
+            <button class="btn btn-primary" id="hub-add-node" style="height:34px">+ Add node</button>
+          </div>
+
+          <div class="stats">
+            <div class="stat">
+              <div class="stat-k">NODES ONLINE</div>
+              <div class="stat-v"><span id="st-online" style="color:var(--ok)">0</span><span class="of" id="st-nodes"> / 0</span></div>
+            </div>
+            <div class="stat">
+              <div class="stat-k">INSTANCES</div>
+              <div class="stat-v" id="st-instances">0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-k">RUNNING</div>
+              <div class="stat-v" id="st-running" style="color:var(--ok)">0</div>
+            </div>
+            <div class="stat">
+              <div class="stat-k">NEEDS ATTENTION</div>
+              <div class="stat-v" id="st-attention" style="color:var(--err)">0</div>
+            </div>
+          </div>
+
+          <div class="label" style="margin-bottom:12px">NODES</div>
+          <div class="node-grid" id="node-grid"></div>
+
+          <div id="enroll-section"></div>
+        </div>
+      </section>
+
+      <!-- ---------- NODE VIEW ---------- -->
+      <section class="view hidden" id="view-node">
+        <div class="detail-head">
+          <div class="crumbs" id="node-crumbs"></div>
+          <div class="detail-title-row">
+            <span class="dot dot-lg" id="node-dot"></span>
+            <h1 class="detail-title" id="node-name"></h1>
+            <span class="pill" id="node-badge"></span>
+            <span class="spacer"></span>
+            <button class="btn" id="node-reenroll">Re-enroll</button>
+            <button class="btn btn-danger" id="node-delete">Delete node</button>
+          </div>
+          <div class="detail-meta" id="node-meta"></div>
+        </div>
+        <div class="scroll" style="padding:0 32px 28px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <span class="label" id="node-inst-label">INSTANCES</span>
+            <button class="btn btn-sm" id="node-add-inst" style="height:30px">+ Add instance</button>
+          </div>
+          <div class="table">
+            <div class="table-head">
+              <span>NAME</span><span>TYPE</span><span>STATE</span><span>ROOT</span><span>CONTROL</span>
+            </div>
+            <div id="node-inst-rows"></div>
+          </div>
+          <div id="node-enroll-section" style="margin-top:26px"></div>
+        </div>
+      </section>
+
+      <!-- ---------- INSTANCE VIEW ---------- -->
+      <section class="view hidden" id="view-inst">
+        <div class="inst-head">
+          <div class="crumbs" id="inst-crumbs"></div>
+          <div class="inst-title-row">
+            <h1 class="inst-title" id="inst-name"></h1>
+            <span class="inst-type" id="inst-type"></span>
+            <span class="inst-state" id="inst-state"></span>
+            <span class="inst-meta" id="inst-meta"></span>
+            <span class="spacer"></span>
+            <div class="inst-actions">
+              <button class="btn" id="act-start"><span style="font-size:9px">&#9654;</span> Start</button>
+              <button class="btn" id="act-stop"><span style="font-size:9px">&#9632;</span> Stop</button>
+              <button class="btn" id="act-restart"><span style="font-size:12px">&#10227;</span> Restart</button>
+              <button class="btn btn-danger" id="act-kill">Kill</button>
+            </div>
+          </div>
+          <div class="tabs">
+            <div class="tab" data-tab="console">CONSOLE</div>
+            <div class="tab" data-tab="files">FILES</div>
+            <div class="tab" data-tab="settings">SETTINGS</div>
+          </div>
+        </div>
+
+        <div class="banner hidden" id="inst-offline">
+          <span style="font-size:14px">&#9888;</span>
+          Node offline &mdash; can't reach the agent. Live actions are disabled until it reconnects.
+        </div>
+
+        <!-- CONSOLE TAB -->
+        <div class="tab-pane hidden" id="pane-console">
+          <div class="banner warn hidden" id="console-hint">
+            <span style="font-size:14px">&#9888;</span>
+            This server was already running when the agent attached &mdash; console output only
+            streams for sessions the agent started. Restart the instance to attach the console.
+          </div>
+          <div class="console-wrap">
+            <div class="terminal">
+              <div class="terminal-head">
+                <span class="dot" id="term-dot" style="width:8px;height:8px"></span>
+                <span class="terminal-title" id="term-title">pty</span>
+                <span class="spacer"></span>
+                <span class="terminal-note" id="term-count">0 lines</span>
+                <span class="terminal-note toggle-link" id="term-autoscroll">&middot; autoscroll</span>
+                <span class="terminal-note toggle-link" id="term-scanlines">&middot; scanlines</span>
+                <span class="terminal-note toggle-link" id="term-clear">&middot; clear</span>
+              </div>
+              <div class="terminal-body" id="term-body"></div>
+              <div class="scanlines" id="term-scan"></div>
+            </div>
+            <div class="console-input">
+              <span class="console-prompt" id="console-prompt">&rsaquo;</span>
+              <input id="console-line" type="text" placeholder="send a console command&hellip;" autocomplete="off" spellcheck="false">
+              <span class="console-send">&crarr; SEND</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- FILES TAB -->
+        <div class="tab-pane hidden" id="pane-files">
+          <div class="files-wrap">
+            <div class="files-pane">
+              <div class="files-head">
+                <span class="files-path" id="files-path"></span>
+                <span class="spacer"></span>
+                <button class="btn-icon sq" id="files-refresh" title="Refresh">&#10227;</button>
+                <button class="btn-icon sq" id="files-new" title="New text file">+</button>
+                <button class="btn-icon sq" id="files-upload" title="Binary upload &mdash; coming soon" disabled
+                        style="background:#141416;border-color:#1e1f23;color:#4a4a46;cursor:not-allowed">&uarr;</button>
+              </div>
+              <div class="files-list" id="files-list"></div>
+            </div>
+            <div class="editor-pane">
+              <div class="editor-head">
+                <span class="editor-name" id="editor-name">&mdash;</span>
+                <span class="editor-dirty hidden" id="editor-dirty">&#9679; modified</span>
+                <span class="spacer"></span>
+                <span class="editor-info" id="editor-info"></span>
+                <button class="btn btn-primary btn-sm" id="editor-save" disabled>Save</button>
+              </div>
+              <div class="editor">
+                <div class="editor-gutter" id="editor-gutter"></div>
+                <div class="editor-scroll" id="editor-scroll">
+                  <pre class="editor-hl" id="editor-hl"></pre>
+                  <textarea class="editor-area" id="editor-area" spellcheck="false" wrap="soft"></textarea>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div class="tab-pane hidden" id="pane-settings">
+          <div class="scroll" style="padding:22px 28px">
+            <div class="settings">
+              <div class="label" style="margin-bottom:14px">INSTANCE SPEC</div>
+              <div class="form">
+                <div>
+                  <label class="field-label" for="set-name">Name</label>
+                  <input class="input" id="set-name" type="text" autocomplete="off">
+                </div>
+                <div class="form-row">
+                  <div>
+                    <label class="field-label" for="set-type">Type</label>
+                    <select class="input" id="set-type">
+                      <option value="paper">paper</option>
+                      <option value="vanilla">vanilla</option>
+                      <option value="velocity">velocity</option>
+                    </select>
+                  </div>
+                  <div class="grow2">
+                    <label class="field-label" for="set-root">Root directory</label>
+                    <input class="input mono" id="set-root" type="text" autocomplete="off" spellcheck="false">
+                  </div>
+                </div>
+                <div>
+                  <label class="field-label" for="set-cmd">Start command
+                    <span class="hint-inline">&middot; applies on next start</span></label>
+                  <input class="input mono" id="set-cmd" type="text" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="switch-row">
+                  <div>
+                    <div class="t">Auto-restart</div>
+                    <div class="d">Restart the server automatically after a crash</div>
+                  </div>
+                  <div class="toggle" id="set-auto"><div class="knob"></div></div>
+                </div>
+                <div class="form-row">
+                  <div>
+                    <label class="field-label" for="set-rhost">RCON host</label>
+                    <input class="input mono" id="set-rhost" type="text" autocomplete="off" spellcheck="false">
+                  </div>
+                  <div>
+                    <label class="field-label" for="set-rport">RCON port</label>
+                    <input class="input mono" id="set-rport" type="text" inputmode="numeric" autocomplete="off">
+                  </div>
+                </div>
+                <div style="display:flex;gap:10px;margin-top:4px">
+                  <button class="btn btn-primary btn-lg" id="set-save">Save changes</button>
+                  <button class="btn btn-danger btn-lg" id="set-delete">Delete instance</button>
+                </div>
+              </div>
+
+              <div class="label" style="margin-bottom:8px">SECRETS</div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+                Values are encrypted at rest and never returned. You can overwrite a key,
+                but the current value can't be shown.
+              </div>
+              <div class="table" id="secrets-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>

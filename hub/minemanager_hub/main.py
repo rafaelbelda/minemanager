@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from minemanager_hub import __version__
 from minemanager_hub.api import agent_ws, control, nodes
@@ -48,3 +49,12 @@ app.include_router(control.router)
 @app.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "version": __version__}
+
+
+# Static web UI, served same-origin so the browser needs no CORS and the reverse
+# proxy authenticates UI and API together. Mounted last so every /api, /ws and
+# /docs route is matched first; skipped entirely when the directory is absent
+# (e.g. an API-only deployment).
+_web_dir = get_settings().web_dir
+if _web_dir.is_dir():
+    app.mount("/", StaticFiles(directory=_web_dir, html=True), name="web")

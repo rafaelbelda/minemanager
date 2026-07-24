@@ -22,6 +22,7 @@ persistent WebSocket.
 | `shared/`  | Wire-protocol models shared by hub and agent (single source).    |
 | `hub/`     | FastAPI control plane: state (SQLite), agent registry, secrets.  |
 | `agent/`   | Per-node daemon: tmux supervisor, console, files, RCON.          |
+| `web/`     | The web UI — static HTML/CSS/JS, served same-origin by the hub.  |
 | `deploy/`  | systemd unit + install docs (the agent is the only daemon).      |
 
 ## Process model in one line
@@ -49,12 +50,27 @@ MM_AGENT_DATA_DIR=./_agentdata \
   python -m minemanager_agent.main
 ```
 
-The web UI (HTML/CSS/JS) is built separately against this API — it is not part
-of this repo yet.
+Then open <http://127.0.0.1:8730/> — the hub serves the UI from `web/` at the
+root, so there is no separate frontend server, build step, or `node_modules`.
+
+### Working on the UI
+
+`web/` is plain ES modules; edit and reload, nothing to compile. Two knobs:
+
+- `MM_WEB_DIR=/path/to/web` — serve the UI from elsewhere (or point it at a
+  missing path for an API-only hub; the mount is skipped when absent).
+- To run the UI off a different origin than the hub, start the hub with
+  `MM_CORS_ORIGINS=http://localhost:5173` and open the page with
+  `?hub=http://localhost:8730` (remembered in `localStorage`).
+
+The API it consumes is documented in [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md);
+what the UI does and does not yet cover is in
+[`docs/UI_STATUS.md`](docs/UI_STATUS.md).
 
 ## Status
 
-v1 backend scaffold: shared protocol, hub (REST + agent WebSocket + secret
-vault), and agent (connection, tmux supervisor with crash-loop protection,
-jailed files, RCON) are implemented and covered by integration tests. Roadmap
-and v2 (provisioning) are in PLAN.md.
+v1 scaffold: shared protocol, hub (REST + agent WebSocket + secret vault), and
+agent (connection, tmux supervisor with crash-loop protection, jailed files,
+RCON) are implemented and covered by integration tests. The web UI covers the
+manage-only v1 surface — nodes and enrollment, instances, power, live console,
+files, settings and secrets. Roadmap and v2 (provisioning) are in PLAN.md.
