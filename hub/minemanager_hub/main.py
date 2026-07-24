@@ -1,7 +1,11 @@
-"""FastAPI application entrypoint for the MineManager hub.
+"""FastAPI application object for the MineManager hub.
 
-Run (dev):
-    MM_DATA_DIR=./_devdata uvicorn minemanager_hub.main:app --reload --port 8730
+To run the server, use the launcher that honors MM_HOST/MM_PORT:
+    python -m minemanager_hub          # or the installed `minemanager-hub`
+
+The bare ``uvicorn minemanager_hub.main:app`` CLI ignores MM_HOST/MM_PORT (it
+uses uvicorn's own 127.0.0.1:8000 default); if you use it for --reload during
+dev, pass ``--host``/``--port`` explicitly.
 
 In production this sits behind Authelia + WireGuard; it does not authenticate
 end users itself.

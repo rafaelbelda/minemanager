@@ -16,8 +16,12 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 MM_SECRET_KEY=<that-key> \
 MM_DATA_DIR=/var/lib/minemanager \
 MM_HOST=127.0.0.1 MM_PORT=8730 \
-  uvicorn minemanager_hub.main:app
+  python -m minemanager_hub        # or the installed `minemanager-hub`
 ```
+
+> Use the `minemanager-hub` launcher (above), **not** bare
+> `uvicorn minemanager_hub.main:app` — the raw uvicorn CLI ignores
+> `MM_HOST`/`MM_PORT` and binds to its own default `127.0.0.1:8000`.
 
 Put it behind your reverse proxy (Authelia) and expose it only on the WireGuard
 interface. Never expose it to the public internet.

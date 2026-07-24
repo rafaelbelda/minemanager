@@ -35,8 +35,8 @@ own *runtime* state. See PLAN.md §4.
 ```bash
 python -m pip install -e shared -e hub -e agent   # editable installs
 
-# terminal 1 — hub
-MM_DATA_DIR=./_devdata uvicorn minemanager_hub.main:app --port 8730 --reload
+# terminal 1 — hub (the launcher honors MM_HOST/MM_PORT; bare uvicorn does not)
+MM_DATA_DIR=./_devdata MM_PORT=8730 python -m minemanager_hub
 
 # create a node in the API to get an enrollment token
 curl -sX POST localhost:8730/api/nodes -H 'content-type: application/json' \

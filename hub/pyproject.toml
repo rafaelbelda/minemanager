@@ -11,6 +11,9 @@ dependencies = [
     "cryptography>=42",
 ]
 
+[project.scripts]
+minemanager-hub = "minemanager_hub.__main__:main"
+
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
