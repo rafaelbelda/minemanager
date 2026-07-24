@@ -55,10 +55,31 @@ def health() -> dict:
     return {"status": "ok", "version": __version__}
 
 
+class _SpaStatic:
+    """StaticFiles SPA fallback that refuses WebSocket scopes.
+
+    Mounted at ``/`` it is the catch-all for anything the routers didn't match.
+    Plain ``StaticFiles`` only handles HTTP and ``assert``s on a websocket scope,
+    turning a mistyped/misrouted WS path (e.g. an agent pointed at ``/ws`` instead
+    of ``/ws/agent``) into an opaque 500. Here we reject stray websockets cleanly
+    (close 1008) and serve the SPA for HTTP.
+    """
+
+    def __init__(self, directory) -> None:
+        self._static = StaticFiles(directory=directory, html=True)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] == "websocket":
+            await receive()  # consume websocket.connect
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await self._static(scope, receive, send)
+
+
 # Static web UI, served same-origin so the browser needs no CORS and the reverse
 # proxy authenticates UI and API together. Mounted last so every /api, /ws and
 # /docs route is matched first; skipped entirely when the directory is absent
 # (e.g. an API-only deployment).
 _web_dir = get_settings().web_dir
 if _web_dir.is_dir():
-    app.mount("/", StaticFiles(directory=_web_dir, html=True), name="web")
+    app.mount("/", _SpaStatic(_web_dir), name="web")
