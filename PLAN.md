@@ -234,6 +234,13 @@ minemanager/
 │   └── minemanager_shared/
 │       ├── protocol.py         # message envelopes + payload models
 │       └── version.py
+├── web/                        # the UI — static ES modules, no build step
+│   ├── index.html              # shell: topbar, tree sidebar, three views
+│   ├── styles.css              # design tokens + components
+│   ├── api.js                  # REST client + error → wording mapping
+│   ├── events.js               # per-node event sockets w/ backoff
+│   ├── dom.js                  # element builder, toasts, dialogs
+│   └── app.js                  # state, rendering, action handlers
 └── deploy/
     ├── minemanager-agent.service   # systemd unit for the AGENT (the only daemon)
     └── README.md                   # install/enroll steps
@@ -259,8 +266,10 @@ minemanager/
 
 ## 11b. Known v1 / BETA gaps (tracked)
 
-Deliberately deferred; the UI is being built to degrade gracefully around these
-(see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md) §6):
+Deliberately deferred; the UI degrades gracefully around these — upload is a
+disabled "coming soon" control, the console shows a restart hint when it has no
+stream to attach to (see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md) §6, and
+[`docs/UI_STATUS.md`](docs/UI_STATUS.md) for how each one currently presents):
 
 - **Binary file upload** — agent supports it; no hub REST endpoint yet.
 - **Historical logs** — read `logs/latest.log` via the files API; no dedicated
