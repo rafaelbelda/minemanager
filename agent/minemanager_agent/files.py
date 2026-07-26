@@ -57,6 +57,35 @@ def read_file(root: str | Path, rel: str, max_bytes: int = 5_000_000) -> str:
     return target.read_text(encoding="utf-8", errors="replace")
 
 
+def tail_lines(
+    root: str | Path,
+    rel: str,
+    lines: int = 200,
+    max_bytes: int = 1_000_000,
+) -> dict:
+    """Return the last ``lines`` lines of a text file (for console backfill).
+
+    Reads at most the final ``max_bytes`` of the file so a huge log never loads
+    fully. A missing file is not an error — it just yields no lines (a server
+    that has never produced ``logs/latest.log`` is a normal state).
+    """
+    target = _resolve_within(root, rel)
+    if not target.is_file():
+        return {"lines": [], "path": rel, "missing": True}
+
+    size = target.stat().st_size
+    start = max(0, size - max_bytes)
+    with target.open("rb") as fh:
+        fh.seek(start)
+        data = fh.read()
+    text = data.decode("utf-8", errors="replace")
+    # If we started mid-file, drop the partial first line.
+    if start > 0:
+        text = text.split("\n", 1)[-1]
+    out = text.splitlines()
+    return {"lines": out[-lines:], "path": rel, "truncated": start > 0}
+
+
 def write_file(root: str | Path, rel: str, content: str) -> dict:
     target = _resolve_within(root, rel)
     target.parent.mkdir(parents=True, exist_ok=True)

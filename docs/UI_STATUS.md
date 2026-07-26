@@ -66,8 +66,9 @@ confirmation. The POST result seeds state; `state.changed` drives it thereafter.
 **Console** — live terminal fed by the events socket, Minecraft log parsing for
 both the `[HH:MM:SS] [Thread/LEVEL]:` and `[HH:MM:SS LEVEL]:` formats, WARN/ERROR
 colouring, 1500-line cap, autoscroll that releases when you scroll up, scanline
-and clear toggles, and a line-send input that echoes locally. Shows the gap-#3
-hint ("restart to attach console") when a running instance has no stream.
+and clear toggles, and a line-send input that echoes locally. On open it
+backfills recent output via `console/history` (once per instance), then the live
+stream takes over; a soft error banner shows only if that backfill fails.
 
 **Files** — jailed browser with directory navigation and breadcrumb, text editor
 with a line-number gutter and comment highlighting, save (also `Ctrl/Cmd+S`),
@@ -91,7 +92,7 @@ These need a backend endpoint first. Tracked in PLAN.md §11b.
 | Gap | UI today | Needs |
 |---|---|---|
 | **Binary upload** | upload button visible but disabled, tooltip "coming soon" | REST surface for the agent's `files.upload` |
-| **Historical logs** | reachable the long way: Files → `logs/` → `latest.log` | a log endpoint; rotated `*.log.gz` list but can't be opened (`files/read` is utf-8, so it 502s) |
+| **Full log viewer** | console backfills via `console/history`; Files → `logs/` → `latest.log` opens the current log | a rotation-aware viewer; rotated `*.log.gz` list but can't be opened (`files/read` is utf-8, so it 502s) |
 | **RCON console** | not offered at all | REST surface for the agent's `rcon.command` |
 | **Audit log** | no history view | the model to be populated and exposed |
 | **`desired_running`** | deliberately not shown | reconciliation on agent reconnect; showing it now would imply a restore guarantee that doesn't exist |

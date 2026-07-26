@@ -34,6 +34,8 @@ const state = {
   instances: new Map(),   // nodeId -> InstanceOut[]
   runState: new Map(),    // instanceId -> RunState
   console: new Map(),     // instanceId -> line[]
+  consoleLoaded: new Set(), // instanceIds we've backfilled history for
+  consoleFailed: new Set(), // instanceIds whose history backfill failed
   sel: { type: 'hub' },
   tab: 'console',
   filter: '',
@@ -141,6 +143,8 @@ async function refreshNodes({ quiet = false } = {}) {
   }
   for (const id of [...state.runState.keys()]) if (!seen.has(id)) state.runState.delete(id);
   for (const id of [...state.console.keys()]) if (!seen.has(id)) state.console.delete(id);
+  for (const id of [...state.consoleLoaded]) if (!seen.has(id)) state.consoleLoaded.delete(id);
+  for (const id of [...state.consoleFailed]) if (!seen.has(id)) state.consoleFailed.delete(id);
 
   state.loaded = true;
 
@@ -250,6 +254,35 @@ function pushConsole(instId, raw, kind) {
     $('term-count').textContent = `${buf.length} line${buf.length === 1 ? '' : 's'}`;
     show($('console-hint'), false);
     if (state.autoscroll) body.scrollTop = body.scrollHeight;
+  }
+}
+
+/**
+ * Backfill the console with recent lines from the instance's log, so a fresh
+ * web session sees what happened before it connected. Loaded once per instance;
+ * the log is the source of truth, so we replace the buffer with its snapshot
+ * and let the live stream append from there. Best-effort: any failure is
+ * surfaced as a soft banner and never breaks the live console.
+ */
+async function loadConsoleHistory(inst) {
+  if (!inst || state.consoleLoaded.has(inst.id)) return;
+  if (!isOnline(inst)) return; // retry when the console is reopened online
+  try {
+    const res = await api.consoleHistory(inst.id, 300);
+    if (state.sel.instId !== inst.id) return; // selection moved on while awaiting
+    const buf = (res?.lines || []).map((raw) => parseLine(raw));
+    state.console.set(inst.id, buf);
+    state.consoleLoaded.add(inst.id);
+    state.consoleFailed.delete(inst.id);
+    const body = $('term-body');
+    body.dataset.inst = ''; // force renderConsole to repaint from the new buffer
+    if (state.tab === 'console' && state.sel.instId === inst.id) render();
+  } catch {
+    // Never break the console over history — just flag it.
+    if (state.sel.instId === inst.id) {
+      state.consoleFailed.add(inst.id);
+      if (state.tab === 'console') render();
+    }
   }
 }
 
@@ -601,8 +634,8 @@ function renderConsole(inst, m, live) {
   input.disabled = !live;
   input.placeholder = live ? 'send a console command…' : 'node offline';
 
-  // Gap: the agent only tails logs for sessions it started itself.
-  show($('console-hint'), live && runStateOf(inst) === 'running' && buf.length === 0);
+  // Only surfaced when the history backfill failed — the live console still works.
+  show($('console-hint'), state.consoleFailed.has(inst.id));
 
   const body = $('term-body');
   if (body.dataset.inst !== inst.id || body.childElementCount !== buf.length) {
@@ -667,6 +700,7 @@ function resetInstancePanes() {
 function loadTab() {
   const inst = curInst();
   if (!inst) return;
+  if (state.tab === 'console') loadConsoleHistory(inst);
   if (state.tab === 'files' && !state.files.entries.length && !state.files.loading) loadFiles(state.files.path);
   if (state.tab === 'settings') { fillSettings(inst); loadSecrets(inst); }
 }
@@ -981,6 +1015,35 @@ async function saveInstance() {
   }
 }
 
+/* --- start-command helpers (jar + memory) -------------------------------- */
+
+// Each server type is launched from a conventionally-named jar.
+const JAR_FOR_TYPE = { paper: 'paper.jar', vanilla: 'server.jar', velocity: 'velocity.jar' };
+const jarForType = (type) => JAR_FOR_TYPE[type] || 'server.jar';
+
+/** Swap the filename after `-jar` for the type's jar, preserving the rest. */
+function setJarInCommand(cmd, jar) {
+  return /-jar\s+\S+/.test(cmd) ? cmd.replace(/(-jar\s+)(\S+)/, `$1${jar}`) : cmd;
+}
+
+/** The value after `-Xmx` (e.g. "4G"), or '' when the flag is absent. */
+function parseXmx(cmd) {
+  const m = cmd.match(/-Xmx(\S+)/);
+  return m ? m[1] : '';
+}
+
+/**
+ * Force the `-Xmx` flag to `val` (e.g. "6G"). Empty `val` removes it; if the
+ * flag is absent it is inserted right after the leading `java` token. This keeps
+ * the memory indicator and the start command as literally the same value.
+ */
+function setXmxInCommand(cmd, val) {
+  val = (val || '').trim();
+  if (!val) return cmd.replace(/\s*-Xmx\S+/, '');
+  if (/-Xmx\S+/.test(cmd)) return cmd.replace(/-Xmx\S+/, `-Xmx${val}`);
+  return cmd.replace(/^(\s*java\b)/, `$1 -Xmx${val}`);
+}
+
 /* --- create / delete ----------------------------------------------------- */
 
 async function addNode() {
@@ -1049,6 +1112,7 @@ async function deleteNode(node) {
 }
 
 async function addInstance(node) {
+  // RCON is configured later in the instance's Settings, not here.
   const values = await dialog({
     title: `Add instance on ${node.name}`,
     description: 'Declares a server the agent should manage. The directory must already exist on the node.',
@@ -1057,20 +1121,23 @@ async function addInstance(node) {
       { name: 'type', label: 'Type', type: 'select', options: ['paper', 'vanilla', 'velocity'], value: 'paper' },
       { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival', mono: true },
       { name: 'start_command', label: 'Start command', value: 'java -Xmx4G -jar paper.jar nogui', mono: true },
-      { name: 'rcon_host', label: 'RCON host', value: '127.0.0.1', mono: true },
-      { name: 'rcon_port', label: 'RCON port', placeholder: '25575 (blank if unused)', mono: true },
+      { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'A shortcut for the -Xmx flag — e.g. 4G or 6144M. Stays in sync with the start command.' },
       { name: 'auto_restart', label: 'Auto-restart', type: 'toggle', value: true, hint: 'Restart the server automatically after a crash' },
     ],
     confirmText: 'Create instance',
+    onMount: ({ get, set, input }) => {
+      // Type picks the jar; the memory field mirrors -Xmx, both directions.
+      input('type').addEventListener('change', () =>
+        set('start_command', setJarInCommand(get('start_command'), jarForType(get('type')))));
+      input('ram').addEventListener('input', () =>
+        set('start_command', setXmxInCommand(get('start_command'), get('ram'))));
+      input('start_command').addEventListener('input', () =>
+        set('ram', parseXmx(get('start_command'))));
+    },
   });
   if (!values) return;
   if (!values.name.trim() || !values.root_dir.trim() || !values.start_command.trim()) {
     toast('Name, root directory and start command are all required.', 'error');
-    return;
-  }
-  const port = values.rcon_port.trim();
-  if (port && !/^\d+$/.test(port)) {
-    toast('RCON port must be a number (or empty).', 'error');
     return;
   }
   try {
@@ -1080,8 +1147,6 @@ async function addInstance(node) {
       root_dir: values.root_dir.trim(),
       start_command: values.start_command.trim(),
       auto_restart: values.auto_restart,
-      rcon_host: values.rcon_host.trim() || '127.0.0.1',
-      rcon_port: port ? Number(port) : null,
     });
     await refreshNodes({ quiet: true });
     selectInstance(node.id, created.id);

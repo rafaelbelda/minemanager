@@ -107,6 +107,7 @@ export const api = {
   // Power / console
   power: (id, op) => post(`/api/instances/${id}/power/${op}`),
   console: (id, line) => post(`/api/instances/${id}/console`, { line }),
+  consoleHistory: (id, lines = 200) => get(`/api/instances/${id}/console/history?lines=${lines}`),
 
   // Files (paths are relative to the instance root)
   listFiles: (id, path = '.') => get(`/api/instances/${id}/files?path=${q(path)}`),

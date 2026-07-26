@@ -11,6 +11,7 @@ venv/
 # MineManager local state / secrets (never commit)
 _devdata/
 _itest/
+_ha/
 *.db
 *.db-wal
 *.db-shm

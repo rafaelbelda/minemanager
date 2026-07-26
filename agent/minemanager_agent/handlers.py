@@ -69,6 +69,13 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
         root = _spec(cmd).root_dir
         return Response.success(cmd.id, files.mkdir(root, cmd.data["path"]))
 
+    # -- logs / console backfill --------------------------------------------
+    if action == Action.logs_tail.value:
+        root = _spec(cmd).root_dir
+        path = cmd.data.get("path") or "logs/latest.log"
+        lines = int(cmd.data.get("lines", 200))
+        return Response.success(cmd.id, files.tail_lines(root, path, lines))
+
     # -- rcon (secondary) ---------------------------------------------------
     if action == Action.rcon_command.value:
         spec = _spec(cmd)

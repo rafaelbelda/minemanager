@@ -103,6 +103,14 @@ async def console_send(instance_id: str, body: ConsoleSend) -> dict:
     return await _proxy(instance_id, Action.console_send.value, {"line": body.line})
 
 
+@router.get("/instances/{instance_id}/console/history")
+async def console_history(instance_id: str, lines: int = 200) -> dict:
+    """Recent console lines from the instance's log, to backfill a fresh UI
+    session before the live stream takes over. Read-only; best-effort."""
+    lines = max(1, min(lines, 1000))
+    return await _proxy(instance_id, Action.logs_tail.value, {"lines": lines})
+
+
 # --- Files -----------------------------------------------------------------
 @router.get("/instances/{instance_id}/files")
 async def files_list(instance_id: str, path: str = ".") -> dict:

@@ -10,7 +10,19 @@ v0.1.1
 2-After fix: Replace "This server was already running when the agent attached — console output only streams for sessions the agent started. Restart the instance to attach the console." UI warn with an Error for when (or if) the history ever fails to load. New UI warn "Failed to load console session history." or something along those lines.
 
 
-# B) FILE BROWSER/EDITOR
+# B) ADDING A NEW INSTANCE
+1-Build/change the name of the .jar file being used in the start command "java -Xmx4G -jar paper.jar nogui" from the identified type.
+
+So:
+Velocity uses velocity.jar,
+Paper uses paper.jar
+Vanilla uses server.jar
+
+2-Add a little editable memory allocation indicator (based on "-Xmx4G" arg in Start Command) so the user can easily see and change how much RAM they are setting up the server with. The arg "-Xmx4G" and amount of RAM in the indicator cannot desync never, cause they are the same thing essentially.
+
+3-Remove RCON configuration while adding a new Instance, leave it only in settings.
+
+# C) FILE BROWSER/EDITOR
 
 1-Add a button to expand file editor to make it fullscreen
 2-Add a button to Download a file (with its respecting endpoint) next to the new Upload button.
@@ -23,21 +35,8 @@ If the user selects a large file, prompt and warn the user about the action to s
 6-Do not load or display .jar files in the file editor.
 7-the app cannot have access to other dirs? add mandatory non-escapable root for each node?
 
-Add right button options? Delete, download, rename, extract (if compressed (.rar, zip, .gz))
+Add right click options? Delete, download, rename, extract (if compressed (.rar, zip, .gz))
 Make a way to extract files too?
-
-
-# C) ADDING A NEW INSTANCE
-1-Build/change the name of the .jar file being used in the start command "java -Xmx4G -jar paper.jar nogui" from the identified type.
-
-So:
-Velocity uses velocity.jar,
-Paper uses paper.jar
-Vanilla uses server.jar
-
-2-Add a little non-editable memory allocation indicator (based on "-Xmx4G" arg in Start Command) so the user can easily see how much RAM they are setting up the server with.
-
-3-Remove RCON configuration while adding a new Instance, leave it only in settings.
 
 
 # D) SETTINGS UPDATE [VERSION DEPENDENT?]

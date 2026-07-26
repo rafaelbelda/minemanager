@@ -151,10 +151,17 @@ kills). `kill` is immediate. The authoritative live state still comes over the
 **events WebSocket** (`state.changed`) — treat the POST result as the initial
 value and let events drive the UI thereafter.
 
-### Console (send only; output is via WebSocket)
-| Method | Path | Body | Returns |
+### Console (send + history; live output is via WebSocket)
+| Method | Path | Body / Query | Returns |
 |---|---|---|---|
 | POST | `/api/instances/{instance_id}/console` | `{"line":"say hello"}` | `{"sent": true}` |
+| GET | `/api/instances/{instance_id}/console/history?lines=200` | query `lines` (1–1000, default 200) | `{"lines": ["..."], "path", "missing"?}` |
+
+`console/history` returns the tail of `logs/latest.log` so a freshly-opened UI
+session can backfill what happened before it connected, then let the live
+WebSocket take over. It is best-effort: a missing log yields `{"lines": [],
+"missing": true}` (not an error), and any failure should be non-fatal to the
+console.
 
 ### Files (jailed to the instance root; paths are relative)
 | Method | Path | Body / Query | Returns |
@@ -226,13 +233,15 @@ Build the UI so these degrade gracefully (hide, disable, or mark "coming soon"):
 1. **Binary file upload** — the agent supports it, but there is **no REST
    endpoint** yet. Text create/edit works via `files/write`. Treat upload of
    binary (jars, zips) as "coming soon".
-2. **Historical logs** — no dedicated endpoint. Use `files/read` on
-   `logs/latest.log`. Live tailing is WS-only.
-3. **Console output before a start** — the agent starts tailing when it *starts*
-   an instance this session. If a server was already running before the agent
-   connected (or agent restarted), console output won't stream until the next
-   `power/restart`. Show a hint like "restart to attach console" when a running
-   instance has no recent output.
+2. **Full log viewer** — `console/history` tails `logs/latest.log`, and
+   `files/read` opens it directly, but there is no rotation-aware log browser
+   (rotated `*.log.gz` list but can't be opened — `files/read` is utf-8 and 502s
+   on gzip). A proper historical-log view is future.
+3. **Live output after an agent reconnect** — the agent only *tails* a server it
+   started this session. A server already running when the agent (re)connected
+   streams no new lines until its next `power/restart`. The UI backfills recent
+   output via `console/history` on open, so the console is not blank — but live
+   updates for that case wait on sync-on-connect (see PLAN.md).
 4. **`desired_running`** is currently operator-intent bookkeeping only; the hub
    does not yet auto-reconcile it to the agent on reconnect. Don't present it as
    a guarantee the server will be restored automatically.
@@ -290,6 +299,7 @@ PATCH  /api/instances/{instance_id}                InstanceUpdate -> InstanceOut
 DELETE /api/instances/{instance_id}                 (204)
 POST   /api/instances/{instance_id}/power/{start|stop|restart|kill}
 POST   /api/instances/{instance_id}/console        {line}
+GET    /api/instances/{instance_id}/console/history?lines=200
 GET    /api/instances/{instance_id}/files?path=.
 GET    /api/instances/{instance_id}/files/read?path=...
 POST   /api/instances/{instance_id}/files/write    {path, content}

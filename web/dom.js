@@ -63,8 +63,14 @@ export function toast(message, kind = 'info', ttl = 5200) {
  *
  * field: { name, label, value, type: 'text'|'password'|'select'|'toggle',
  *          options: [...], mono: bool, placeholder, hint }
+ *
+ * `onMount({ get, set, input })` runs once after the inputs exist, for wiring
+ * reactive relationships between fields (e.g. a select that rewrites another
+ * field). `get(name)`/`set(name,v)` read/write values; `input(name)` returns the
+ * element so callers can attach listeners. Programmatic `set` does not fire
+ * input events, so cross-field updates cannot loop.
  */
-export function dialog({ title, description, fields = [], confirmText = 'OK', danger = false }) {
+export function dialog({ title, description, fields = [], confirmText = 'OK', danger = false, onMount }) {
   return new Promise((resolve) => {
     const inputs = new Map();
 
@@ -130,6 +136,22 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
 
     document.addEventListener('keydown', onKey, true);
     document.body.append(backdrop);
+
+    if (onMount) {
+      const rec = (name) => inputs.get(name);
+      const get = (name) => {
+        const r = rec(name);
+        if (!r) return undefined;
+        return r.field.type === 'toggle' ? r.input.classList.contains('on') : r.input.value;
+      };
+      const set = (name, value) => {
+        const r = rec(name);
+        if (!r) return;
+        if (r.field.type === 'toggle') r.input.classList.toggle('on', !!value);
+        else r.input.value = value ?? '';
+      };
+      onMount({ get, set, input: (name) => rec(name)?.input });
+    }
 
     const first = [...inputs.values()].find((i) => i.field.type !== 'toggle');
     if (first) { first.input.focus(); first.input.select?.(); }

@@ -267,16 +267,18 @@ minemanager/
 ## 11b. Known v1 / BETA gaps (tracked)
 
 Deliberately deferred; the UI degrades gracefully around these — upload is a
-disabled "coming soon" control, the console shows a restart hint when it has no
-stream to attach to (see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md) §6, and
-[`docs/UI_STATUS.md`](docs/UI_STATUS.md) for how each one currently presents):
+disabled "coming soon" control (see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md)
+§6, and [`docs/UI_STATUS.md`](docs/UI_STATUS.md) for how each one presents):
 
 - **Binary file upload** — agent supports it; no hub REST endpoint yet.
-- **Historical logs** — read `logs/latest.log` via the files API; no dedicated
-  log endpoint. Live tail is WS-only.
-- **Console attach on reconnect** — the agent tails a server's log only from the
-  moment it *starts* it; a server already running when the agent (re)connects
-  won't stream console until restarted.
+- **Full log viewer** — `console/history` tails `logs/latest.log` and `files`
+  reads it, but there is no rotation-aware log browser (gzip logs can't be
+  opened).
+- **Live console after an agent reconnect** — the agent tails a server's log
+  only from the moment it *starts* it; a server already running when the agent
+  (re)connects streams no new lines until restarted. The UI backfills recent
+  output via `console/history` on open, so the console isn't blank — but live
+  updates for that case still wait on sync-on-connect.
 - **Desired-state reconciliation** — `desired_running` is recorded but not
   pushed back to an agent on reconnect (no auto-restore yet).
 - **RCON REST surface** — agent supports `rcon.command`; not exposed via REST.
