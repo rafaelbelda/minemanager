@@ -15,6 +15,10 @@ import shutil
 import zipfile
 from pathlib import Path
 
+# Agent-private scratch dir (jar backups, transfer temp files) — hidden from the
+# file explorer so it never looks like user content.
+HIDDEN_DIR = ".minemanager"
+
 _BINARY_SNIFF_BYTES = 8192
 # Conservative in-memory guard so building a directory zip can't OOM the agent
 # even when a huge directory slips past the transfer cap on uncompressed size.
@@ -42,6 +46,8 @@ def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
     root_path = Path(root).resolve()
     entries: list[dict] = []
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+        if child.name == HIDDEN_DIR:
+            continue  # hide our private scratch dir from the explorer
         st = child.stat()
         entries.append(
             {

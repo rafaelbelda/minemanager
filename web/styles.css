@@ -647,6 +647,44 @@ select.input option { background: var(--panel); color: var(--fg); }
 }
 
 /* --- toasts & modals ----------------------------------------------------- */
+/* Large-file transfer pills (bottom-right, above toasts) */
+.transfers {
+  position: fixed; right: 18px; bottom: 18px; z-index: 70;
+  display: flex; flex-direction: column-reverse; gap: 8px; width: 300px;
+}
+.transfers:empty { display: none; }
+.transfer-pill {
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: 7px;
+  padding: 9px 11px; box-shadow: 0 8px 24px rgba(0, 0, 0, .5);
+  animation: mm-rise .14s ease-out;
+}
+.transfer-pill.done { border-color: #2b5c40; }
+.transfer-pill.error { border-color: var(--danger-line); }
+.tp-head { display: flex; align-items: center; gap: 7px; }
+.tp-dir { font-family: var(--mono); color: var(--mm-accent); font-size: 12px; flex: none; }
+.tp-name {
+  font-family: var(--mono); font-size: 11.5px; color: var(--fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tp-cancel {
+  flex: none; width: 18px; height: 18px; padding: 0; display: grid; place-items: center;
+  background: none; border: none; color: var(--dim-2); cursor: pointer;
+  font-size: 14px; line-height: 1; border-radius: 3px;
+}
+.tp-cancel:hover { color: var(--err-fg); background: var(--danger-bg); }
+.tp-icon { flex: none; font-size: 12px; color: var(--muted); }
+.transfer-pill.done .tp-icon { color: var(--ok); }
+.transfer-pill.error .tp-icon { color: var(--err-fg); }
+.tp-bar { height: 4px; border-radius: 2px; background: var(--line-3); overflow: hidden; margin: 8px 0 5px; }
+.tp-fill { height: 100%; background: var(--mm-accent); border-radius: 2px; transition: width .2s ease; }
+.transfer-pill.done .tp-fill { background: var(--ok); }
+.tp-fill.indet { width: 35%; animation: mm-indet 1.1s ease-in-out infinite; }
+@keyframes mm-indet {
+  0% { margin-left: -35%; } 100% { margin-left: 100%; }
+}
+.tp-meta { display: flex; gap: 4px; font-family: var(--mono); font-size: 9.5px; color: var(--dim); }
+.tp-size { color: var(--dim-2); }
+
 .toasts {
   position: fixed; right: 18px; bottom: 18px; z-index: 60;
   display: flex; flex-direction: column; gap: 8px; align-items: flex-end;

@@ -54,6 +54,8 @@ class Supervisor:
         self._monitor: asyncio.Task | None = None
         self._started_at = time.monotonic()
         self._updating: set[str] = set()  # instance ids with an update in progress
+        self.identity = None              # set by the connection after handshake
+                                          # (node_id, credential, http_base) for transfers
 
     # -- lifecycle -----------------------------------------------------------
     def session_name(self, instance_id: str) -> str:

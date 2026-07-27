@@ -126,6 +126,14 @@ export const api = {
   // so we expose the URL rather than fetching it into memory.
   downloadUrl: (id, path) => `${base}/api/instances/${id}/files/download?path=${q(path)}`,
 
+  // Large-file streaming transfers (multi-GB, memory-bounded).
+  uploadStreamUrl: (id, path, tid) =>
+    `${base}/api/instances/${id}/files/upload-stream?path=${q(path)}&tid=${tid}`,
+  downloadStreamUrl: (id, path, tid) =>
+    `${base}/api/instances/${id}/files/download-stream?path=${q(path)}&tid=${tid}`,
+  transferStatus: (tid) => get(`/api/transfers/${tid}`),
+  cancelTransfer: (tid) => post(`/api/transfers/${tid}/cancel`),
+
   // Secrets (write-only values)
   listSecrets: (id) => get(`/api/instances/${id}/secrets`),
   setSecret: (id, key, value) => put(`/api/instances/${id}/secrets`, { key, value }),

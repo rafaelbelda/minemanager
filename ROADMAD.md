@@ -2,24 +2,6 @@ ROADMAD v0.1.0 - v0.1.5
 fixes and improvements
 ---------------------------------------
 
-# A) FILE BROWSER/EDITOR
-
-1-Add a button to expand file editor to make it fullscreen (take up the whole screen) and go back to normal after
-3-Add a Upload files in the file tree viewer. Let's make to ways to add a file:
- a) drag and drop in the file tree viewer to add a file to that dir.
- b) a small Upload button next to "+" (create new file) button, so the user can chose a file if they dont want to drop it.
-
-2-Add a button to Download a file (with its respecting endpoint if it doesn't already exist) next to the new Upload button.
-
-3-Add a safe-guard to large files and instead of immediatly loading them and displaying in the file editor:
- a)If the user selects a large file, prompt and warn the user about the action to see if they want to proceed with it. That avoids unwanted freezes if they click a large file by mistake
- b) Do not load or display .jar files in the file editor.
-
-4- Make a dedicated endpoint for large file transfers so worlds can be uploaded
-5- Make a way to extract files, so worlds that are tipically large files, up to GBs, can be uploaded as well
-
-6- Add right click options in File Explorer Delete, download, rename, extract (if compressed (.rar, zip, .gz)) thats just a quick shortcut to the main static buttons that do those actions in the current selected file; the only difference being it does those actions to the right clicked file. 
-
 # CREATE A NEW SERVER
 
 # RECOGNIZE VERSION (PAPER AND VANILLA) AND BUILD (PAPER-ONLY, displayed alongside ver (ex: 1.20-60, 26.2-45))
@@ -94,7 +76,7 @@ The displayed version must represent the actual server version and, when applica
 
 Add dedicated endpoint and flow to update/overwrite server-icon 
 
-bonus: feat: render png in file explorer
+bonus: feat: render img files (png, jpg, jpeg) in file explorer
 
 1-Velocity proxy ON/OFF switch: Feature only in Paper instances. In settings, add a Velocity ON/OFF switch. Beside it, a Velocity online-mode switch (grayed-out if velocity switch is disabled) and a field in the for the fowarding.secret in setting > secrets.
 
@@ -127,18 +109,28 @@ save below to properties?
 -----------------------------------------
 BUGS:
 
+there is a noticable delay between loading the website and it acquiring the state the server is in. The node state does not have this delay. Identify the issue and see if it's a core unfortunate feature our chosen architecture brought or a quick fix
+in startup, stopped servers (those with Always on turned OFF) are "unknown" instead of stopped
+
 when you change from instance A to instance B, while viewing instance's A file exporer, the file being shown doesn't change. Ideally we shouldclose the current file being presented when changing instances.
 
 gracefull stop servers if systemctl restart/stopor machine reboot possible? 
 
 restart button must reset console? 
-if the server is stopped and clicked on, do not populate/fetch logs from latest.?
+if the server is stopped and clicked on, do not populate/fetch logs from latest?
 OR
 add separate spacing/marker to separate diff sessions
 
 # NOTES
 add instance runtime
 handle diff java versions for diff mc versions?
+
+add node available binds?
+add node settings
+
+show port being used instead of root in intance viewer
+
+AUTO UPDATER
 -------------------------
 DRAFT:
 

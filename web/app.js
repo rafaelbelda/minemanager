@@ -24,6 +24,9 @@ const META = {
 const metaOf = (s) => META[s] || META.unknown;
 
 const CONSOLE_CAP = 1500;
+// Files at/under this size use the simple base64 path (fast, no pill); larger
+// ones (and all directories) use the streaming transfer with a progress pill.
+const STREAM_THRESHOLD = 4 * 1024 * 1024;
 const REFRESH_MS = 10000;
 const REFRESH_FAST_MS = 3000;
 const HEALTH_MS = 15000;
@@ -47,6 +50,7 @@ const state = {
   secrets: [],
   // File-explorer thresholds from /api/config (overwritten at boot).
   config: { editor_warn_bytes: 2_000_000, editor_max_bytes: 5_000_000, transfer_cap_bytes: 8_388_608 },
+  transfers: new Map(),   // tid -> live transfer (for the bottom-right pills)
   // Version tab (catalog is provider-driven; software-agnostic).
   version: {
     instId: null, loading: false, error: null,
@@ -840,7 +844,7 @@ async function openFile(entry) {
       description: `${entry.name} is ${formatSize(entry.size)}, above the ${formatSize(max)} editor limit. Download it instead?`,
       confirmText: 'Download', danger: false,
     });
-    if (ok) downloadEntry(entry);
+    if (ok) downloadEntry(entry, { confirm: false });
     return;
   }
   if (entry.size > warn) {
@@ -873,7 +877,7 @@ async function binaryNotice(entry) {
     description: `${entry.name} is a binary file and can't be edited with the text editor. Download it instead?`,
     confirmText: 'Download', danger: false,
   });
-  if (ok) downloadEntry(entry);
+  if (ok) downloadEntry(entry, { confirm: false });
 }
 
 /** Warn before dropping unsaved edits. Returns true when the user cancels. */
@@ -974,13 +978,37 @@ function triggerDownload(url) {
   a.click();
   a.remove();
 }
-function downloadEntry(entry) {
+
+/** Download a file, or a directory as a zip. Confirms first (name + size) unless
+ *  the caller already asked (binary/large-file "download instead?" flows). */
+async function downloadEntry(entry, { confirm = true } = {}) {
   const inst = curInst();
-  if (inst) triggerDownload(api.downloadUrl(inst.id, entry.path));
+  if (!inst) return;
+  if (confirm) {
+    const what = entry.is_dir
+      ? 'this folder — it will be packaged as a zip archive'
+      : formatSize(entry.size);
+    const ok = await confirmDialog({
+      title: 'Download file',
+      description: `${entry.name} (${what}) will be downloaded to your computer.`,
+      confirmText: 'Download', danger: false,
+    });
+    if (!ok) return;
+  }
+  // Large files and directories stream (with a progress pill); small files take
+  // the simple, instant path.
+  if (entry.is_dir || (entry.size ?? 0) > STREAM_THRESHOLD) {
+    startDownloadStream(inst, entry);
+  } else {
+    triggerDownload(api.downloadUrl(inst.id, entry.path));
+  }
 }
+
 function downloadCurrentFolder() {
   const inst = curInst();
-  if (inst) triggerDownload(api.downloadUrl(inst.id, state.files.path));
+  if (!inst) return;
+  const name = state.files.path === '.' ? inst.name : state.files.path.split('/').pop();
+  downloadEntry({ path: state.files.path, name, is_dir: true });
 }
 
 /* --- files: upload (button + drag&drop) ---------------------------------- */
@@ -994,27 +1022,143 @@ function fileToBase64(file) {
   });
 }
 
-/** Upload {file, relPath}[] into destPath, then refresh. Oversized files (past
- *  the simple-transfer cap) are skipped with a note — large transfers are the
- *  streaming feature. */
+/** Upload {file, relPath}[] into destPath. Large files stream (with a progress
+ *  pill); small files take the quick base64 path. Refreshes on completion. */
 async function uploadFiles(items, destPath) {
   const inst = curInst();
   if (!inst || !items.length) return;
-  const cap = state.config.transfer_cap_bytes;
-  let ok = 0, failed = 0, skipped = 0;
-  const progress = toast(`Uploading ${items.length} file${items.length === 1 ? '' : 's'}…`, 'info', 120000);
+  let ok = 0, failed = 0, streamed = 0;
   for (const { file, relPath } of items) {
-    if (file.size > cap) { skipped++; continue; }
-    try {
-      await api.uploadFile(inst.id, joinPath(destPath, relPath), await fileToBase64(file));
-      ok++;
-    } catch { failed++; }
+    if (file.size > STREAM_THRESHOLD) {
+      startUpload(inst, file, destPath, relPath);   // streaming + pill + own refresh
+      streamed++;
+    } else {
+      try {
+        await api.uploadFile(inst.id, joinPath(destPath, relPath), await fileToBase64(file));
+        ok++;
+      } catch { failed++; }
+    }
   }
-  progress.remove();
   if (ok) toast(`Uploaded ${ok} file${ok === 1 ? '' : 's'}`, 'ok');
-  if (skipped) toast(`${skipped} file(s) skipped — over ${formatSize(cap)}; large transfers coming soon.`, 'error');
   if (failed) toast(`${failed} file(s) failed to upload.`, 'error');
-  loadFiles(state.files.path);              // #9 auto-refresh
+  if (ok || failed) loadFiles(state.files.path);    // #9 auto-refresh (streamed ones refresh on finish)
+}
+
+/* --- files: streaming transfers + progress pills ------------------------- */
+
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function randTid() {
+  if (crypto.randomUUID) return crypto.randomUUID().replace(/-/g, '');
+  const a = new Uint8Array(16); crypto.getRandomValues(a);
+  return [...a].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function addTransfer(tid, info) {
+  state.transfers.set(tid, {
+    tid, name: '', direction: 'down', sent: 0, total: 0, state: 'starting',
+    rate: 0, error: null, xhr: null, _lastSent: 0, _lastT: performance.now(), ...info,
+  });
+  renderTransfers();
+}
+function updateTransfer(tid, patch) {
+  const t = state.transfers.get(tid);
+  if (!t || ['done', 'error', 'cancelled'].includes(t.state)) return;
+  Object.assign(t, patch);
+  const now = performance.now();
+  const dt = (now - t._lastT) / 1000;
+  if (dt >= 0.4) {
+    const inst = Math.max(0, (t.sent - t._lastSent) / dt);
+    t.rate = t.rate ? t.rate * 0.6 + inst * 0.4 : inst;   // smoothed
+    t._lastSent = t.sent; t._lastT = now;
+  }
+  renderTransfers();
+}
+function finishTransfer(tid, st, error) {
+  const t = state.transfers.get(tid);
+  if (!t) return;
+  t.state = st; t.error = error || null; t.rate = 0;
+  if (st === 'done' && t.total) t.sent = t.total;
+  renderTransfers();
+  setTimeout(() => { state.transfers.delete(tid); renderTransfers(); },
+    st === 'done' ? 2500 : st === 'error' ? 7000 : 1200);
+}
+function cancelTransfer(t) {
+  if (t.xhr) { try { t.xhr.abort(); } catch { /* already gone */ } }
+  api.cancelTransfer(t.tid).catch(() => {});
+  finishTransfer(t.tid, 'cancelled');
+}
+
+function renderTransfers() {
+  const box = clear($('transfers'));
+  for (const t of state.transfers.values()) {
+    const pct = t.total ? Math.min(100, Math.round((t.sent / t.total) * 100)) : null;
+    const active = t.state === 'starting' || t.state === 'active';
+    const status = t.state === 'error' ? (t.error || 'failed')
+      : t.state === 'done' ? 'complete'
+      : t.state === 'cancelled' ? 'cancelled'
+      : t.state === 'starting' ? 'starting…'
+      : t.rate ? `${formatSize(t.rate)}/s` : '…';
+    box.append(el(`div.transfer-pill.${t.state}`, {},
+      el('div.tp-head', {},
+        el('span.tp-dir', {}, t.direction === 'up' ? '↑' : '↓'),
+        el('span.tp-name', { title: t.name, text: t.name }),
+        el('span.spacer'),
+        active
+          ? el('button.tp-cancel', { title: 'Cancel', onclick: () => cancelTransfer(t) }, '×')
+          : el('span.tp-icon', {}, t.state === 'done' ? '✓' : t.state === 'error' ? '!' : '–')),
+      el('div.tp-bar', {},
+        el(`div.tp-fill${pct === null && active ? '.indet' : ''}`,
+          { style: pct !== null ? `width:${pct}%` : '' })),
+      el('div.tp-meta', {},
+        el('span', {}, pct !== null ? `${pct}%` : (t.sent ? formatSize(t.sent) : '')),
+        el('span.spacer'),
+        el('span', { text: status }),
+        t.total ? el('span.tp-size', { text: ` · ${formatSize(t.total)}` }) : null)));
+  }
+}
+
+function startUpload(inst, file, destPath, relPath) {
+  const tid = randTid();
+  const rel = joinPath(destPath, relPath || file.name);
+  const xhr = new XMLHttpRequest();
+  addTransfer(tid, { name: file.name, direction: 'up', total: file.size, xhr });
+  xhr.open('POST', api.uploadStreamUrl(inst.id, rel, tid));
+  xhr.upload.onprogress = (e) => updateTransfer(tid, { state: 'active', sent: e.loaded, total: e.total || file.size });
+  xhr.onload = () => {
+    finishTransfer(tid, xhr.status === 200 ? 'done' : 'error', xhr.status === 200 ? null : `upload failed (${xhr.status})`);
+    loadFiles(state.files.path);
+  };
+  xhr.onerror = () => finishTransfer(tid, 'error', 'network error');
+  xhr.onabort = () => finishTransfer(tid, 'cancelled');
+  xhr.setRequestHeader('content-type', 'application/octet-stream');
+  xhr.send(file);
+}
+
+function startDownloadStream(inst, entry) {
+  const tid = randTid();
+  addTransfer(tid, {
+    name: entry.is_dir ? `${entry.name}.zip` : entry.name,
+    direction: 'down', total: entry.is_dir ? 0 : (entry.size || 0),
+  });
+  triggerDownload(api.downloadStreamUrl(inst.id, entry.path, tid));  // native save
+  pollDownload(tid);                                                 // pill progress
+}
+async function pollDownload(tid) {
+  let sawActive = false, misses = 0;
+  for (;;) {
+    const t = state.transfers.get(tid);
+    if (!t || ['done', 'error', 'cancelled'].includes(t.state)) return;
+    let st = null;
+    try { st = await api.transferStatus(tid); } catch { /* transient */ }
+    if (st && (st.state === 'active' || st.state === 'pending')) {
+      sawActive = true; misses = 0;
+      updateTransfer(tid, { state: 'active', sent: st.sent, total: st.total || t.total });
+    } else if (st && st.state === 'done') { finishTransfer(tid, 'done'); return; }
+    else if (st && st.state === 'cancelled') { finishTransfer(tid, 'cancelled'); return; }
+    else if (st && st.state === 'error') { finishTransfer(tid, 'error', st.error); return; }
+    else if (sawActive || ++misses > 40) { finishTransfer(tid, 'done'); return; }  // gone after active, or never appeared (~20s)
+    await _sleep(500);
+  }
 }
 
 function pickUpload(destPath) {

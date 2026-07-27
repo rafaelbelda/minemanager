@@ -38,6 +38,13 @@ class AgentConfig:
     heartbeat_s: float = 15.0
 
     @property
+    def http_base(self) -> str:
+        """HTTP(S) origin of the hub, derived from the WS hub URL — used for the
+        outbound large-file transfer connections."""
+        u = self.hub_url.replace("wss://", "https://", 1).replace("ws://", "http://", 1)
+        return u.rsplit("/ws/", 1)[0] if "/ws/" in u else u.rstrip("/")
+
+    @property
     def identity_file(self) -> Path:
         return self.data_dir / "identity.json"
 

@@ -108,6 +108,9 @@ class Action(str, Enum):
     # Version / build updater -----------------------------------------------
     update_apply = "update.apply"   # transactionally replace the server jar
 
+    # Large-file streaming transfers ----------------------------------------
+    transfer_start = "transfer.start"   # hub tells agent to open a data connection
+
     # Introspection ---------------------------------------------------------
     node_info = "node.info"
     instance_status = "instance.status"

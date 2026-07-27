@@ -260,6 +260,12 @@ minemanager/
   jar swap on the agent (download → checksum verify → backup → atomic replace →
   rollback) that touches only the server executable. Adding a provider (Purpur,
   Fabric, Forge…) is a new module + one registry line, no UI change.
+- **File explorer** — jailed browse/edit plus fullscreen editor, upload (button
+  + drag&drop, folders recurse), download (file, or folder→zip), archive
+  extraction (ZIP/TAR.GZ/TGZ/GZ, RAR if available; zip-slip jailed; overwrite
+  prompt), rename, right-click context menu, auto-refresh, and configurable
+  large-file + binary-file guards. Simple upload/download is capped; multi-GB
+  streaming is a separate next pass.
 - Protocol: shared Pydantic contracts.
 
 **v2 — provisioning & polish**
@@ -278,7 +284,11 @@ Deliberately deferred; the UI degrades gracefully around these — upload is a
 disabled "coming soon" control (see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md)
 §6, and [`docs/UI_STATUS.md`](docs/UI_STATUS.md) for how each one presents):
 
-- **Binary file upload** — agent supports it; no hub REST endpoint yet.
+- **Multi-GB streamed transfers** — file upload/download use a simple base64
+  path capped at `transfer_cap_bytes` (~8 MB); a dedicated streaming channel
+  (binary frames multiplexed over the agent WS with credit-based flow control,
+  bridged to the browser via HTTP streaming, with progress + cancel) for whole
+  worlds is the next pass.
 - **Full log viewer** — `console/history` tails `logs/latest.log` and `files`
   reads it, but there is no rotation-aware log browser (gzip logs can't be
   opened).

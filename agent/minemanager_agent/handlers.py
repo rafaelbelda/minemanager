@@ -7,7 +7,7 @@ copy of instance config.
 
 from __future__ import annotations
 
-from minemanager_agent import archive, files, rcon
+from minemanager_agent import archive, files, rcon, transfer
 from minemanager_agent.supervisor import Supervisor
 from minemanager_shared.protocol import Action, Command, InstanceSpec, Response, RunState
 
@@ -102,6 +102,14 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
         if not jar_name or not download:
             return Response.failure(cmd.id, "update.apply requires jar_name and download")
         result = await sup.apply_update(spec, jar_name, download)
+        return Response.success(cmd.id, result)
+
+    # -- large-file streaming transfer --------------------------------------
+    if action == Action.transfer_start.value:
+        spec = _spec(cmd)
+        if sup.identity is None:
+            return Response.failure(cmd.id, "agent identity not ready for transfers")
+        result = await transfer.handle(sup.identity, cmd.data, spec.root_dir)
         return Response.success(cmd.id, result)
 
     # -- rcon (secondary) ---------------------------------------------------

@@ -73,10 +73,20 @@ and clear toggles, and a line-send input that echoes locally. On open it
 backfills recent output via `console/history` (once per instance), then the live
 stream takes over; a soft error banner shows only if that backfill fails.
 
-**Files** — jailed browser with directory navigation and breadcrumb, text editor
-with a line-number gutter and comment highlighting, save (also `Ctrl/Cmd+S`),
-new file, delete with confirm, and an unsaved-changes guard on tab switch, file
-switch and page unload.
+**Files** — jailed browser with directory navigation and breadcrumb; text editor
+with a line-number gutter, comment highlighting, save (also `Ctrl/Cmd+S`), new
+file, delete with confirm, and an unsaved-changes guard on tab switch, file
+switch and page unload. Plus: a **fullscreen** editor toggle; **upload** via a
+toolbar button and drag&drop onto the list or a folder row (folders recurse);
+**download** of a file, or a folder as a zip (per-row and toolbar); **archive
+extraction** (ZIP/TAR.GZ/TGZ/GZ, RAR if the node supports it) with an
+overwrite-conflict prompt; **rename**; a **large-file guard** (warns past the
+configurable threshold, refuses past the max and offers download) and a
+**binary-file guard** (blocks `.jar` and NUL-detected files from the editor,
+offering download instead); a right-click **context menu** that acts on the
+clicked item; and **auto-refresh** after every operation, keeping the current
+folder and selection. Simple upload/download is capped (`transfer_cap_bytes`);
+multi-GB streaming is the next pass.
 
 **Version** — provider-driven upgrade/downgrade of the server binary. Shows the
 current version/build, a target version selector, and (only when the software
@@ -103,7 +113,7 @@ These need a backend endpoint first. Tracked in PLAN.md §11b.
 
 | Gap | UI today | Needs |
 |---|---|---|
-| **Binary upload** | upload button visible but disabled, tooltip "coming soon" | REST surface for the agent's `files.upload` |
+| **Multi-GB streamed transfers** | upload/download work for normal files (base64, capped ~8 MB); over-cap uploads are skipped with a note | a streaming channel (progress + cancel, memory-bounded) for whole worlds |
 | **Full log viewer** | console backfills via `console/history`; Files → `logs/` → `latest.log` opens the current log | a rotation-aware viewer; rotated `*.log.gz` list but can't be opened (`files/read` is utf-8, so it 502s) |
 | **RCON console** | not offered at all | REST surface for the agent's `rcon.command` |
 | **Audit log** | no history view | the model to be populated and exposed |

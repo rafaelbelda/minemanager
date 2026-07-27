@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from types import SimpleNamespace
 
 import websockets
 
@@ -69,7 +70,13 @@ class Connection:
             # First enrollment — persist the issued long-lived credential.
             self.config.save_identity(welcome.node_id, welcome.credential)
             log.info("enrolled as node %s", welcome.node_id)
-        return welcome.node_id or node_id or "?"
+        resolved_id, credential = self.config.load_identity()
+        resolved_id = welcome.node_id or resolved_id or node_id or "?"
+        # Give the supervisor what it needs to open outbound transfer connections.
+        self.supervisor.identity = SimpleNamespace(
+            node_id=resolved_id, credential=credential, http_base=self.config.http_base,
+        )
+        return resolved_id
 
     async def _heartbeat_loop(self) -> None:
         """Periodically report liveness + instance states to the hub.
