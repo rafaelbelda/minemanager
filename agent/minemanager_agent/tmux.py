@@ -28,7 +28,10 @@ async def _run(*args: str) -> tuple[int, str, str]:
 
 
 async def has_session(name: str) -> bool:
-    code, _, _ = await _run("has-session", "-t", name)
+    try:
+        code, _, _ = await _run("has-session", "-t", name)
+    except FileNotFoundError:
+        return False  # tmux not installed → nothing is running under it
     return code == 0
 
 

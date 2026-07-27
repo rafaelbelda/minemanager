@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from minemanager_agent import logtail, tmux
+from minemanager_agent import logtail, tmux, updater
 from minemanager_shared.protocol import Action, Event, InstanceSpec, RunState
 
 EmitFn = Callable[[Event], Awaitable[None]]
@@ -53,6 +53,7 @@ class Supervisor:
         self._instances: dict[str, ManagedInstance] = {}
         self._monitor: asyncio.Task | None = None
         self._started_at = time.monotonic()
+        self._updating: set[str] = set()  # instance ids with an update in progress
 
     # -- lifecycle -----------------------------------------------------------
     def session_name(self, instance_id: str) -> str:
@@ -79,6 +80,8 @@ class Supervisor:
 
     async def start(self, spec: InstanceSpec) -> dict:
         mi = self._managed(spec)
+        if spec.id in self._updating:
+            raise RuntimeError("cannot start: a server update is in progress")
         if await tmux.has_session(mi.session):
             mi.desired_running = True
             return {"state": mi.state.value, "already_running": True}
@@ -133,6 +136,38 @@ class Supervisor:
         await tmux.send_keys(mi.session, line)
         return {"sent": True}
 
+    # -- version updater -----------------------------------------------------
+    async def apply_update(self, spec: InstanceSpec, jar_name: str, download: dict) -> dict:
+        """Transactionally replace the server jar. Refuses if the instance is
+        running or already updating; holds the ``updating`` state (which also
+        blocks ``start``) for the duration."""
+        mi = self._managed(spec)
+        if await tmux.has_session(mi.session):
+            raise RuntimeError("instance must be stopped before updating")
+        if spec.id in self._updating:
+            raise RuntimeError("an update is already in progress")
+
+        self._updating.add(spec.id)
+        prev_state = mi.state
+        await self._set_state(mi, RunState.updating, detail=f"installing {download.get('version')}")
+        try:
+            result = await updater.apply_update(spec.root_dir, jar_name, download)
+            await self._set_state(
+                mi, RunState.stopped,
+                detail=f"updated to {download.get('version')}"
+                + (f" build {download['build']}" if download.get("build") else ""),
+            )
+            return result
+        except Exception as exc:
+            await self._set_state(mi, prev_state if prev_state != RunState.updating else RunState.stopped,
+                                   detail=f"update failed: {exc}")
+            raise
+        finally:
+            self._updating.discard(spec.id)
+
+    def is_updating(self, instance_id: str) -> bool:
+        return instance_id in self._updating
+
     # -- console tailing -----------------------------------------------------
     def _ensure_tail(self, mi: ManagedInstance) -> None:
         if mi.tail_task and not mi.tail_task.done():
@@ -161,6 +196,8 @@ class Supervisor:
                 await self._check_one(mi)
 
     async def _check_one(self, mi: ManagedInstance) -> None:
+        if mi.spec.id in self._updating:
+            return  # never treat a mid-update instance as crashed
         alive = await tmux.has_session(mi.session)
         if alive or not mi.desired_running:
             return

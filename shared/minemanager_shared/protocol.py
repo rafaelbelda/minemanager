@@ -67,6 +67,7 @@ class RunState(str, Enum):
     running = "running"
     stopping = "stopping"
     crashed = "crashed"
+    updating = "updating"   # a server-binary update is in progress (start refused)
     unknown = "unknown"
 
 
@@ -100,6 +101,9 @@ class Action(str, Enum):
 
     # RCON (secondary command channel) --------------------------------------
     rcon_command = "rcon.command"
+
+    # Version / build updater -----------------------------------------------
+    update_apply = "update.apply"   # transactionally replace the server jar
 
     # Introspection ---------------------------------------------------------
     node_info = "node.info"
@@ -203,6 +207,27 @@ class InstanceSpec(BaseModel):
     rcon_host: str = "127.0.0.1"
     rcon_port: Optional[int] = None
     rcon_password: Optional[str] = None  # decrypted just-in-time by the hub
+
+
+class UpdateDownload(BaseModel):
+    """A resolved server-binary download, produced by a hub version provider and
+    handed to the agent to fetch and install. Kept provider-agnostic: the agent
+    only downloads a URL, optionally verifies a checksum, and swaps the jar."""
+
+    url: str
+    filename: str                    # source filename (informational)
+    size: Optional[int] = None       # expected bytes, when known
+    checksum: Optional[str] = None   # hex digest, when the provider supplies one
+    checksum_algo: Optional[Literal["sha256", "sha1"]] = None
+    version: str                     # what we're installing (for display/record)
+    build: Optional[str] = None
+
+
+class UpdateApplyData(BaseModel):
+    """Payload for the ``update.apply`` command (hub -> agent)."""
+
+    jar_name: str                    # target jar to replace, relative to root
+    download: UpdateDownload
 
 
 class ConsoleSendData(BaseModel):

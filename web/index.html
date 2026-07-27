@@ -157,6 +157,7 @@
           <div class="tabs">
             <div class="tab" data-tab="console">CONSOLE</div>
             <div class="tab" data-tab="files">FILES</div>
+            <div class="tab" data-tab="version">VERSION</div>
             <div class="tab" data-tab="settings">SETTINGS</div>
           </div>
         </div>
@@ -228,6 +229,49 @@
         </div>
 
         <!-- SETTINGS TAB -->
+        <!-- VERSION TAB -->
+        <div class="tab-pane hidden" id="pane-version">
+          <div class="scroll" style="padding:22px 28px">
+            <div class="version-wrap">
+              <div class="banner warn hidden" id="ver-updating">
+                <span class="spin"></span>
+                Updating the server binary &mdash; the server is locked until this finishes.
+              </div>
+
+              <div class="label" style="margin-bottom:12px">CURRENT</div>
+              <div class="ver-card ver-current">
+                <div class="ver-cur-line">
+                  <span class="ver-soft" id="ver-cur-soft">&mdash;</span>
+                  <span class="ver-cur-ver" id="ver-cur-ver">&mdash;</span>
+                </div>
+                <div class="ver-cur-build" id="ver-cur-build"></div>
+              </div>
+
+              <div class="label" style="margin:24px 0 12px">TARGET</div>
+              <div class="ver-card">
+                <div class="ver-target">
+                  <div id="ver-version-field">
+                    <label class="field-label" id="ver-version-label" for="ver-version">Version</label>
+                    <select class="input" id="ver-version"></select>
+                  </div>
+                  <div id="ver-build-field">
+                    <label class="field-label" id="ver-build-label" for="ver-build">Build</label>
+                    <select class="input" id="ver-build"></select>
+                  </div>
+                </div>
+                <div class="ver-actions">
+                  <button class="btn btn-primary btn-lg" id="ver-update">Update</button>
+                  <span class="ver-status" id="ver-status"></span>
+                </div>
+                <div class="ver-note" id="ver-note">
+                  Replaces only the server executable. Worlds, plugins, mods, configuration
+                  and player data are never touched, and the previous jar is backed up first.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="tab-pane hidden" id="pane-settings">
           <div class="scroll" style="padding:22px 28px">
             <div class="settings">

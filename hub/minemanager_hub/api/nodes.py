@@ -51,6 +51,8 @@ def _instance_out(inst: Instance) -> InstanceOut:
         auto_restart=inst.auto_restart,
         rcon_host=inst.rcon_host,
         rcon_port=inst.rcon_port,
+        version=inst.version,
+        build=inst.build,
     )
 
 

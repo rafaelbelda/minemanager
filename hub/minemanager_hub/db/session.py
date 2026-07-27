@@ -36,7 +36,34 @@ def _init() -> None:
         cur.close()
 
     Base.metadata.create_all(_engine)
+    _ensure_columns(_engine)
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
+
+
+def _ensure_columns(engine: Engine) -> None:
+    """Add columns introduced after a DB was first created.
+
+    We have no migration framework (single-tenant, tiny SQLite DB), and
+    ``create_all`` never alters existing tables — so bring older DBs forward with
+    idempotent ``ALTER TABLE`` for the handful of columns added over time.
+    """
+    from sqlalchemy import inspect, text
+
+    wanted = {
+        "instances": {
+            "version": "VARCHAR(64)",
+            "build": "VARCHAR(32)",
+        },
+    }
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in wanted.items():
+            if not inspector.has_table(table):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl in cols.items():
+                if name not in existing:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
 
 
 def init_db() -> None:

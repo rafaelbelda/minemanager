@@ -76,6 +76,16 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
         lines = int(cmd.data.get("lines", 200))
         return Response.success(cmd.id, files.tail_lines(root, path, lines))
 
+    # -- version updater ----------------------------------------------------
+    if action == Action.update_apply.value:
+        spec = _spec(cmd)
+        jar_name = cmd.data.get("jar_name")
+        download = cmd.data.get("download")
+        if not jar_name or not download:
+            return Response.failure(cmd.id, "update.apply requires jar_name and download")
+        result = await sup.apply_update(spec, jar_name, download)
+        return Response.success(cmd.id, result)
+
     # -- rcon (secondary) ---------------------------------------------------
     if action == Action.rcon_command.value:
         spec = _spec(cmd)

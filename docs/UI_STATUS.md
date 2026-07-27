@@ -78,6 +78,15 @@ with a line-number gutter and comment highlighting, save (also `Ctrl/Cmd+S`),
 new file, delete with confirm, and an unsaved-changes guard on tab switch, file
 switch and page unload.
 
+**Version** — provider-driven upgrade/downgrade of the server binary. Shows the
+current version/build, a target version selector, and (only when the software
+exposes builds) a build selector that refetches when the version changes. Labels
+adapt per software ("Minecraft Version"/"Paper Build" vs. plain "Version"). The
+Update button is gated on the instance being stopped and online; during an
+update the `updating` state locks power controls and shows a progress banner,
+then the current version updates in place. The pane is entirely software-agnostic
+— a new provider on the hub appears here with no UI change.
+
 **Secrets** — shows which keys are set without ever displaying a value; set,
 overwrite, and add arbitrary keys. `forwarding_secret` is offered for Velocity
 instances.

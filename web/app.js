@@ -18,6 +18,7 @@ const META = {
   starting: { label: 'STARTING', color: '#f0b429', anim: 'mm-pulse 1.2s infinite' },
   stopping: { label: 'STOPPING', color: '#f0b429', anim: 'mm-pulse 1.2s infinite' },
   crashed: { label: 'CRASHED', color: '#ff5c54', anim: 'mm-pulse 1.6s infinite' },
+  updating: { label: 'UPDATING', color: '#5ac8fa', anim: 'mm-pulse 1.2s infinite' },
   unknown: { label: 'UNKNOWN', color: '#6b6b67', anim: 'none' },
 };
 const metaOf = (s) => META[s] || META.unknown;
@@ -43,6 +44,13 @@ const state = {
   files: { path: '.', entries: [], loading: false, error: null },
   editor: { path: null, original: '', size: 0 },
   secrets: [],
+  // Version tab (catalog is provider-driven; software-agnostic).
+  version: {
+    instId: null, loading: false, error: null,
+    software: null, label: '', hasBuilds: false,
+    versions: [], builds: [], buildsLoading: false,
+    selVersion: null, selBuild: null, updating: false,
+  },
   autoscroll: true,
   scanlines: true,
   loaded: false,
@@ -600,22 +608,25 @@ function renderInstance() {
 
   $('inst-meta').textContent = inst.rcon_port ? `rcon ${inst.rcon_host}:${inst.rcon_port}` : '';
 
-  // Power controls — gated on the node being reachable (a 409 otherwise).
+  // Power controls — gated on reachability, and fully locked during an update.
+  const updating = run === 'updating';
   const start = $('act-start');
-  start.classList.toggle('btn-start', live && ['stopped', 'crashed', 'unknown'].includes(run));
-  start.disabled = !live || ['running', 'starting'].includes(run);
-  $('act-stop').disabled = !live || run === 'stopped';
-  $('act-restart').disabled = !live;
-  $('act-kill').disabled = !live || run === 'stopped';
+  start.classList.toggle('btn-start', live && !updating && ['stopped', 'crashed', 'unknown'].includes(run));
+  start.disabled = !live || updating || ['running', 'starting'].includes(run);
+  $('act-stop').disabled = !live || updating || run === 'stopped';
+  $('act-restart').disabled = !live || updating;
+  $('act-kill').disabled = !live || updating || run === 'stopped';
 
   document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === state.tab));
   show($('inst-offline'), !live);
   show($('pane-console'), state.tab === 'console');
   show($('pane-files'), state.tab === 'files');
+  show($('pane-version'), state.tab === 'version');
   show($('pane-settings'), state.tab === 'settings');
 
   if (state.tab === 'console') renderConsole(inst, m, live);
   if (state.tab === 'files') renderFiles(inst, live);
+  if (state.tab === 'version') renderVersion(inst, live);
   if (state.tab === 'settings') renderSecrets(inst);
 }
 
@@ -691,6 +702,12 @@ function resetInstancePanes() {
   state.files = { path: '.', entries: [], loading: false, error: null };
   state.editor = { path: null, original: '', size: 0 };
   state.secrets = [];
+  state.version = {
+    instId: null, loading: false, error: null,
+    software: null, label: '', hasBuilds: false,
+    versions: [], builds: [], buildsLoading: false,
+    selVersion: null, selBuild: null, updating: false,
+  };
   $('editor-area').value = '';
   const body = $('term-body');
   body.dataset.inst = '';
@@ -702,6 +719,7 @@ function loadTab() {
   if (!inst) return;
   if (state.tab === 'console') loadConsoleHistory(inst);
   if (state.tab === 'files' && !state.files.entries.length && !state.files.loading) loadFiles(state.files.path);
+  if (state.tab === 'version' && state.version.instId !== inst.id) loadVersion(inst);
   if (state.tab === 'settings') { fillSettings(inst); loadSecrets(inst); }
 }
 
@@ -1015,6 +1033,156 @@ async function saveInstance() {
   }
 }
 
+/* --- version tab --------------------------------------------------------- */
+
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+/** Load the available versions for the instance's software (from the hub). */
+async function loadVersion(inst) {
+  const v = state.version;
+  Object.assign(v, {
+    instId: inst.id, loading: true, error: null,
+    versions: [], builds: [], selVersion: null, selBuild: null,
+    software: inst.type, label: cap(inst.type), hasBuilds: inst.type !== 'vanilla',
+  });
+  render();
+  try {
+    const res = await api.listSoftwareVersions(inst.type);
+    if (state.sel.instId !== inst.id) return;
+    v.software = res.software;
+    v.label = res.label;
+    v.hasBuilds = res.has_builds;
+    v.versions = res.versions || [];
+    // Default to the installed version if it's still offered, else the newest.
+    const cur = inst.version && v.versions.find((x) => x.id === inst.version);
+    v.selVersion = (cur ? cur.id : v.versions[0]?.id) || null;
+    v.loading = false;
+    if (v.hasBuilds && v.selVersion) await loadBuilds(inst, v.selVersion, inst.build);
+    else render();
+  } catch (err) {
+    if (state.sel.instId !== inst.id) return;
+    v.loading = false;
+    v.error = describe(err);
+    render();
+  }
+}
+
+/** Refresh the build list when the selected version changes. */
+async function loadBuilds(inst, version, preferBuild = null) {
+  const v = state.version;
+  v.buildsLoading = true;
+  v.builds = [];
+  v.selBuild = null;
+  render();
+  try {
+    const res = await api.listSoftwareBuilds(inst.type, version);
+    if (state.sel.instId !== inst.id || v.selVersion !== version) return;
+    v.builds = res.builds || [];
+    const pref = preferBuild && v.builds.find((b) => b.id === String(preferBuild));
+    v.selBuild = (pref ? pref.id : v.builds[0]?.id) || null;
+  } catch (err) {
+    if (state.sel.instId === inst.id) v.error = describe(err);
+  } finally {
+    v.buildsLoading = false;
+    render();
+  }
+}
+
+/** Fill a <select> only when its option set actually changed (so heartbeat
+ *  re-renders don't disrupt an open dropdown). */
+function syncSelect(sel, sig, build) {
+  if (sel.dataset.sig !== sig) {
+    build();
+    sel.dataset.sig = sig;
+  }
+}
+
+function renderVersion(inst, live) {
+  const v = state.version;
+  const run = runStateOf(inst);
+  const updating = run === 'updating' || v.updating;
+
+  show($('ver-updating'), updating);
+
+  // Current
+  $('ver-cur-soft').textContent = v.label || cap(inst.type);
+  $('ver-cur-ver').textContent = inst.version || 'not detected yet';
+  const curBuild = inst.build ? `${v.label || cap(inst.type)} Build ${inst.build}` : '';
+  $('ver-cur-build').textContent = curBuild;
+  show($('ver-cur-build'), !!curBuild);
+
+  // Adaptive labels
+  $('ver-version-label').textContent = inst.type === 'paper' ? 'Minecraft Version' : 'Version';
+  $('ver-build-label').textContent = `${v.label || cap(inst.type)} Build`;
+
+  // Version select
+  const vsel = $('ver-version');
+  if (v.loading) {
+    syncSelect(vsel, '__loading__', () => fill(vsel, el('option', {}, 'Loading…')));
+    vsel.disabled = true;
+  } else if (v.error && !v.versions.length) {
+    syncSelect(vsel, '__error__', () => fill(vsel, el('option', {}, 'Failed to load')));
+    vsel.disabled = true;
+  } else {
+    syncSelect(vsel, v.versions.map((x) => x.id).join('|'), () =>
+      fill(vsel, v.versions.map((x) => el('option', { value: x.id }, x.label))));
+    if (v.selVersion) vsel.value = v.selVersion;
+    vsel.disabled = updating;
+  }
+
+  // Build select (only when the software exposes builds)
+  show($('ver-build-field'), !!v.hasBuilds);
+  if (v.hasBuilds) {
+    const bsel = $('ver-build');
+    if (v.buildsLoading) {
+      syncSelect(bsel, '__loading__', () => fill(bsel, el('option', {}, 'Loading…')));
+      bsel.disabled = true;
+    } else if (!v.builds.length) {
+      syncSelect(bsel, '__empty__', () => fill(bsel, el('option', {}, '—')));
+      bsel.disabled = true;
+    } else {
+      syncSelect(bsel, v.builds.map((b) => b.id).join('|'), () =>
+        fill(bsel, v.builds.map((b) => el('option', { value: b.id },
+          b.channel && b.channel !== 'STABLE' ? `${b.label} · ${b.channel.toLowerCase()}` : b.label))));
+      if (v.selBuild) bsel.value = v.selBuild;
+      bsel.disabled = updating;
+    }
+  }
+
+  // Update button + reason
+  const canPick = !!v.selVersion && (!v.hasBuilds || !!v.selBuild);
+  let reason = '';
+  if (!live) reason = "Node offline — can't reach the agent.";
+  else if (updating) reason = 'Update in progress…';
+  else if (['running', 'starting', 'stopping'].includes(run)) reason = 'Stop the server before updating.';
+  else if (v.error && !v.versions.length) reason = v.error;
+  else if (!canPick) reason = 'Select a version to update.';
+
+  const btn = $('ver-update');
+  btn.disabled = !!reason || !canPick;
+  btn.textContent = updating ? 'Updating…' : 'Update';
+  $('ver-status').textContent = reason;
+}
+
+async function doUpdateVersion() {
+  const inst = curInst();
+  const v = state.version;
+  if (!inst || !v.selVersion || (v.hasBuilds && !v.selBuild)) return;
+  v.updating = true;
+  render();
+  try {
+    const res = await api.updateInstanceVersion(inst.id, v.selVersion, v.hasBuilds ? v.selBuild : null);
+    inst.version = res.version;
+    inst.build = res.build ?? null;
+    toast(`Updated ${inst.name} to ${res.version}${res.build ? ' build ' + res.build : ''}`, 'ok');
+  } catch (err) {
+    toast(describe(err), 'error');
+  } finally {
+    v.updating = false;
+    render();
+  }
+}
+
 /* --- start-command helpers (jar + memory) -------------------------------- */
 
 // Each server type is launched from a conventionally-named jar.
@@ -1295,6 +1463,17 @@ function bind() {
       saveFile();
     }
   };
+
+  // Version
+  $('ver-version').onchange = (ev) => {
+    const inst = curInst();
+    if (!inst) return;
+    state.version.selVersion = ev.target.value;
+    if (state.version.hasBuilds) loadBuilds(inst, ev.target.value);
+    else render();
+  };
+  $('ver-build').onchange = (ev) => { state.version.selBuild = ev.target.value; render(); };
+  $('ver-update').onclick = doUpdateVersion;
 
   // Settings
   $('set-auto').onclick = () => $('set-auto').classList.toggle('on');

@@ -25,3 +25,6 @@ agent.env
 .ruff_cache/
 .idea/
 .vscode/
+_ui/
+_seam/
+_vt/

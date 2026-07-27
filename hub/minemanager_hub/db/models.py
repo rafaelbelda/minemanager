@@ -75,6 +75,12 @@ class Instance(Base):
     rcon_host: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
     rcon_port: Mapped[int | None] = mapped_column(Integer, default=None)
 
+    # Installed server-binary version/build. Set by the updater; until a proper
+    # Version Detector lands (v2) this reflects what we last installed, or NULL
+    # when unknown.
+    version: Mapped[str | None] = mapped_column(String(64), default=None)
+    build: Mapped[str | None] = mapped_column(String(32), default=None)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     node: Mapped[Node] = relationship(back_populates="instances")

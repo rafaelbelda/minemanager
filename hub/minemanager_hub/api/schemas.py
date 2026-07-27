@@ -67,6 +67,8 @@ class InstanceOut(BaseModel):
     auto_restart: bool
     rcon_host: str
     rcon_port: Optional[int] = None
+    version: Optional[str] = None    # installed server version (updater / detector)
+    build: Optional[str] = None      # installed build, when applicable
 
 
 # --- Control ---------------------------------------------------------------
@@ -82,3 +84,8 @@ class FileWrite(BaseModel):
 class SecretSet(BaseModel):
     key: str = Field(..., examples=["rcon_password", "forwarding_secret"])
     value: str
+
+
+class UpdateRequest(BaseModel):
+    version: str
+    build: Optional[str] = None   # required only for software that has builds

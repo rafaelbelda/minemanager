@@ -77,9 +77,14 @@ copy button and the install hint; it cannot be retrieved again (only re-minted).
   "desired_running": true,         // operator intent (see gap note in §6)
   "auto_restart": true,
   "rcon_host": "127.0.0.1",
-  "rcon_port": 25575               // or null
+  "rcon_port": 25575,              // or null
+  "version": "1.21.8",            // installed server version, or null if unknown
+  "build": "60"                   // installed build (paper/velocity), else null
 }
 ```
+
+`version`/`build` are set by the updater (and, later, a version detector). They
+are `null` on a freshly declared instance — show "not detected yet".
 
 ### FileEntry (from files list)
 ```json
@@ -90,7 +95,11 @@ copy button and the install hint; it cannot be retrieved again (only re-minted).
 read/write/delete. `modified` is a unix timestamp (float seconds).
 
 ### RunState enum (instance runtime state)
-`stopped` · `starting` · `running` · `stopping` · `crashed` · `unknown`
+`stopped` · `starting` · `running` · `stopping` · `crashed` · `updating` · `unknown`
+
+`updating` is emitted while a server-binary update is in progress: the agent
+refuses to start the server, so the UI should lock power controls until it
+clears (it transitions back to `stopped`).
 
 ---
 
@@ -188,6 +197,33 @@ listable but not decompressed by the API). Live console tailing is via the WS.
 Values are encrypted at rest and **never returned**. The UI can show *which*
 keys are set and let the user overwrite them, but cannot display current values.
 Common keys: `rcon_password`, `forwarding_secret` (Velocity).
+
+### Version / build updater
+
+The catalog is served by the hub from software providers; the install runs on
+the agent. Endpoints are keyed by **software** (an instance's `type`) and are
+provider-agnostic — the UI never hard-codes Paper/Vanilla/Velocity logic.
+
+| Method | Path | Returns |
+|---|---|---|
+| GET | `/api/providers/{software}` | `{software, label, has_builds}` |
+| GET | `/api/providers/{software}/versions` | `{software, label, has_builds, versions:[{id,label,channel}]}` |
+| GET | `/api/providers/{software}/versions/{version}/builds` | `{software, version, builds:[{id,label,channel}]}` |
+| POST | `/api/instances/{instance_id}/update` | body `{version, build?}` → `{ok, version, build, jar, detail}` |
+
+Rules for the UI:
+- `has_builds` decides whether to show a build selector at all. Vanilla is
+  `false` (version only); Paper and Velocity are `true`.
+- When `has_builds`, changing the version must refetch builds (they're
+  per-version). `versions` and `builds` are newest-first.
+- `build` is required in the update body only when `has_builds`.
+- The update **requires the instance to be stopped** (the agent enforces it and
+  returns `502` otherwise). While it runs, the agent emits `state.changed` with
+  `updating`; lock power controls and show progress until it clears.
+- The update is transactional on the agent: only the server jar is replaced
+  (worlds/plugins/mods/config/player-data are never touched), the previous jar
+  is backed up, and a failed download/replace rolls back. On success the hub
+  records the installed `version`/`build` on the instance.
 
 ---
 
@@ -306,6 +342,10 @@ POST   /api/instances/{instance_id}/files/write    {path, content}
 DELETE /api/instances/{instance_id}/files?path=...&recursive=false
 PUT    /api/instances/{instance_id}/secrets        {key, value}   (204)
 GET    /api/instances/{instance_id}/secrets        -> {keys:[...]}
+GET    /api/providers/{software}                   -> {software,label,has_builds}
+GET    /api/providers/{software}/versions          -> {versions:[...]}
+GET    /api/providers/{software}/versions/{ver}/builds -> {builds:[...]}
+POST   /api/instances/{instance_id}/update         {version, build?}
 WS     /api/nodes/{node_id}/events                 (push-only event stream)
 ```
 

@@ -138,6 +138,36 @@ select.input option { background: var(--panel); color: var(--fg); }
 }
 .input.ram-value { width: 90px; flex: none; text-align: center; }
 
+/* --- version tab --------------------------------------------------------- */
+.version-wrap { max-width: 620px; }
+.ver-card {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 6px;
+  padding: 16px 18px;
+}
+.ver-current { display: flex; flex-direction: column; gap: 6px; }
+.ver-cur-line { display: flex; align-items: baseline; gap: 12px; }
+.ver-soft {
+  font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--mm-accent); border: 1px solid var(--mm-accent); border-radius: 3px;
+  padding: 3px 8px; flex: none;
+}
+.ver-cur-ver { font-family: var(--mono); font-size: 20px; color: var(--fg); }
+.ver-cur-build { font-family: var(--mono); font-size: 13px; color: var(--muted); }
+.ver-target { display: flex; gap: 16px; }
+.ver-target > div { flex: 1; }
+.ver-actions { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+.ver-status { font-size: 12.5px; color: var(--muted); }
+.ver-note {
+  margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line-3);
+  font-size: 11.5px; color: var(--dim); line-height: 1.5;
+}
+.spin {
+  width: 13px; height: 13px; flex: none; border-radius: 50%;
+  border: 2px solid var(--warn); border-top-color: transparent;
+  animation: mm-spin .8s linear infinite;
+}
+@keyframes mm-spin { to { transform: rotate(360deg); } }
+
 .toggle {
   width: 40px; height: 22px; border-radius: 11px; flex: none;
   background: var(--line-2); position: relative; cursor: pointer;

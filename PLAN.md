@@ -255,10 +255,18 @@ minemanager/
 - Agent: enroll + persistent connection, tmux supervisor with restart/crash-loop
   policy, power actions, live console (out via log tail, in via send-keys), jailed
   file ops, log tail, RCON secondary.
+- **Version & build updater** — provider-based (Vanilla via Mojang, Paper &
+  Velocity via the PaperMC v3 Fill API), software-agnostic UI. Transactional
+  jar swap on the agent (download → checksum verify → backup → atomic replace →
+  rollback) that touches only the server executable. Adding a provider (Purpur,
+  Fabric, Forge…) is a new module + one registry line, no UI change.
 - Protocol: shared Pydantic contracts.
 
 **v2 — provisioning & polish**
 - Create servers/proxies from scratch (download Paper/Velocity, scaffold configs).
+- **Version detector** — read the *actual* installed version/build from disk
+  (updater currently records what it installed; there is no independent
+  detection yet — step 6 of the update workflow is a deliberate placeholder).
 - Per-server cgroup resource limits via `systemd-run --scope`.
 - Backups/snapshots, scheduled tasks, richer audit log.
 

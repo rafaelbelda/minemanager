@@ -119,4 +119,11 @@ export const api = {
   // Secrets (write-only values)
   listSecrets: (id) => get(`/api/instances/${id}/secrets`),
   setSecret: (id, key, value) => put(`/api/instances/${id}/secrets`, { key, value }),
+
+  // Version / build updater (catalog from the hub; install runs on the agent)
+  listSoftwareVersions: (software) => get(`/api/providers/${q(software)}/versions`),
+  listSoftwareBuilds: (software, version) =>
+    get(`/api/providers/${q(software)}/versions/${q(version)}/builds`),
+  updateInstanceVersion: (id, version, build) =>
+    post(`/api/instances/${id}/update`, build == null ? { version } : { version, build }),
 };
