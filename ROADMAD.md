@@ -113,7 +113,7 @@ They must always reflect the state of the file, there shouldn't be a way for the
 
 2-Add a online-mode ON/OFF switch (ON= premium only, OFF= allow cracked) in the instance Settings that controls "online-mode" bool in server.propeties. It must always reflect the state of the file, there shouldn't be a way for the Settings and the actual file to be desynced.
 
-
+3-Add world type in settings so user can change worldtype (flat, normal,). If changed, show a little warning that they might have to delete their current world for the config to make effect.
 
 -----------------------------------------
 DRAFT:

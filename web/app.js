@@ -1021,27 +1021,29 @@ async function saveInstance() {
 const JAR_FOR_TYPE = { paper: 'paper.jar', vanilla: 'server.jar', velocity: 'velocity.jar' };
 const jarForType = (type) => JAR_FOR_TYPE[type] || 'server.jar';
 
-/** Swap the filename after `-jar` for the type's jar, preserving the rest. */
-function setJarInCommand(cmd, jar) {
-  return /-jar\s+\S+/.test(cmd) ? cmd.replace(/(-jar\s+)(\S+)/, `$1${jar}`) : cmd;
-}
-
-/** The value after `-Xmx` (e.g. "4G"), or '' when the flag is absent. */
-function parseXmx(cmd) {
-  const m = cmd.match(/-Xmx(\S+)/);
-  return m ? m[1] : '';
-}
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
 /**
- * Force the `-Xmx` flag to `val` (e.g. "6G"). Empty `val` removes it; if the
- * flag is absent it is inserted right after the leading `java` token. This keeps
- * the memory indicator and the start command as literally the same value.
+ * Build the launch command for a new instance from its type and max memory.
+ * The command field is hidden in the add dialog (beginners only pick memory);
+ * it can be fine-tuned later in the instance's Settings. Servers take `nogui`;
+ * Velocity does not.
  */
-function setXmxInCommand(cmd, val) {
-  val = (val || '').trim();
-  if (!val) return cmd.replace(/\s*-Xmx\S+/, '');
-  if (/-Xmx\S+/.test(cmd)) return cmd.replace(/-Xmx\S+/, `-Xmx${val}`);
-  return cmd.replace(/^(\s*java\b)/, `$1 -Xmx${val}`);
+function buildStartCommand(type, ram) {
+  const xmx = (ram || '').trim() ? `-Xmx${ram.trim()} ` : '';
+  const gui = type === 'velocity' ? '' : ' nogui';
+  return `java ${xmx}-jar ${jarForType(type)}${gui}`;
+}
+
+/** Interpret a memory string ("6G", "6144M", "8") as a GB number for the slider. */
+function ramToGB(val) {
+  const m = String(val || '').trim().match(/^(\d+(?:\.\d+)?)\s*([gGmMkK])?$/);
+  if (!m) return null;
+  let n = parseFloat(m[1]);
+  const unit = (m[2] || 'G').toUpperCase();
+  if (unit === 'M') n /= 1024;
+  else if (unit === 'K') n /= 1024 * 1024;
+  return n;
 }
 
 /* --- create / delete ----------------------------------------------------- */
@@ -1112,32 +1114,41 @@ async function deleteNode(node) {
 }
 
 async function addInstance(node) {
-  // RCON is configured later in the instance's Settings, not here.
+  // Beginner-friendly: pick a type and memory; the launch command is built from
+  // those and can be fine-tuned later in Settings. RCON also lives in Settings.
   const values = await dialog({
     title: `Add instance on ${node.name}`,
-    description: 'Declares a server the agent should manage. The directory must already exist on the node.',
+    description: 'Declares a server the agent should manage. The directory must already exist on the node. The launch command is built from the type and memory — fine-tune it later in the instance’s Settings.',
     fields: [
       { name: 'name', label: 'Name', placeholder: 'survival' },
       { name: 'type', label: 'Type', type: 'select', options: ['paper', 'vanilla', 'velocity'], value: 'paper' },
       { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival', mono: true },
-      { name: 'start_command', label: 'Start command', value: 'java -Xmx4G -jar paper.jar nogui', mono: true },
-      { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'A shortcut for the -Xmx flag — e.g. 4G or 6144M. Stays in sync with the start command.' },
+      { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'Drag the slider or type an exact value (e.g. 4G or 6144M).' },
       { name: 'auto_restart', label: 'Auto-restart', type: 'toggle', value: true, hint: 'Restart the server automatically after a crash' },
     ],
     confirmText: 'Create instance',
-    onMount: ({ get, set, input }) => {
-      // Type picks the jar; the memory field mirrors -Xmx, both directions.
-      input('type').addEventListener('change', () =>
-        set('start_command', setJarInCommand(get('start_command'), jarForType(get('type')))));
-      input('ram').addEventListener('input', () =>
-        set('start_command', setXmxInCommand(get('start_command'), get('ram'))));
-      input('start_command').addEventListener('input', () =>
-        set('ram', parseXmx(get('start_command'))));
+    onMount: ({ set, input }) => {
+      // Pair the memory text field with a beginner-friendly slider (1–32 GB).
+      // Both edit the same value and stay in sync with each other.
+      const ramEl = input('ram');
+      ramEl.classList.add('ram-value');
+      const slider = el('input.ram-slider', { type: 'range', min: '1', max: '32', step: '1' });
+      const row = el('div.ram-row');
+      ramEl.parentNode.insertBefore(row, ramEl);
+      row.append(slider, ramEl);
+
+      const syncSliderFromText = () => {
+        const gb = ramToGB(ramEl.value);
+        if (gb != null) slider.value = String(clamp(Math.round(gb), 1, 32));
+      };
+      syncSliderFromText();
+      slider.addEventListener('input', () => set('ram', `${slider.value}G`));
+      ramEl.addEventListener('input', syncSliderFromText);
     },
   });
   if (!values) return;
-  if (!values.name.trim() || !values.root_dir.trim() || !values.start_command.trim()) {
-    toast('Name, root directory and start command are all required.', 'error');
+  if (!values.name.trim() || !values.root_dir.trim()) {
+    toast('Name and root directory are both required.', 'error');
     return;
   }
   try {
@@ -1145,7 +1156,7 @@ async function addInstance(node) {
       name: values.name.trim(),
       type: values.type,
       root_dir: values.root_dir.trim(),
-      start_command: values.start_command.trim(),
+      start_command: buildStartCommand(values.type, values.ram),
       auto_restart: values.auto_restart,
     });
     await refreshNodes({ quiet: true });

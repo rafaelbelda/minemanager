@@ -130,6 +130,14 @@ select.input {
 }
 select.input option { background: var(--panel); color: var(--fg); }
 
+/* Memory control: slider + exact-value field share one row and one value. */
+.ram-row { display: flex; align-items: center; gap: 12px; }
+.ram-slider {
+  flex: 1; height: 22px; cursor: pointer;
+  accent-color: var(--mm-accent); background: transparent;
+}
+.input.ram-value { width: 90px; flex: none; text-align: center; }
+
 .toggle {
   width: 40px; height: 22px; border-radius: 11px; flex: none;
   background: var(--line-2); position: relative; cursor: pointer;

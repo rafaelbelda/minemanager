@@ -55,9 +55,12 @@ token with a copy button, an install hint built from the hub's own origin, and a
 and delete.
 
 **Instances** — per-node table with type, live state, root and inline power
-controls; create and delete; full spec editing (name, type, root, start command,
-auto-restart, RCON host/port) via `PATCH`, with the "applies on next start"
-caveat stated in the form and repeated in the save toast.
+controls; a beginner-friendly create dialog (name, type, root, and a memory
+control — slider paired with an exact `-Xmx` field — from which the launch
+command is built; no raw command or RCON here); delete; and full spec editing
+(name, type, root, start command, auto-restart, RCON host/port) via `PATCH`,
+with the "applies on next start" caveat stated in the form and repeated in the
+save toast.
 
 **Power** — start/stop/restart/kill, disabled per current run state and gated on
 `node.online` so the common `409` is avoided rather than surfaced. Kill asks for
