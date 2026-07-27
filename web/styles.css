@@ -540,6 +540,40 @@ select.input option { background: var(--panel); color: var(--fg); }
 }
 .file-row:hover .file-del { display: grid; }
 .file-del:hover { color: var(--err-fg); background: var(--danger-bg); }
+.file-act {
+  flex: none; width: 18px; height: 18px; padding: 0; display: none;
+  place-items: center; background: none; border: none;
+  color: var(--dim-2); cursor: pointer; font-size: 12px; line-height: 1; border-radius: 3px;
+}
+.file-row:hover .file-act { display: grid; }
+.file-act:hover { color: var(--mm-accent); background: color-mix(in srgb, var(--mm-accent) 14%, transparent); }
+.file-act:disabled, .file-del:disabled { opacity: .3; cursor: default; }
+
+/* drag & drop upload targets */
+.files-list.drop-hi { outline: 1.5px dashed var(--mm-accent); outline-offset: -3px; border-radius: 4px; }
+.file-row.dir.drop-hi { background: color-mix(in srgb, var(--mm-accent) 18%, transparent); outline: 1px dashed var(--mm-accent); }
+
+/* #1 fullscreen editor: hide the file list, editor covers the whole workspace */
+.files-wrap.editor-fullscreen { padding: 0; }
+.files-wrap.editor-fullscreen .files-pane { display: none; }
+.files-wrap.editor-fullscreen .editor-pane {
+  /* Below the dialog backdrop (50) and toasts (60) so those still surface. */
+  position: fixed; inset: 0; z-index: 40; border-radius: 0; border: none;
+}
+
+/* #8 right-click context menu */
+.ctx-menu {
+  position: fixed; z-index: 200; min-width: 168px; padding: 5px;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: 7px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .5);
+}
+.ctx-item {
+  padding: 7px 11px; border-radius: 4px; font-size: 12.5px; color: var(--fg-2);
+  cursor: pointer; user-select: none;
+}
+.ctx-item:hover { background: color-mix(in srgb, var(--mm-accent) 16%, transparent); color: var(--fg); }
+.ctx-item.danger { color: var(--err-fg); }
+.ctx-item.danger:hover { background: var(--danger-bg); }
 
 .editor-pane {
   flex: 1; min-width: 0;

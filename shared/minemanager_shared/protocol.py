@@ -95,6 +95,9 @@ class Action(str, Enum):
     files_delete = "files.delete"
     files_upload = "files.upload"
     files_mkdir = "files.mkdir"
+    files_fetch = "files.fetch"      # download a file's bytes, or a dir as a zip
+    files_rename = "files.rename"
+    files_extract = "files.extract"  # extract an archive into its directory
 
     # Logs ------------------------------------------------------------------
     logs_tail = "logs.tail"

@@ -7,7 +7,7 @@ copy of instance config.
 
 from __future__ import annotations
 
-from minemanager_agent import files, rcon
+from minemanager_agent import archive, files, rcon
 from minemanager_agent.supervisor import Supervisor
 from minemanager_shared.protocol import Action, Command, InstanceSpec, Response, RunState
 
@@ -53,7 +53,8 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
         return Response.success(cmd.id, {"entries": files.list_dir(root, cmd.data.get("path", "."))})
     if action == Action.files_read.value:
         root = _spec(cmd).root_dir
-        return Response.success(cmd.id, {"content": files.read_file(root, cmd.data["path"])})
+        max_bytes = int(cmd.data.get("max_bytes") or 5_000_000)
+        return Response.success(cmd.id, files.read_for_editor(root, cmd.data["path"], max_bytes))
     if action == Action.files_write.value:
         root = _spec(cmd).root_dir
         return Response.success(cmd.id, files.write_file(root, cmd.data["path"], cmd.data["content"]))
@@ -68,6 +69,23 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
     if action == Action.files_mkdir.value:
         root = _spec(cmd).root_dir
         return Response.success(cmd.id, files.mkdir(root, cmd.data["path"]))
+
+    if action == Action.files_fetch.value:
+        root = _spec(cmd).root_dir
+        cap = int(cmd.data.get("cap") or 8_388_608)
+        return Response.success(cmd.id, files.fetch(root, cmd.data["path"], cap))
+
+    if action == Action.files_rename.value:
+        root = _spec(cmd).root_dir
+        return Response.success(cmd.id, files.rename(root, cmd.data["path"], cmd.data["new_name"]))
+
+    if action == Action.files_extract.value:
+        root = _spec(cmd).root_dir
+        try:
+            result = archive.extract(root, cmd.data["path"], bool(cmd.data.get("overwrite", False)))
+        except archive.UnsupportedArchive as exc:
+            return Response.failure(cmd.id, str(exc))
+        return Response.success(cmd.id, result)
 
     # -- logs / console backfill --------------------------------------------
     if action == Action.logs_tail.value:

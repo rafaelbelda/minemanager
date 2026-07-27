@@ -59,6 +59,21 @@ class Settings:
         ]
     )
 
+    # File-explorer thresholds (served to the UI via /api/config).
+    # Above the *warn* size the editor asks before opening; above the *max* size
+    # it won't open a file as text at all. The *transfer cap* bounds the simple
+    # (non-streaming) upload/download path — larger transfers use the streaming
+    # feature. All in bytes.
+    editor_warn_bytes: int = field(
+        default_factory=lambda: int(os.environ.get("MM_EDITOR_WARN_BYTES", str(2_000_000)))
+    )
+    editor_max_bytes: int = field(
+        default_factory=lambda: int(os.environ.get("MM_EDITOR_MAX_BYTES", str(5_000_000)))
+    )
+    transfer_cap_bytes: int = field(
+        default_factory=lambda: int(os.environ.get("MM_TRANSFER_CAP_BYTES", str(8_388_608)))
+    )
+
     @property
     def db_path(self) -> Path:
         return self.data_dir / "minemanager.db"

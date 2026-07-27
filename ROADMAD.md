@@ -20,146 +20,6 @@ fixes and improvements
 
 6- Add right click options in File Explorer Delete, download, rename, extract (if compressed (.rar, zip, .gz)) thats just a quick shortcut to the main static buttons that do those actions in the current selected file; the only difference being it does those actions to the right clicked file. 
 
-# B) VERSION & BUILD UPDATER
-
-## Create a new Version tab inside the Instance page.
-
-The purpose of this feature is to upgrade or downgrade the server software while preserving the existing server files.
-
-This feature does not change the server type. A Paper server remains Paper, a Vanilla server remains Vanilla, and a Velocity server remains Velocity.
-
-## Supported software:
-
-1. Vanilla
-2. Paper
-3. Velocity
-
-## Available Versions
-
-Fetch the list of available releases appropriate for the current server type.
-
-### Vanilla
-
-Minecraft Version
-
-Example:
-
-Version
-▼ 1.21.6
-
-### Paper
-
-Minecraft Version
-Available Paper Builds for the selected Minecraft version
-
-Example:
-
-Minecraft Version
-▼ 1.21.6
-
-Paper Build
-▼ Build 62
-
-Changing the Minecraft version must automatically refresh the list of available Paper builds.
-
-### Velocity
-
-Display the available Velocity releases.
-
-If Velocity exposes build information separately, display both Version and Build. Otherwise, only display Version.
-
-The UI should adapt to the available metadata rather than assuming every software exposes builds.
-
-### Update Workflow
-
-When the user presses Update:
-
-1. Verify the instance is stopped.
-2. Refuse the operation if the server is currently running. (and disable the start command if an update is undergoing -- add a UI indicator for that case)
-3. Download the selected server binary. (determine an timeout so we cannot get stuck in an infinite update)
-4. Create a backup of the currently configured server JAR.
-5. Replace the configured server JAR.
-6. Refresh the Version Detector metadata. (SKIP FOR NOW WITH A PLACEHOLDER, WE WILL BUILD Version Detector LATER)
-7. Update the displayed version.
-8. Report success or any encountered errors.
-
-## The updater must never modify:
-
-worlds
-plugins
-mods
-configuration files
-player data
-logs
-any user-generated content
-
-Only the server executable should be replaced.
-
-## Rollback Safety
-
-Before replacing the server JAR, create a backup of the previous executable.
-
-If the replacement fails for any reason, automatically restore the previous JAR.
-
-The operation should be transactional whenever possible.
-
-## UI
-
-You are capable of amazing desing and UI work, based on our project's style, create a quality Update tab.
-
-Display:
-
-Current Version
-Current Build (when applicable)
-Target Version selector
-Target Build selector (only when applicable)
-Update button
-
-Example (Paper):
-
-Current
-Minecraft 1.21.6
-Paper Build 62
-
-Target
-
-Minecraft Version
-▼ 1.21.7
-
-Paper Build
-▼ Build 15
-
-[ Update ]
-
-Example (Vanilla):
-
-Current
-Minecraft 1.21.6
-
-Target
-
-Version
-▼ 1.21.7
-
-[ Update ]
-
-The interface should automatically hide controls that are not applicable to the current server type.
-
-## Architecture
-
-The updater must be software-agnostic.
-
-Implement a provider-based architecture where each supported server type supplies:
-
-Available versions
-Available builds (if applicable)
-Download URL
-Metadata required for installation
-
-The UI should consume a common interface rather than containing Paper-, Vanilla-, or Velocity-specific logic.
-
-Adding support for additional server software in the future (for example Purpur, Folia, Fabric, Forge, NeoForge, etc.) should only require implementing a new provider without modifying the updater UI.
-
 # CREATE A NEW SERVER
 
 # RECOGNIZE VERSION (PAPER AND VANILLA) AND BUILD (PAPER-ONLY, displayed alongside ver (ex: 1.20-60, 26.2-45))
@@ -254,6 +114,9 @@ proxies:
 
 They must always reflect the state of the file, there shouldn't be a way for the Settings and the actual file to be desynced.
 
+Always on switch in settings (starts the server automatically when the agent boots up -- so servers dont need manual start after reboots) 
+
+save below to properties?
 2-Add a online-mode ON/OFF switch (ON= premium only, OFF= allow cracked) in the instance Settings that controls "online-mode" bool in server.propeties. It must always reflect the state of the file, there shouldn't be a way for the Settings and the actual file to be desynced.
 
 3-Add world type in settings so user can change worldtype (flat, normal,). If changed, show a little warning that they might have to delete their current world for the config to make effect.
@@ -266,6 +129,16 @@ BUGS:
 
 when you change from instance A to instance B, while viewing instance's A file exporer, the file being shown doesn't change. Ideally we shouldclose the current file being presented when changing instances.
 
+gracefull stop servers if systemctl restart/stopor machine reboot possible? 
+
+restart button must reset console? 
+if the server is stopped and clicked on, do not populate/fetch logs from latest.?
+OR
+add separate spacing/marker to separate diff sessions
+
+# NOTES
+add instance runtime
+handle diff java versions for diff mc versions?
 -------------------------
 DRAFT:
 

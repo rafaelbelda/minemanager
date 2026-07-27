@@ -8,17 +8,39 @@ forwards the command over the WebSocket, awaiting the correlated response.
 from __future__ import annotations
 
 import asyncio
+import base64
+from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect
 
 from minemanager_hub.agents.registry import AgentConnection, CommandTimeout, registry
-from minemanager_hub.api.schemas import ConsoleSend, FileWrite, SecretSet
+from minemanager_hub.api.schemas import (
+    ConsoleSend,
+    FileExtract,
+    FileRename,
+    FileUpload,
+    FileWrite,
+    SecretSet,
+)
+from minemanager_hub.config import get_settings
 from minemanager_hub.db.models import Instance, Secret
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import vault
 from minemanager_shared.protocol import Action, InstanceSpec
 
 router = APIRouter(prefix="/api", tags=["control"])
+
+
+@router.get("/config", tags=["config"])
+def ui_config() -> dict:
+    """UI-relevant limits (configurable via env). The web app reads this at boot
+    so thresholds are never hardcoded in the frontend."""
+    s = get_settings()
+    return {
+        "editor_warn_bytes": s.editor_warn_bytes,
+        "editor_max_bytes": s.editor_max_bytes,
+        "transfer_cap_bytes": s.transfer_cap_bytes,
+    }
 
 
 def _lookup_secret(db, instance_id: str, key: str) -> str | None:
@@ -119,7 +141,10 @@ async def files_list(instance_id: str, path: str = ".") -> dict:
 
 @router.get("/instances/{instance_id}/files/read")
 async def files_read(instance_id: str, path: str) -> dict:
-    return await _proxy(instance_id, Action.files_read.value, {"path": path})
+    return await _proxy(
+        instance_id, Action.files_read.value,
+        {"path": path, "max_bytes": get_settings().editor_max_bytes},
+    )
 
 
 @router.post("/instances/{instance_id}/files/write")
@@ -133,6 +158,53 @@ async def files_write(instance_id: str, body: FileWrite) -> dict:
 async def files_delete(instance_id: str, path: str, recursive: bool = False) -> dict:
     return await _proxy(
         instance_id, Action.files_delete.value, {"path": path, "recursive": recursive}
+    )
+
+
+@router.post("/instances/{instance_id}/files/upload")
+async def files_upload(instance_id: str, body: FileUpload) -> dict:
+    """Simple (non-streaming) upload for normal-sized files. Larger files use the
+    streaming transfer path (separate feature)."""
+    cap = get_settings().transfer_cap_bytes
+    approx_bytes = len(body.content_b64) * 3 // 4
+    if approx_bytes > cap:
+        raise HTTPException(413, f"file exceeds the {cap}-byte simple-upload limit — use the large transfer")
+    return await _proxy(
+        instance_id, Action.files_upload.value,
+        {"path": body.path, "content_b64": body.content_b64},
+    )
+
+
+@router.get("/instances/{instance_id}/files/download")
+async def files_download(instance_id: str, path: str) -> Response:
+    """Download a file, or a directory as a zip. Bytes come from the agent
+    (base64) and are returned as a browser file download."""
+    data = await _proxy(
+        instance_id, Action.files_fetch.value,
+        {"path": path, "cap": get_settings().transfer_cap_bytes},
+    )
+    raw = base64.b64decode(data["content_b64"])
+    filename = data.get("filename") or "download"
+    return Response(
+        content=raw,
+        media_type="application/zip" if data.get("is_dir") else "application/octet-stream",
+        headers={"content-disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+@router.post("/instances/{instance_id}/files/rename")
+async def files_rename(instance_id: str, body: FileRename) -> dict:
+    return await _proxy(
+        instance_id, Action.files_rename.value,
+        {"path": body.path, "new_name": body.new_name},
+    )
+
+
+@router.post("/instances/{instance_id}/files/extract")
+async def files_extract(instance_id: str, body: FileExtract) -> dict:
+    return await _proxy(
+        instance_id, Action.files_extract.value,
+        {"path": body.path, "overwrite": body.overwrite},
     )
 
 

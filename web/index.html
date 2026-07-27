@@ -204,8 +204,9 @@
                 <span class="spacer"></span>
                 <button class="btn-icon sq" id="files-refresh" title="Refresh">&#10227;</button>
                 <button class="btn-icon sq" id="files-new" title="New text file">+</button>
-                <button class="btn-icon sq" id="files-upload" title="Binary upload &mdash; coming soon" disabled
-                        style="background:#141416;border-color:#1e1f23;color:#4a4a46;cursor:not-allowed">&uarr;</button>
+                <button class="btn-icon sq" id="files-upload" title="Upload files to this folder">&uarr;</button>
+                <button class="btn-icon sq" id="files-download" title="Download this folder as a zip">&darr;</button>
+                <input type="file" id="files-file-input" multiple hidden>
               </div>
               <div class="files-list" id="files-list"></div>
             </div>
@@ -215,6 +216,7 @@
                 <span class="editor-dirty hidden" id="editor-dirty">&#9679; modified</span>
                 <span class="spacer"></span>
                 <span class="editor-info" id="editor-info"></span>
+                <button class="btn-icon sq" id="editor-fullscreen" title="Toggle fullscreen editor">&#10530;</button>
                 <button class="btn btn-primary btn-sm" id="editor-save" disabled>Save</button>
               </div>
               <div class="editor">

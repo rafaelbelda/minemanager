@@ -176,17 +176,38 @@ console.
 | Method | Path | Body / Query | Returns |
 |---|---|---|---|
 | GET | `/api/instances/{instance_id}/files?path=.` | query `path` | `{"entries": FileEntry[]}` |
-| GET | `/api/instances/{instance_id}/files/read?path=logs/latest.log` | query `path` | `{"content": "..."}` (utf-8, max 5 MB) |
+| GET | `/api/instances/{instance_id}/files/read?path=x` | query `path` | `{"binary": bool, "content"?, "size"}` |
 | POST | `/api/instances/{instance_id}/files/write` | `{"path","content"}` | `{"path","size"}` (creates parent dirs) |
+| POST | `/api/instances/{instance_id}/files/upload` | `{"path","content_b64"}` | `{"path","size"}` (simple/small; see cap) |
+| GET | `/api/instances/{instance_id}/files/download?path=x` | query `path` | raw file bytes, or a **zip** if `path` is a dir (`Content-Disposition: attachment`) |
+| POST | `/api/instances/{instance_id}/files/rename` | `{"path","new_name"}` | `{"path","renamed":true}` |
+| POST | `/api/instances/{instance_id}/files/extract` | `{"path","overwrite"}` | see below |
 | DELETE | `/api/instances/{instance_id}/files?path=x&recursive=false` | query | `{"path","deleted":true}` |
+
+- **`read`** now flags binary files: `{"binary": true, "size"}` with no content
+  (the UI must not render these as text — offer download instead). Text files
+  return `{"binary": false, "content", "size"}`. Files above `editor_max_bytes`
+  are refused (`502`).
+- **`upload`/`download`** are the simple (non-streaming) path, bounded by
+  `transfer_cap_bytes`. Over-cap uploads return `413`; over-cap files/dirs on
+  download return `502`. Multi-GB streaming transfers are a separate feature
+  (see gaps). `download` on a directory returns a zip.
+- **`extract`** unpacks ZIP / TAR(.GZ/.BZ2/.XZ) / TGZ / single GZ (RAR only if
+  the node has the tooling) into the archive's own directory. Returns
+  `{"extracted": true, "count": n}`, or when files would be overwritten and
+  `overwrite` is false: `{"extracted": false, "conflicts": [...],
+  "conflict_count": n}` — prompt, then retry with `"overwrite": true`. Archive
+  members are jailed (zip-slip is rejected).
 
 Path traversal (`..`, absolute paths, symlinks out of root) is rejected by the
 agent (`502` with a "path rejected" detail). The instance root itself cannot be
-deleted.
+deleted or renamed.
 
-**Log viewing tip:** there is no dedicated historical-log endpoint yet. To show
-past logs, `files/read` on `logs/latest.log` (and rotated `logs/*.log.gz` are
-listable but not decompressed by the API). Live console tailing is via the WS.
+### Config (UI thresholds — configurable, never hardcode in the UI)
+`GET /api/config` → `{"editor_warn_bytes", "editor_max_bytes", "transfer_cap_bytes"}`.
+Above `editor_warn_bytes` the editor should warn before opening; above
+`editor_max_bytes` it must not open as text (offer download); `transfer_cap_bytes`
+bounds the simple upload/download path.
 
 ### Secrets (write-only values)
 | Method | Path | Body | Returns |
@@ -266,9 +287,11 @@ Recommended UI wiring:
 
 Build the UI so these degrade gracefully (hide, disable, or mark "coming soon"):
 
-1. **Binary file upload** — the agent supports it, but there is **no REST
-   endpoint** yet. Text create/edit works via `files/write`. Treat upload of
-   binary (jars, zips) as "coming soon".
+1. **Multi-GB streamed transfers** — upload/download currently use a simple
+   base64 path bounded by `transfer_cap_bytes` (~8 MB by default). Files/dirs
+   over the cap are refused (`413`/`502`); the UI skips over-cap uploads with a
+   "large transfers coming soon" note. A dedicated streaming channel (progress +
+   cancel, memory-bounded) for whole worlds is the next pass.
 2. **Full log viewer** — `console/history` tails `logs/latest.log`, and
    `files/read` opens it directly, but there is no rotation-aware log browser
    (rotated `*.log.gz` list but can't be opened — `files/read` is utf-8 and 502s
@@ -336,9 +359,14 @@ DELETE /api/instances/{instance_id}                 (204)
 POST   /api/instances/{instance_id}/power/{start|stop|restart|kill}
 POST   /api/instances/{instance_id}/console        {line}
 GET    /api/instances/{instance_id}/console/history?lines=200
+GET    /api/config                                 -> {editor_warn_bytes, editor_max_bytes, transfer_cap_bytes}
 GET    /api/instances/{instance_id}/files?path=.
-GET    /api/instances/{instance_id}/files/read?path=...
+GET    /api/instances/{instance_id}/files/read?path=...   -> {binary, content?, size}
 POST   /api/instances/{instance_id}/files/write    {path, content}
+POST   /api/instances/{instance_id}/files/upload   {path, content_b64}
+GET    /api/instances/{instance_id}/files/download?path=...   (bytes / zip)
+POST   /api/instances/{instance_id}/files/rename   {path, new_name}
+POST   /api/instances/{instance_id}/files/extract  {path, overwrite}
 DELETE /api/instances/{instance_id}/files?path=...&recursive=false
 PUT    /api/instances/{instance_id}/secrets        {key, value}   (204)
 GET    /api/instances/{instance_id}/secrets        -> {keys:[...]}

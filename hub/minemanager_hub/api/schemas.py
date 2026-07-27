@@ -81,6 +81,21 @@ class FileWrite(BaseModel):
     content: str
 
 
+class FileUpload(BaseModel):
+    path: str            # destination path, relative to the instance root
+    content_b64: str     # file bytes, base64 (simple/non-streaming path)
+
+
+class FileRename(BaseModel):
+    path: str            # existing entry
+    new_name: str        # bare filename (no path separators)
+
+
+class FileExtract(BaseModel):
+    path: str            # archive to extract, relative to root
+    overwrite: bool = False
+
+
 class SecretSet(BaseModel):
     key: str = Field(..., examples=["rcon_password", "forwarding_secret"])
     value: str

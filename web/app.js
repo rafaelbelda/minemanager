@@ -43,7 +43,10 @@ const state = {
   enrollment: null,       // { nodeId, name, token, expiresIn, mintedAt }
   files: { path: '.', entries: [], loading: false, error: null },
   editor: { path: null, original: '', size: 0 },
+  editorFullscreen: false,
   secrets: [],
+  // File-explorer thresholds from /api/config (overwritten at boot).
+  config: { editor_warn_bytes: 2_000_000, editor_max_bytes: 5_000_000, transfer_cap_bytes: 8_388_608 },
   // Version tab (catalog is provider-driven; software-agnostic).
   version: {
     instId: null, loading: false, error: null,
@@ -760,6 +763,12 @@ function renderFiles(inst, live) {
 
   $('files-refresh').disabled = !live;
   $('files-new').disabled = !live;
+  $('files-upload').disabled = !live;
+  $('files-download').disabled = !live;
+
+  // #1 fullscreen editor — pure class toggle, so file/editor state is untouched.
+  document.querySelector('.files-wrap')?.classList.toggle('editor-fullscreen', state.editorFullscreen);
+  $('editor-fullscreen').title = state.editorFullscreen ? 'Exit fullscreen' : 'Toggle fullscreen editor';
 
   const list = clear($('files-list'));
   if (state.files.loading) {
@@ -779,14 +788,25 @@ function renderFiles(inst, live) {
 
     for (const f of entries) {
       const selected = !f.is_dir && state.editor.path === f.path;
-      list.append(el(`div.file-row${f.is_dir ? '.dir' : ''}${selected ? '.sel' : ''}`, {
+      const attrs = {
         title: f.path,
         onclick: () => (f.is_dir ? loadFiles(f.path) : openFile(f)),
-      },
+        oncontextmenu: (ev) => showContextMenu(ev, f),   // #8 acts on this item
+      };
+      if (f.is_dir) {   // #2A drop files onto a folder to upload into it
+        attrs.ondragover = (ev) => { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.add('drop-hi'); };
+        attrs.ondragleave = (ev) => ev.currentTarget.classList.remove('drop-hi');
+        attrs.ondrop = (ev) => { ev.stopPropagation(); ev.currentTarget.classList.remove('drop-hi'); handleDrop(ev, f.path); };
+      }
+      list.append(el(`div.file-row${f.is_dir ? '.dir' : ''}${selected ? '.sel' : ''}`, attrs,
         el('span.file-icon', {}, f.is_dir ? '▸' : '·'),
         el('span.file-name', { text: f.name }),
         el('span.spacer'),
         el('span.file-size', { text: f.is_dir ? '—' : formatSize(f.size) }),
+        el('button.file-act', {
+          title: f.is_dir ? 'Download as zip' : 'Download', disabled: !live,
+          onclick: (ev) => { ev.stopPropagation(); downloadEntry(f); },
+        }, '⇩'),
         el('button.file-del', {
           title: 'Delete', disabled: !live,
           onclick: (ev) => { ev.stopPropagation(); deleteEntry(f); },
@@ -808,10 +828,36 @@ function renderFiles(inst, live) {
 async function openFile(entry) {
   const inst = curInst();
   if (!inst) return;
+
+  // #5 Binary guard by extension — never even try to open these as text.
+  if (isBinaryName(entry.name)) return binaryNotice(entry);
+
+  // #4 Large-file guard, using configurable thresholds from the hub.
+  const { editor_warn_bytes: warn, editor_max_bytes: max } = state.config;
+  if (entry.size > max) {
+    const ok = await confirmDialog({
+      title: 'File too large to edit',
+      description: `${entry.name} is ${formatSize(entry.size)}, above the ${formatSize(max)} editor limit. Download it instead?`,
+      confirmText: 'Download', danger: false,
+    });
+    if (ok) downloadEntry(entry);
+    return;
+  }
+  if (entry.size > warn) {
+    const ok = await confirmDialog({
+      title: 'Open a large file?',
+      description: `${entry.name} is ${formatSize(entry.size)}. Opening large files in the editor can be slow. Open it anyway?`,
+      confirmText: 'Open anyway', danger: false,
+    });
+    if (!ok) return;
+  }
+
   if (await maybeDiscard()) return;
   try {
     const res = await api.readFile(inst.id, entry.path);
     if (state.sel.instId !== inst.id) return;
+    // #5 Server-side content detection (NUL bytes) — belt and suspenders.
+    if (res.binary) return binaryNotice(entry);
     state.editor = { path: entry.path, original: res.content ?? '', size: entry.size };
     $('editor-area').value = state.editor.original;
     paintEditor();
@@ -819,6 +865,15 @@ async function openFile(entry) {
   } catch (err) {
     toast(describe(err), 'error');
   }
+}
+
+async function binaryNotice(entry) {
+  const ok = await confirmDialog({
+    title: 'Binary file',
+    description: `${entry.name} is a binary file and can't be edited with the text editor. Download it instead?`,
+    confirmText: 'Download', danger: false,
+  });
+  if (ok) downloadEntry(entry);
 }
 
 /** Warn before dropping unsaved edits. Returns true when the user cancels. */
@@ -897,6 +952,227 @@ async function deleteEntry(entry) {
   } catch (err) {
     toast(describe(err), 'error');
   }
+}
+
+/* --- files: type helpers ------------------------------------------------- */
+
+// Extensions we refuse to open as text (the editor is for text). .jar included.
+const BINARY_EXT = new Set(
+  ('jar zip gz tgz tar bz2 xz rar 7z png jpg jpeg gif webp bmp ico svgz pdf class '
+    + 'dat mca mcr nbt db sqlite so dll dylib exe bin o ttf otf woff woff2 mp3 mp4 '
+    + 'ogg wav flac mov mkv').split(' '));
+const extOf = (name) => { const i = name.lastIndexOf('.'); return i >= 0 ? name.slice(i + 1).toLowerCase() : ''; };
+const isBinaryName = (name) => BINARY_EXT.has(extOf(name));
+const ARCHIVE_RE = /\.(zip|tar\.gz|tgz|tar\.bz2|tar\.xz|tar|gz|rar)$/i;
+const isArchiveName = (name) => ARCHIVE_RE.test(name);
+
+/* --- files: download ----------------------------------------------------- */
+
+function triggerDownload(url) {
+  const a = el('a', { href: url, rel: 'noopener' });
+  document.body.append(a);
+  a.click();
+  a.remove();
+}
+function downloadEntry(entry) {
+  const inst = curInst();
+  if (inst) triggerDownload(api.downloadUrl(inst.id, entry.path));
+}
+function downloadCurrentFolder() {
+  const inst = curInst();
+  if (inst) triggerDownload(api.downloadUrl(inst.id, state.files.path));
+}
+
+/* --- files: upload (button + drag&drop) ---------------------------------- */
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',', 2)[1] || '');
+    r.onerror = () => reject(r.error || new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+/** Upload {file, relPath}[] into destPath, then refresh. Oversized files (past
+ *  the simple-transfer cap) are skipped with a note — large transfers are the
+ *  streaming feature. */
+async function uploadFiles(items, destPath) {
+  const inst = curInst();
+  if (!inst || !items.length) return;
+  const cap = state.config.transfer_cap_bytes;
+  let ok = 0, failed = 0, skipped = 0;
+  const progress = toast(`Uploading ${items.length} file${items.length === 1 ? '' : 's'}…`, 'info', 120000);
+  for (const { file, relPath } of items) {
+    if (file.size > cap) { skipped++; continue; }
+    try {
+      await api.uploadFile(inst.id, joinPath(destPath, relPath), await fileToBase64(file));
+      ok++;
+    } catch { failed++; }
+  }
+  progress.remove();
+  if (ok) toast(`Uploaded ${ok} file${ok === 1 ? '' : 's'}`, 'ok');
+  if (skipped) toast(`${skipped} file(s) skipped — over ${formatSize(cap)}; large transfers coming soon.`, 'error');
+  if (failed) toast(`${failed} file(s) failed to upload.`, 'error');
+  loadFiles(state.files.path);              // #9 auto-refresh
+}
+
+function pickUpload(destPath) {
+  state.files.uploadTarget = destPath || state.files.path;
+  const input = $('files-file-input');
+  input.value = '';
+  input.click();
+}
+function onFilePicked(ev) {
+  const files = [...ev.target.files];
+  const dest = state.files.uploadTarget || state.files.path;
+  state.files.uploadTarget = null;
+  ev.target.value = '';
+  if (files.length) uploadFiles(files.map((f) => ({ file: f, relPath: f.name })), dest);
+}
+
+// Recursively walk dropped folders (where the browser supports it).
+const entryToFile = (entry) => new Promise((res, rej) => entry.file(res, rej));
+async function readAllEntries(reader) {
+  const out = [];
+  let batch;
+  do {
+    batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+    out.push(...batch);
+  } while (batch.length);
+  return out;
+}
+async function collectEntry(entry, prefix, out) {
+  if (entry.isFile) {
+    out.push({ file: await entryToFile(entry), relPath: prefix + entry.name });
+  } else if (entry.isDirectory) {
+    for (const kid of await readAllEntries(entry.createReader())) {
+      await collectEntry(kid, prefix + entry.name + '/', out);
+    }
+  }
+}
+async function itemsFromDataTransfer(dt) {
+  // webkitGetAsEntry must be read synchronously before any await.
+  const roots = [];
+  for (const item of dt.items || []) {
+    if (item.kind !== 'file') continue;
+    const entry = item.webkitGetAsEntry && item.webkitGetAsEntry();
+    if (entry) roots.push(entry);
+  }
+  const out = [];
+  if (roots.length) {
+    for (const r of roots) await collectEntry(r, '', out);
+  } else {
+    for (const f of dt.files) out.push({ file: f, relPath: f.name });  // fallback
+  }
+  return out;
+}
+async function handleDrop(ev, destPath) {
+  ev.preventDefault();
+  if (!isOnline(curInst())) { toast("Node offline — can't upload.", 'error'); return; }
+  const items = await itemsFromDataTransfer(ev.dataTransfer);
+  if (items.length) uploadFiles(items, destPath);
+}
+
+/* --- files: rename / extract --------------------------------------------- */
+
+async function renameEntry(entry) {
+  const inst = curInst();
+  if (!inst) return;
+  const values = await dialog({
+    title: `Rename ${entry.name}`,
+    fields: [{ name: 'name', label: 'New name', value: entry.name, mono: true }],
+    confirmText: 'Rename',
+  });
+  if (!values) return;
+  const nn = values.name.trim();
+  if (!nn || nn === entry.name) return;
+  try {
+    const res = await api.renameFile(inst.id, entry.path, nn);
+    if (state.editor.path === entry.path) state.editor.path = res.path;   // keep editor valid
+    toast(`Renamed to ${nn}`, 'ok');
+    loadFiles(state.files.path);
+  } catch (err) {
+    toast(describe(err), 'error');
+  }
+}
+
+async function extractEntry(entry) {
+  const inst = curInst();
+  if (!inst) return;
+  try {
+    let res = await api.extractFile(inst.id, entry.path, false);
+    if (!res.extracted && res.conflicts) {
+      const sample = res.conflicts.slice(0, 4).join(', ') + (res.conflict_count > 4 ? '…' : '');
+      const ok = await confirmDialog({
+        title: 'Overwrite existing files?',
+        description: `Extracting ${entry.name} would overwrite ${res.conflict_count} existing file(s): ${sample}. Overwrite them?`,
+        confirmText: 'Overwrite',
+      });
+      if (!ok) return;
+      res = await api.extractFile(inst.id, entry.path, true);
+    }
+    toast(`Extracted ${res.count} file${res.count === 1 ? '' : 's'} from ${entry.name}`, 'ok');
+    loadFiles(state.files.path);
+  } catch (err) {
+    toast(describe(err), 'error');
+  }
+}
+
+/* --- files: right-click context menu ------------------------------------- */
+
+let _ctxCleanup = null;
+function closeContextMenu() {
+  document.querySelector('.ctx-menu')?.remove();
+  if (_ctxCleanup) { _ctxCleanup(); _ctxCleanup = null; }
+}
+function showContextMenu(ev, entry) {
+  ev.preventDefault();
+  closeContextMenu();                       // replaces any open menu + its listeners
+  const live = isOnline(curInst());
+  const gated = (fn) => () => {
+    closeContextMenu();
+    if (!live) { toast("Node offline — can't reach the agent.", 'error'); return; }
+    fn();
+  };
+  const items = [];
+  if (!entry.is_dir) items.push(['Open', gated(() => openFile(entry))]);
+  items.push(['Download', gated(() => downloadEntry(entry))]);
+  if (entry.is_dir) items.push(['Upload here…', gated(() => pickUpload(entry.path))]);
+  items.push(['Rename…', gated(() => renameEntry(entry))]);
+  if (!entry.is_dir && isArchiveName(entry.name)) items.push(['Extract', gated(() => extractEntry(entry))]);
+  items.push(['Delete', gated(() => deleteEntry(entry)), true]);
+
+  const menu = el('div.ctx-menu', {},
+    items.map(([label, fn, danger]) => el(`div.ctx-item${danger ? '.danger' : ''}`, { onclick: fn }, label)));
+  menu.style.left = `${ev.clientX}px`;
+  menu.style.top = `${ev.clientY}px`;
+  document.body.append(menu);
+  const r = menu.getBoundingClientRect();
+  if (r.right > innerWidth) menu.style.left = `${innerWidth - r.width - 8}px`;
+  if (r.bottom > innerHeight) menu.style.top = `${innerHeight - r.height - 8}px`;
+
+  // The mousedown/contextmenu that opened this already fired, so registering now
+  // won't self-close; outside interaction dismisses it.
+  const onDown = (e) => { if (!menu.contains(e.target)) closeContextMenu(); };
+  const onKey = (e) => { if (e.key === 'Escape') closeContextMenu(); };
+  const onScroll = () => closeContextMenu();
+  document.addEventListener('mousedown', onDown, true);
+  document.addEventListener('keydown', onKey, true);
+  window.addEventListener('scroll', onScroll, true);
+  _ctxCleanup = () => {
+    document.removeEventListener('mousedown', onDown, true);
+    document.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('scroll', onScroll, true);
+  };
+}
+
+/* --- files: fullscreen editor -------------------------------------------- */
+
+function toggleFullscreen() {
+  state.editorFullscreen = !state.editorFullscreen;
+  const inst = curInst();
+  if (inst) renderFiles(inst, isOnline(inst));
 }
 
 /** Repaint the line-number gutter and the syntax overlay behind the textarea. */
@@ -1443,7 +1719,22 @@ function bind() {
   // Files
   $('files-refresh').onclick = () => loadFiles(state.files.path);
   $('files-new').onclick = newFile;
+  $('files-upload').onclick = () => pickUpload(state.files.path);
+  $('files-download').onclick = downloadCurrentFolder;
+  $('files-file-input').onchange = onFilePicked;
+  $('editor-fullscreen').onclick = toggleFullscreen;
   $('editor-save').onclick = saveFile;
+
+  // Drag & drop onto the list background uploads into the current folder
+  // (folder rows handle their own drops and stop propagation).
+  const flist = $('files-list');
+  const hasFiles = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes('Files');
+  flist.addEventListener('dragover', (ev) => { if (hasFiles(ev)) { ev.preventDefault(); flist.classList.add('drop-hi'); } });
+  flist.addEventListener('dragleave', (ev) => { if (ev.target === flist) flist.classList.remove('drop-hi'); });
+  flist.addEventListener('drop', (ev) => {
+    flist.classList.remove('drop-hi');
+    if (hasFiles(ev)) handleDrop(ev, state.files.path);
+  });
   const area = $('editor-area');
   area.oninput = () => {
     paintEditor();
@@ -1498,6 +1789,8 @@ async function boot() {
   state.sel = hashToSel();
   render();
   refreshHealth();
+  // Load configurable file-explorer thresholds (best-effort; defaults otherwise).
+  try { state.config = { ...state.config, ...(await api.config()) }; } catch { /* keep defaults */ }
   setInterval(refreshHealth, HEALTH_MS);
   // Keep "last seen" strings honest without hammering the API.
   setInterval(() => { if (state.sel.type !== 'instance') render(); }, 20000);

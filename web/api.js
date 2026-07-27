@@ -91,6 +91,7 @@ const q = encodeURIComponent;
 
 export const api = {
   health: () => get('/api/health'),
+  config: () => get('/api/config'),
 
   // Nodes
   listNodes: () => get('/api/nodes'),
@@ -115,6 +116,15 @@ export const api = {
   writeFile: (id, path, content) => post(`/api/instances/${id}/files/write`, { path, content }),
   deleteFile: (id, path, recursive = false) =>
     del(`/api/instances/${id}/files?path=${q(path)}&recursive=${recursive}`),
+  uploadFile: (id, path, content_b64) =>
+    post(`/api/instances/${id}/files/upload`, { path, content_b64 }),
+  renameFile: (id, path, newName) =>
+    post(`/api/instances/${id}/files/rename`, { path, new_name: newName }),
+  extractFile: (id, path, overwrite = false) =>
+    post(`/api/instances/${id}/files/extract`, { path, overwrite }),
+  // A file/dir download is a plain GET the browser handles (attachment header),
+  // so we expose the URL rather than fetching it into memory.
+  downloadUrl: (id, path) => `${base}/api/instances/${id}/files/download?path=${q(path)}`,
 
   // Secrets (write-only values)
   listSecrets: (id) => get(`/api/instances/${id}/secrets`),
