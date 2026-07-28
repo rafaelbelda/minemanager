@@ -109,17 +109,23 @@ save below to properties?
 -----------------------------------------
 BUGS:
 
-there is a noticable delay between loading the website and it acquiring the state the server is in. The node state does not have this delay. Identify the issue and see if it's a core unfortunate feature our chosen architecture brought or a quick fix
-in startup, stopped servers (those with Always on turned OFF) are "unknown" instead of stopped
+2) When you change from instance A > File to Instance B > File, while viewing instance's A file exporer (with a opened file in the editor), the file opened in the editor doesn't change. Ideally we should close the current file being presented when changing instances.
 
-when you change from instance A to instance B, while viewing instance's A file exporer, the file being shown doesn't change. Ideally we shouldclose the current file being presented when changing instances.
+3) there is a noticable delay between loading the website and it acquiring the state the server is in. The node state does not have this delay. Identify the issue and see if it's a core unfortunate feature our chosen architecture brought or a quick fix
+2.1) In startup, stopped servers (those with Always on turned OFF) are "unknown" instead of stopped
 
-gracefull stop servers if systemctl restart/stopor machine reboot possible? 
+Console quick fixes:
 
-restart button must reset console? 
-if the server is stopped and clicked on, do not populate/fetch logs from latest?
-OR
-add separate spacing/marker to separate diff sessions
+4) Log power actions in console and add more spacing to separate visually different sessions.
+4.1) Log tmux erros, sessions and results more reliably
+
+5) If a instance is stopped and clicked on, do not populate/fetch logs from latest, show the console empty.
+
+Finally, quick question: Is gracefull stop servers if systemctl restart/stop or machine reboot possible? Afraid to corrupt world or serverfiles, our MineManager should be safe. 
+
+
+Restart button reset console history in UI (MINEMANAGER OPTION COFIG)
+
 
 # NOTES
 add instance runtime
@@ -173,7 +179,7 @@ sdsadsadsas
 # HUB TABS: PERFORMANCE / STATISTICS (player activity, peak hours)
 filters for whole network, individual nodes, and individual instances
 
-
+USE SPARK
 
 # PERFOMANCE: IN "HUB OVERVIEW" AND "NODE VIEWER" AND "<instance> > <tab> PERFORMANCE"(inherits filtered from global health Checker?)
 metrics:

@@ -88,12 +88,16 @@ class Supervisor:
             mi.desired_running = True
             return {"state": mi.state.value, "already_running": True}
 
-        await self._set_state(mi, RunState.starting)
-        await tmux.new_session(mi.session, spec.root_dir, spec.start_command)
+        await self._set_state(mi, RunState.starting, detail=f"launching: {spec.start_command}")
+        try:
+            await tmux.new_session(mi.session, spec.root_dir, spec.start_command)
+        except tmux.TmuxError as exc:
+            await self._set_state(mi, RunState.stopped, detail=f"failed to start: {exc}")
+            raise RuntimeError(f"failed to start: {exc}") from exc
         mi.desired_running = True
         mi.crash_times.clear()
         self._ensure_tail(mi)
-        await self._set_state(mi, RunState.running)
+        await self._set_state(mi, RunState.running, detail=f"tmux session {mi.session} up")
         return {"state": mi.state.value}
 
     async def stop(self, spec: InstanceSpec, *, graceful_s: float = _GRACEFUL_STOP_S) -> dict:
@@ -103,17 +107,17 @@ class Supervisor:
             await self._set_state(mi, RunState.stopped)
             return {"state": mi.state.value, "already_stopped": True}
 
-        await self._set_state(mi, RunState.stopping)
         stop_cmd = _STOP_COMMAND.get(spec.type.value, "stop")
+        await self._set_state(mi, RunState.stopping, detail=f"sending '{stop_cmd}', waiting for a clean save")
         try:
             await tmux.send_keys(mi.session, stop_cmd)
-        except tmux.TmuxError:
-            pass
+        except tmux.TmuxError as exc:
+            await self._set_state(mi, RunState.stopping, detail=f"tmux send failed: {exc}")
 
         deadline = time.monotonic() + graceful_s
         while time.monotonic() < deadline:
             if not await tmux.has_session(mi.session):
-                await self._set_state(mi, RunState.stopped)
+                await self._set_state(mi, RunState.stopped, detail="stopped gracefully")
                 return {"state": mi.state.value, "graceful": True}
             await asyncio.sleep(0.5)
 
@@ -228,6 +232,51 @@ class Supervisor:
             await self._set_state(mi, RunState.running, detail="restarted after crash")
         except tmux.TmuxError as exc:
             await self._set_state(mi, RunState.crashed, detail=f"restart failed: {exc}")
+
+    # -- graceful shutdown (system reboot/poweroff) --------------------------
+    async def shutdown_all(self, graceful_s: float = _GRACEFUL_STOP_S) -> int:
+        """Gracefully stop every live managed server so worlds save cleanly
+        before the machine goes down. Stops all ``<prefix>-*`` tmux sessions
+        (including ones this agent didn't start itself). Returns the count."""
+        names = await tmux.list_sessions(self._prefix)
+        await asyncio.gather(
+            *(self._graceful_stop_session(n, graceful_s) for n in names),
+            return_exceptions=True,
+        )
+        return len(names)
+
+    async def _graceful_stop_session(self, name: str, graceful_s: float) -> None:
+        # Send both console stop verbs — Paper/Vanilla use "stop", Velocity "end"
+        # — so we don't need to know the type; the wrong one is a harmless no-op.
+        for verb in ("stop", "end"):
+            try:
+                await tmux.send_keys(name, verb)
+            except tmux.TmuxError:
+                pass
+        deadline = time.monotonic() + graceful_s
+        while time.monotonic() < deadline:
+            if not await tmux.has_session(name):
+                return
+            await asyncio.sleep(0.5)
+        await tmux.kill_session(name)   # last resort so shutdown isn't blocked
+
+    async def states_for(self, ids: list[str]) -> dict[str, str]:
+        """Report the real run-state for a set of instances, checking tmux for
+        anything not actively tracked (so a freshly-connected agent reports
+        stopped/running truthfully instead of unknown)."""
+        transient = (RunState.starting, RunState.stopping, RunState.crashed)
+        out: dict[str, str] = {}
+        for iid in ids:
+            if iid in self._updating:
+                out[iid] = RunState.updating.value
+                continue
+            mi = self._instances.get(iid)
+            if mi is not None and mi.state in transient:
+                out[iid] = mi.state.value            # trust tracked transient states
+            else:
+                alive = await tmux.has_session(self.session_name(iid))
+                out[iid] = RunState.running.value if alive else RunState.stopped.value
+        return out
 
     # -- introspection -------------------------------------------------------
     def states(self) -> dict[str, RunState]:

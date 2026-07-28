@@ -95,6 +95,26 @@ async def _proxy(instance_id: str, action: str, data: dict | None = None) -> dic
     return resp.data
 
 
+# --- Batch run-state (fast initial load) -----------------------------------
+@router.get("/nodes/{node_id}/instance-states")
+async def node_instance_states(node_id: str) -> dict:
+    """Real run-state for all of a node's instances, straight from the agent's
+    tmux view. Lets the UI show stopped/running immediately on load instead of
+    waiting for the first heartbeat. Offline node → empty (UI keeps 'unknown')."""
+    conn = registry.get(node_id)
+    if conn is None:
+        return {"states": {}}
+    with session_scope() as db:
+        ids = [i.id for i in db.query(Instance).filter(Instance.node_id == node_id).all()]
+    if not ids:
+        return {"states": {}}
+    try:
+        resp = await conn.call(Action.instance_states.value, data={"ids": ids}, timeout=15)
+    except (CommandTimeout, ConnectionError):
+        return {"states": {}}
+    return resp.data if resp.ok else {"states": {}}
+
+
 # --- Power -----------------------------------------------------------------
 @router.post("/instances/{instance_id}/power/{op}")
 async def power(instance_id: str, op: str) -> dict:

@@ -255,6 +255,20 @@ minemanager/
 - Agent: enroll + persistent connection, tmux supervisor with restart/crash-loop
   policy, power actions, live console (out via log tail, in via send-keys), jailed
   file ops, log tail, RCON secondary.
+- **Graceful shutdown on reboot** — the agent runs its servers in its *own* tmux
+  server (dedicated socket) as its systemd children. The unit uses
+  **`KillMode=process`** so a `systemctl restart` (or stop) kills only the agent
+  and never its servers — they survive in tmux and are never SIGKILLed mid-write.
+  On SIGTERM the agent checks `systemctl is-system-running`; only when the whole
+  machine is shutting down does it send every server a clean stop and wait for
+  the world to save (bounded, under `TimeoutStopSec`). If that ever fails,
+  systemd's final SIGTERM still triggers the JVM shutdown hooks — a second layer
+  of world-safety. (`PrivateTmp` must stay off, or the tmux socket is hidden from
+  the restarted agent.)
+- **Fast run-state on load** — `GET /nodes/{id}/instance-states` has the agent
+  report each instance's real tmux state, so the UI shows stopped/running
+  immediately instead of waiting for the first heartbeat (and stopped servers
+  never show as "unknown").
 - **Version & build updater** — provider-based (Vanilla via Mojang, Paper &
   Velocity via the PaperMC v3 Fill API), software-agnostic UI. Transactional
   jar swap on the agent (download → checksum verify → backup → atomic replace →

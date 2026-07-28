@@ -353,6 +353,7 @@ POST   /api/nodes                                  {name} -> EnrollmentOut (201)
 POST   /api/nodes/{node_id}/reenroll               -> EnrollmentOut
 DELETE /api/nodes/{node_id}                         (204)
 GET    /api/nodes/{node_id}/instances
+GET    /api/nodes/{node_id}/instance-states        -> {states:{id: RunState}}  (fast initial load)
 POST   /api/nodes/{node_id}/instances              InstanceCreate -> InstanceOut (201)
 PATCH  /api/instances/{instance_id}                InstanceUpdate -> InstanceOut
 DELETE /api/instances/{instance_id}                 (204)

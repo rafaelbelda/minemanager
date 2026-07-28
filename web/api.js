@@ -101,6 +101,7 @@ export const api = {
 
   // Instances
   listInstances: (nodeId) => get(`/api/nodes/${nodeId}/instances`),
+  nodeInstanceStates: (nodeId) => get(`/api/nodes/${nodeId}/instance-states`),
   createInstance: (nodeId, spec) => post(`/api/nodes/${nodeId}/instances`, spec),
   updateInstance: (id, changes) => patch(`/api/instances/${id}`, changes),
   deleteInstance: (id) => del(`/api/instances/${id}`),

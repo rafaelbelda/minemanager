@@ -114,6 +114,7 @@ class Action(str, Enum):
     # Introspection ---------------------------------------------------------
     node_info = "node.info"
     instance_status = "instance.status"
+    instance_states = "instance.states"   # batch: real run-state for a set of ids
 
     # ---- Event actions (agent -> hub, unsolicited) ------------------------
     ev_console_output = "console.output"

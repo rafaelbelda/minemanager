@@ -126,6 +126,9 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
     if action == Action.instance_status.value:
         state = sup.states().get(cmd.instance_id or "", RunState.unknown)
         return Response.success(cmd.id, {"state": state.value})
+    if action == Action.instance_states.value:
+        ids = cmd.data.get("ids") or []
+        return Response.success(cmd.id, {"states": await sup.states_for(ids)})
     if action == Action.node_info.value:
         return Response.success(
             cmd.id,

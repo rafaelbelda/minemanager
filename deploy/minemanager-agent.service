@@ -34,11 +34,25 @@ ExecStart=/opt/minemanager/venv/bin/minemanager-agent
 Restart=always
 RestartSec=3
 
+# KillMode=process is essential: on stop, systemd kills ONLY the agent, never
+# its children. The Minecraft servers run in the agent's own tmux server (a
+# child), so they keep running across a `systemctl restart` (agent upgrades
+# don't drop players) and are never SIGKILLed mid-write. Do NOT use control-group
+# or mixed here — those would SIGKILL the live servers and can corrupt worlds.
+KillMode=process
+# On a real reboot/poweroff the agent's SIGTERM handler sends each server a clean
+# stop and waits for the world to save; TimeoutStopSec must exceed the worst-case
+# save. (If the agent ever fails to handle it, systemd's final SIGTERM still hits
+# the JVM shutdown hooks — a second layer of world-safety.)
+TimeoutStopSec=300
+
 # Hardening (the agent needs to write only its data dir + the server dirs).
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-PrivateTmp=true
+# NOTE: PrivateTmp must stay OFF — tmux's socket lives under /tmp, and a private
+# per-invocation /tmp would hide the running servers' tmux server from the agent
+# after a restart, breaking the survive-restart design.
 # Grant write access to the agent's state dir and wherever your servers live.
 # Adjust ReadWritePaths to your server root(s), e.g. /srv/minecraft.
 ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft

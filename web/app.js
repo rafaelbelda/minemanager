@@ -171,7 +171,25 @@ async function refreshNodes({ quiet = false } = {}) {
 
   events.sync(nodes.map((n) => n.id));
   render();
+  primeStates(nodes);   // fill run-states from the agent's real view (no heartbeat wait)
   scheduleRefresh();
+}
+
+/** Ask each online node's agent for the real run-state of its instances, so the
+ *  UI shows stopped/running immediately instead of waiting for a heartbeat.
+ *  Non-blocking: updates and re-renders as answers arrive. */
+function primeStates(nodes) {
+  for (const node of nodes.filter((n) => n.online)) {
+    api.nodeInstanceStates(node.id).then((res) => {
+      let changed = false;
+      for (const [iid, st] of Object.entries(res?.states || {})) {
+        if (state.runState.get(iid) !== st) { state.runState.set(iid, st); changed = true; }
+      }
+      if (changed) render();
+      // A now-known "running" instance we're viewing should backfill its console.
+      if (state.sel.type === 'instance') maybeLoadConsole(state.sel.instId);
+    }).catch(() => { /* offline / transient — keep unknown */ });
+  }
 }
 
 function scheduleRefresh() {
@@ -211,10 +229,20 @@ function onNodeEvent(frame, nodeId) {
       break;
     }
     case 'state.changed': {
-      if (!frame.instance_id) break;
-      state.runState.set(frame.instance_id, frame.data?.state || 'unknown');
+      const id = frame.instance_id;
+      if (!id) break;
+      const st = frame.data?.state || 'unknown';
+      const prev = state.runState.get(id);
+      state.runState.set(id, st);
+      // Visually separate each server run in the console.
+      if (st === 'starting' && prev !== 'starting') {
+        pushConsole(id, '', 'sys');
+        pushConsole(id, `session start · ${new Date().toLocaleString()}`, 'sep');
+      }
       const detail = frame.data?.detail;
-      if (detail) pushConsole(frame.instance_id, `-- ${frame.data.state}: ${detail}`, 'sys');
+      pushConsole(id, detail ? `${st} — ${detail}` : st, 'sys');
+      if (st === 'stopped' || st === 'crashed') pushConsole(id, '', 'sys');  // trailing gap
+      if (st === 'running') maybeLoadConsole(id);   // (#5) backfill once running
       render();
       break;
     }
@@ -238,6 +266,7 @@ const LINE_RE_BRACKET = /^\[(\d{2}:\d{2}:\d{2})\]\s*\[([^\]]*)\]:?\s?(.*)$/s;
 const LINE_RE_INLINE = /^\[(\d{2}:\d{2}:\d{2})\s+([A-Za-z]+)\]:?\s?(.*)$/s;
 
 function parseLine(raw, kind) {
+  if (kind === 'sep') return { cls: 'sep', time: '', lvl: '', text: raw };
   if (kind === 'sys') return { cls: 'sys', time: '', lvl: '', text: raw };
   let m = raw.match(LINE_RE_BRACKET);
   let time = '', lvl = '', text = raw;
@@ -282,6 +311,12 @@ function pushConsole(instId, raw, kind) {
 async function loadConsoleHistory(inst) {
   if (!inst || state.consoleLoaded.has(inst.id)) return;
   if (!isOnline(inst)) return; // retry when the console is reopened online
+  // (#5) A stopped instance shows an empty console — don't replay the last run's
+  // log. Not marked loaded, so it backfills if/when it starts running.
+  if (runStateOf(inst) !== 'running') {
+    if (!state.console.has(inst.id)) state.console.set(inst.id, []);
+    return;
+  }
   try {
     const res = await api.consoleHistory(inst.id, 300);
     if (state.sel.instId !== inst.id) return; // selection moved on while awaiting
@@ -299,6 +334,13 @@ async function loadConsoleHistory(inst) {
       if (state.tab === 'console') render();
     }
   }
+}
+
+/** Backfill console history for an instance once it's the viewed, running one. */
+function maybeLoadConsole(instId) {
+  if (!instId || state.sel.type !== 'instance' || state.sel.instId !== instId || state.tab !== 'console') return;
+  const inst = instById(instId);
+  if (inst && runStateOf(inst) === 'running') loadConsoleHistory(inst);
 }
 
 function lineNode(line) {
@@ -677,6 +719,7 @@ async function doPower(inst, op, button) {
   const buttons = [...document.querySelectorAll('.inst-actions .btn')];
   if (button) button.disabled = true;
   buttons.forEach((b) => { b.disabled = true; });
+  pushConsole(inst.id, `» ${op} requested by operator`, 'sys');   // log the action
   try {
     const res = await api.power(inst.id, op);
     if (res && res.state) state.runState.set(inst.id, res.state);
@@ -716,6 +759,7 @@ function resetInstancePanes() {
     selVersion: null, selBuild: null, updating: false,
   };
   $('editor-area').value = '';
+  paintEditor();          // clear the gutter + highlight overlay (close the open file)
   const body = $('term-body');
   body.dataset.inst = '';
   clear(body);
@@ -986,7 +1030,7 @@ async function downloadEntry(entry, { confirm = true } = {}) {
   if (!inst) return;
   if (confirm) {
     const what = entry.is_dir
-      ? 'this folder — it will be packaged as a zip archive'
+      ? 'zip archive'
       : formatSize(entry.size);
     const ok = await confirmDialog({
       title: 'Download file',
@@ -1088,32 +1132,63 @@ function cancelTransfer(t) {
   finishTransfer(t.tid, 'cancelled');
 }
 
+/** Build a pill's DOM once. Reconciled (not rebuilt) on updates to avoid flicker. */
+function buildPill(t) {
+  const pill = el('div.transfer-pill', { dataset: { tid: t.tid } },
+    el('div.tp-head', {},
+      el('span.tp-dir', {}, t.direction === 'up' ? '↑' : '↓'),
+      el('span.tp-name', { title: t.name, text: t.name }),
+      el('span.spacer'),
+      el('span.tp-ctl')),
+    el('div.tp-bar', {}, el('div.tp-fill')),
+    el('div.tp-meta', {},
+      el('span.tp-pct'), el('span.spacer'), el('span.tp-status'), el('span.tp-size')));
+  return pill;
+}
+
+/** Update an existing pill's mutable fields in place (no DOM recreation). */
+function updatePill(pill, t) {
+  pill.className = `transfer-pill ${t.state}`;
+  const pct = t.total ? Math.min(100, Math.round((t.sent / t.total) * 100)) : null;
+  const active = t.state === 'starting' || t.state === 'active';
+  const fill = pill.querySelector('.tp-fill');
+  fill.classList.toggle('indet', pct === null && active);
+  fill.style.width = pct !== null ? `${pct}%` : '';
+
+  const ctl = pill.querySelector('.tp-ctl');
+  const wantCancel = active;
+  if (wantCancel && ctl.dataset.k !== 'cancel') {
+    ctl.dataset.k = 'cancel';
+    ctl.className = 'tp-ctl tp-cancel'; ctl.textContent = '×'; ctl.title = 'Cancel';
+    ctl.onclick = () => cancelTransfer(t);
+  } else if (!wantCancel && ctl.dataset.k !== 'icon') {
+    ctl.dataset.k = 'icon';
+    ctl.className = 'tp-ctl tp-icon'; ctl.onclick = null; ctl.title = '';
+    ctl.textContent = t.state === 'done' ? '✓' : t.state === 'error' ? '!' : '–';
+  } else if (!wantCancel) {
+    ctl.textContent = t.state === 'done' ? '✓' : t.state === 'error' ? '!' : '–';
+  }
+
+  pill.querySelector('.tp-pct').textContent = pct !== null ? `${pct}%` : (t.sent ? formatSize(t.sent) : '');
+  pill.querySelector('.tp-status').textContent = t.state === 'error' ? (t.error || 'failed')
+    : t.state === 'done' ? 'complete'
+    : t.state === 'cancelled' ? 'cancelled'
+    : t.state === 'starting' ? 'starting…'
+    : t.rate ? `${formatSize(t.rate)}/s` : '…';
+  pill.querySelector('.tp-size').textContent = t.total ? ` · ${formatSize(t.total)}` : '';
+}
+
 function renderTransfers() {
-  const box = clear($('transfers'));
+  const box = $('transfers');
+  const seen = new Set();
   for (const t of state.transfers.values()) {
-    const pct = t.total ? Math.min(100, Math.round((t.sent / t.total) * 100)) : null;
-    const active = t.state === 'starting' || t.state === 'active';
-    const status = t.state === 'error' ? (t.error || 'failed')
-      : t.state === 'done' ? 'complete'
-      : t.state === 'cancelled' ? 'cancelled'
-      : t.state === 'starting' ? 'starting…'
-      : t.rate ? `${formatSize(t.rate)}/s` : '…';
-    box.append(el(`div.transfer-pill.${t.state}`, {},
-      el('div.tp-head', {},
-        el('span.tp-dir', {}, t.direction === 'up' ? '↑' : '↓'),
-        el('span.tp-name', { title: t.name, text: t.name }),
-        el('span.spacer'),
-        active
-          ? el('button.tp-cancel', { title: 'Cancel', onclick: () => cancelTransfer(t) }, '×')
-          : el('span.tp-icon', {}, t.state === 'done' ? '✓' : t.state === 'error' ? '!' : '–')),
-      el('div.tp-bar', {},
-        el(`div.tp-fill${pct === null && active ? '.indet' : ''}`,
-          { style: pct !== null ? `width:${pct}%` : '' })),
-      el('div.tp-meta', {},
-        el('span', {}, pct !== null ? `${pct}%` : (t.sent ? formatSize(t.sent) : '')),
-        el('span.spacer'),
-        el('span', { text: status }),
-        t.total ? el('span.tp-size', { text: ` · ${formatSize(t.total)}` }) : null)));
+    seen.add(t.tid);
+    let pill = box.querySelector(`[data-tid="${t.tid}"]`);
+    if (!pill) { pill = buildPill(t); box.append(pill); }
+    updatePill(pill, t);
+  }
+  for (const pill of [...box.children]) {
+    if (!seen.has(pill.dataset.tid)) pill.remove();
   }
 }
 
