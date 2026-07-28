@@ -71,6 +71,7 @@ With the state removed, indicate the state of the instance by coloring it accord
 
 The displayed version must represent the actual server version and, when applicable, its build (for example, Paper build). The detector must support **Vanilla**, **Paper**, and **Velocity** instances. The instance type is already known by the application through its mandatory software tag, so the detector only needs to determine the version/build information.
 
+# JAVA DOWNLOADER? dedicated minemanager dir to store java version to run older mc versions
 
 # D) SETTINGS UPDATE [VERSION DEPENDENT?]
 
@@ -106,41 +107,24 @@ save below to properties?
 4-Add RAM slider (we have it while Adding a new instance) into settings, using our already written logic to keep the -Xmx arg in sync with the slider
 
 5-remove the hover effect on the slider
------------------------------------------
-BUGS:
-
-2) When you change from instance A > File to Instance B > File, while viewing instance's A file exporer (with a opened file in the editor), the file opened in the editor doesn't change. Ideally we should close the current file being presented when changing instances.
-
-3) there is a noticable delay between loading the website and it acquiring the state the server is in. The node state does not have this delay. Identify the issue and see if it's a core unfortunate feature our chosen architecture brought or a quick fix
-2.1) In startup, stopped servers (those with Always on turned OFF) are "unknown" instead of stopped
-
-Console quick fixes:
-
-4) Log power actions in console and add more spacing to separate visually different sessions.
-4.1) Log tmux erros, sessions and results more reliably
-
-5) If a instance is stopped and clicked on, do not populate/fetch logs from latest, show the console empty.
-
-Finally, quick question: Is gracefull stop servers if systemctl restart/stop or machine reboot possible? Afraid to corrupt world or serverfiles, our MineManager should be safe. 
-
-
-Restart button reset console history in UI (MINEMANAGER OPTION COFIG)
-
 
 # NOTES
 add instance runtime
 handle diff java versions for diff mc versions?
+
+Restart button reset console history in UI (MINEMANAGER OPTION COFIG)
 
 add node available binds?
 add node settings
 
 show port being used instead of root in intance viewer
 
+add Download latest section, with button and ver and build to Version Updater 
+
 AUTO UPDATER
+
 -------------------------
 DRAFT:
-
-# PAPER UPDATE BUTTON (OPEN A TAB TO SELECT AVAILABLE BUILDS)
 
 
 # DETAILS
