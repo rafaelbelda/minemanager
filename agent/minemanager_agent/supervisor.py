@@ -233,16 +233,18 @@ class Supervisor:
         except tmux.TmuxError as exc:
             await self._set_state(mi, RunState.crashed, detail=f"restart failed: {exc}")
 
-    # -- graceful shutdown (system reboot/poweroff) --------------------------
+    # -- graceful shutdown (agent stop / restart / system reboot) ------------
     async def shutdown_all(self, graceful_s: float = _GRACEFUL_STOP_S) -> int:
-        """Gracefully stop every live managed server so worlds save cleanly
-        before the machine goes down. Stops all ``<prefix>-*`` tmux sessions
-        (including ones this agent didn't start itself). Returns the count."""
+        """Gracefully stop every live managed server so worlds save cleanly,
+        then tear down our tmux server so nothing is left behind. Stops all
+        ``<prefix>-*`` sessions (including any this agent didn't start itself).
+        Returns the number stopped."""
         names = await tmux.list_sessions(self._prefix)
         await asyncio.gather(
             *(self._graceful_stop_session(n, graceful_s) for n in names),
             return_exceptions=True,
         )
+        await tmux.kill_server()   # clean up the now-empty tmux server
         return len(names)
 
     async def _graceful_stop_session(self, name: str, graceful_s: float) -> None:

@@ -85,6 +85,15 @@ async def kill_session(name: str) -> None:
         await _run("kill-session", "-t", name)
 
 
+async def kill_server() -> None:
+    """Tear down our whole tmux server (dedicated socket), leaving nothing behind
+    after a shutdown. Tolerates 'no server running'."""
+    try:
+        await _run("kill-server")
+    except FileNotFoundError:
+        pass
+
+
 async def tmux_available() -> bool:
     try:
         code, _, _ = await _run("-V")

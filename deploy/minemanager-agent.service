@@ -34,16 +34,18 @@ ExecStart=/opt/minemanager/venv/bin/minemanager-agent
 Restart=always
 RestartSec=3
 
-# KillMode=process is essential: on stop, systemd kills ONLY the agent, never
-# its children. The Minecraft servers run in the agent's own tmux server (a
-# child), so they keep running across a `systemctl restart` (agent upgrades
-# don't drop players) and are never SIGKILLed mid-write. Do NOT use control-group
-# or mixed here — those would SIGKILL the live servers and can corrupt worlds.
+# KillMode=process: on stop, systemd sends SIGTERM to ONLY the agent, never its
+# children. The agent's SIGTERM handler then gracefully stops every server
+# (console "stop", waits for a clean world save) and tears down its tmux server
+# before exiting — so systemd never force-kills a live world. Do NOT use
+# control-group/mixed here: those SIGTERM/SIGKILL the servers out from under the
+# agent and can corrupt worlds mid-write.
+#
+# Stopping/restarting the agent (or rebooting) always stops the servers — simple
+# and predictable. TimeoutStopSec must exceed the worst-case world save; if the
+# agent ever fails to handle SIGTERM, on reboot systemd's final SIGTERM still
+# triggers the JVM shutdown hooks (a second world-safety layer).
 KillMode=process
-# On a real reboot/poweroff the agent's SIGTERM handler sends each server a clean
-# stop and waits for the world to save; TimeoutStopSec must exceed the worst-case
-# save. (If the agent ever fails to handle it, systemd's final SIGTERM still hits
-# the JVM shutdown hooks — a second layer of world-safety.)
 TimeoutStopSec=300
 
 # Hardening (the agent needs to write only its data dir + the server dirs).

@@ -255,16 +255,17 @@ minemanager/
 - Agent: enroll + persistent connection, tmux supervisor with restart/crash-loop
   policy, power actions, live console (out via log tail, in via send-keys), jailed
   file ops, log tail, RCON secondary.
-- **Graceful shutdown on reboot** — the agent runs its servers in its *own* tmux
-  server (dedicated socket) as its systemd children. The unit uses
-  **`KillMode=process`** so a `systemctl restart` (or stop) kills only the agent
-  and never its servers — they survive in tmux and are never SIGKILLed mid-write.
-  On SIGTERM the agent checks `systemctl is-system-running`; only when the whole
-  machine is shutting down does it send every server a clean stop and wait for
-  the world to save (bounded, under `TimeoutStopSec`). If that ever fails,
-  systemd's final SIGTERM still triggers the JVM shutdown hooks — a second layer
-  of world-safety. (`PrivateTmp` must stay off, or the tmux socket is hidden from
-  the restarted agent.)
+- **Graceful shutdown** — stopping/restarting the agent (or rebooting) always
+  gracefully stops its servers: on SIGTERM the agent sends each a clean console
+  stop, waits for the world to save (bounded, under `TimeoutStopSec`), then tears
+  down its tmux server and exits. Servers run in the agent's *own* tmux server
+  (dedicated socket) as its systemd children; the unit uses **`KillMode=process`**
+  so systemd signals only the agent and never force-kills a live world — the
+  agent is the sole authority that stops them. (Chosen over keeping servers alive
+  across agent restarts: simpler and more predictable, at the cost of brief
+  downtime during an agent upgrade. `PrivateTmp` stays off so the socket is
+  reachable. If the agent ever fails to handle SIGTERM, on reboot systemd's final
+  SIGTERM still triggers the JVM shutdown hooks — a second world-safety layer.)
 - **Fast run-state on load** — `GET /nodes/{id}/instance-states` has the agent
   report each instance's real tmux state, so the UI shows stopped/running
   immediately instead of waiting for the first heartbeat (and stopped servers

@@ -6,13 +6,11 @@ Run (dev):
 
 Under systemd this is the ExecStart target — the only daemon on the node.
 
-On SIGTERM/SIGINT the agent decides whether to gracefully stop the game servers:
-- if the **system** is shutting down (reboot/poweroff), it sends each server a
-  clean stop and waits for the world to save before exiting, so nothing is
-  force-killed mid-write;
-- for a plain agent restart/stop, the servers are left running (they live in
-  their own tmux sessions and survive the agent), so upgrading the agent never
-  interrupts gameplay.
+On SIGTERM/SIGINT (systemctl stop, restart, or a system reboot) the agent
+gracefully stops every running server — console stop, wait for a clean world
+save (bounded) — then tears down its tmux server and exits. Stopping the agent
+always stops its servers: simpler and more predictable than trying to keep them
+running across the agent's own lifecycle.
 """
 
 from __future__ import annotations
@@ -40,24 +38,6 @@ def _configure_logging() -> None:
     )
 
 
-async def _system_is_stopping() -> bool:
-    """True when the whole machine is shutting down (systemd manager 'stopping').
-
-    This is how we tell a reboot/poweroff from a plain agent restart. Bounded so
-    a slow/hung systemctl can never stall shutdown; on any uncertainty we return
-    False (leave servers running) and rely on the JVM shutdown-hook safety net.
-    """
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "systemctl", "is-system-running",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
-        )
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-    except (FileNotFoundError, asyncio.TimeoutError, OSError):
-        return False
-    return out.decode(errors="replace").strip() == "stopping"
-
-
 async def _amain() -> None:
     config = AgentConfig()
     config.ensure_dirs()
@@ -76,13 +56,9 @@ async def _amain() -> None:
     await stop.wait()
 
     try:
-        # Only a system shutdown gracefully stops the servers; a plain agent
-        # restart leaves them running (they survive in tmux).
-        if not serve.done() and await _system_is_stopping():
+        if not serve.done():
             n = await conn.supervisor.shutdown_all(graceful_s=_SHUTDOWN_GRACE_S)
-            log.info("system shutting down — gracefully stopped %d server(s)", n)
-        else:
-            log.info("agent stopping; servers left running")
+            log.info("agent stopping — gracefully stopped %d server(s)", n)
     finally:
         serve.cancel()
         with contextlib.suppress(asyncio.CancelledError):
