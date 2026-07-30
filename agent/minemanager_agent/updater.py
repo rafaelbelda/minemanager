@@ -84,21 +84,37 @@ def _prune_backups(backups: Path, jar_base: str, keep: int) -> None:
             pass
 
 
-async def apply_update(root: str, jar_name: str, download: dict[str, Any]) -> dict:
+async def apply_update(
+    root: str, jar_name: str, download: dict[str, Any], *, allow_create: bool = False
+) -> dict:
     """Perform the transactional jar swap. Returns a result dict or raises
-    :class:`UpdateError`."""
+    :class:`UpdateError`.
+
+    ``allow_create`` permits installing to a path that does not exist yet, and is
+    set only when the operator named the jar explicitly. When the hub *parsed* the
+    name out of a start command, the file must already be present — a server that
+    is running this jar necessarily has it — so a missing target means the parse
+    was wrong, and installing anyway would leave the server booting its old binary
+    while the update reported success.
+    """
     root_p = Path(root)
     if not root_p.is_dir():
         raise UpdateError(f"instance root does not exist: {root}")
 
     jar_path = _resolve_within(root, jar_name)   # jailed: jar_name cannot escape root
+    if not jar_path.exists() and not allow_create:
+        raise UpdateError(
+            f"{jar_name!r} does not exist in the instance root, so it is not what this "
+            f"server runs. Refusing to create it: the update would look successful while "
+            f"the server kept booting its current binary. Set the instance's jar path to "
+            f"the real executable and retry."
+        )
     work = root_p / ".minemanager"
     backups = work / "backups"
     backups.mkdir(parents=True, exist_ok=True)
 
     tmp = work / f".download-{uuid.uuid4().hex}.tmp"
     backup_path: Path | None = None
-    replaced = False
     ts = time.strftime("%Y%m%d-%H%M%S")
     jar_base = Path(jar_name).name
 
@@ -119,7 +135,6 @@ async def apply_update(root: str, jar_name: str, download: dict[str, Any]) -> di
 
         # Atomic swap on the same filesystem.
         os.replace(tmp, jar_path)
-        replaced = True
         _prune_backups(backups, jar_base, _KEEP_BACKUPS)
 
         return {
@@ -130,13 +145,6 @@ async def apply_update(root: str, jar_name: str, download: dict[str, Any]) -> di
             "backup": str(backup_path.relative_to(root_p)) if backup_path else None,
         }
     except Exception as exc:
-        # Rollback: the atomic replace guarantees the original is intact unless
-        # it succeeded; if the jar somehow went missing, restore from backup.
-        if not replaced and backup_path and backup_path.exists() and not jar_path.exists():
-            try:
-                shutil.copy2(backup_path, jar_path)
-            except OSError:
-                pass
         if isinstance(exc, UpdateError):
             raise
         raise UpdateError(str(exc)) from exc

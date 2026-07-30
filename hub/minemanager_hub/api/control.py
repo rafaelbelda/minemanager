@@ -127,16 +127,20 @@ async def power(instance_id: str, op: str) -> dict:
     if action is None:
         raise HTTPException(400, f"unknown power op: {op}")
 
-    # Record desired state for start/stop. NOTE (v1 gap): the hub does not yet
-    # push desired state back to an agent on reconnect, so this is currently
-    # only bookkeeping for the UI, not automatic reconciliation. See PLAN.md.
+    result = await _proxy(instance_id, action.value)
+
+    # Record desired state for start/stop, but only once the agent has actually
+    # accepted the command — writing it first left the DB claiming "should be
+    # running" after a 409 (agent offline), 502 or 504.
+    # NOTE (v1 gap): the hub does not yet push desired state back to an agent on
+    # reconnect, so this is bookkeeping for the UI, not reconciliation. See PLAN.md.
     if op in ("start", "stop"):
         with session_scope() as db:
             inst = db.get(Instance, instance_id)
             if inst is not None:
                 inst.desired_running = op == "start"
 
-    return await _proxy(instance_id, action.value)
+    return result
 
 
 # --- Console ---------------------------------------------------------------

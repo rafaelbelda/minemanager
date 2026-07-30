@@ -118,12 +118,11 @@ async def upload_stream(instance_id: str, path: str, tid: str, request: Request)
         ctx.state = "active"
         try:
             async for chunk in request.stream():
-                if ctx.cancel.is_set():
+                if not await ctx.put(chunk):
                     break
                 ctx.sent += len(chunk)
-                await ctx.queue.put(chunk)
         finally:
-            await ctx.queue.put(None)  # sentinel: EOF (or abort)
+            await ctx.put(None)  # sentinel: EOF (or abort)
 
     pump = asyncio.ensure_future(pump_body())
     try:
@@ -151,13 +150,15 @@ def transfer_status(tid: str) -> dict:
 
 
 @router.post("/transfers/{tid}/cancel")
-def transfer_cancel(tid: str) -> dict:
+async def transfer_cancel(tid: str) -> dict:
+    #Cancel an in-flight transfer
+    
     ctx = transfers.get(tid)
     if ctx is not None:
         ctx.cancel.set()
         ctx.finish("cancelled")
         try:
-            ctx.queue.put_nowait(None)
+            ctx.queue.put_nowait(None)   # unblock a consumer parked on get()
         except asyncio.QueueFull:
             pass
     return {"ok": True}
@@ -181,11 +182,12 @@ async def internal_push(tid: str, request: Request) -> dict:
 
     try:
         async for chunk in request.stream():
-            if ctx.cancel.is_set():
+            # Cancellable put: backpressure when the browser is keeping up, but
+            # a prompt exit if it disconnected and nothing is draining any more.
+            if not await ctx.put(chunk):
                 break
-            await ctx.queue.put(chunk)      # blocks when full -> backpressure
     finally:
-        await ctx.queue.put(None)
+        await ctx.put(None)
     return {"ok": True}
 
 

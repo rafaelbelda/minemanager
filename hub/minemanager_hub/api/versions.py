@@ -7,8 +7,6 @@ module is provider-agnostic — it never mentions Paper/Vanilla/Velocity.
 
 from __future__ import annotations
 
-import re
-
 from fastapi import APIRouter, HTTPException
 
 from minemanager_hub.agents.registry import CommandTimeout, registry
@@ -16,16 +14,20 @@ from minemanager_hub.api.schemas import UpdateRequest
 from minemanager_hub.db.models import Instance
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.providers import ProviderError, get_provider
+from minemanager_hub import serverjar
 from minemanager_shared.protocol import Action, InstanceSpec
 
 router = APIRouter(prefix="/api", tags=["versions"])
 
-# Must exceed the agent's download timeout so a slow-but-progressing download
-# isn't cut off by the command round-trip.
-UPDATE_TIMEOUT_S = 420.0
+# Must comfortably exceed the agent's *whole* update budget, 500 - 800 should be in range.
+UPDATE_TIMEOUT_S = 650.0
 
-# Fallback jar name per software when the start command has no `-jar <file>`.
-_DEFAULT_JAR = {"paper": "paper.jar", "vanilla": "server.jar", "velocity": "velocity.jar"}
+
+# NOTE: there is deliberately no per-software default jar name any more. Falling
+# back to "paper.jar"/"server.jar" whenever the start command could not be parsed
+# meant the updater installed to a filename nothing ran — the server kept booting
+# its old binary while the hub recorded the new version. Resolution now lives in
+# ``minemanager_hub.serverjar`` and reports its confidence; unknown means refuse.
 
 
 def _provider_or_404(software: str):
@@ -35,9 +37,6 @@ def _provider_or_404(software: str):
     return provider
 
 
-def _jar_name(start_command: str, software: str) -> str:
-    m = re.search(r"-jar\s+(\S+)", start_command or "")
-    return m.group(1) if m else _DEFAULT_JAR.get(software, "server.jar")
 
 
 # --- Catalog ---------------------------------------------------------------
@@ -84,13 +83,16 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
     Guardrails (stopped-check, backup, atomic replace, rollback) live on the
     agent, which owns the process and the files. The hub only resolves the
     download and records the installed version on success.
+
+    Refuses up front when the server executable cannot be identified, rather than
+    installing to a guessed filename — see :mod:`minemanager_hub.serverjar`.
     """
     with session_scope() as db:
         inst = db.get(Instance, instance_id)
         if inst is None:
             raise HTTPException(404, "instance not found")
         software, node_id = inst.type, inst.node_id
-        jar_name = _jar_name(inst.start_command, software)
+        executable = serverjar.resolve(inst.start_command, inst.jar_path)
         # The agent is stateless about instance config, so attach the spec (as
         # every instance-scoped command does).
         spec = InstanceSpec(
@@ -98,6 +100,9 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
             start_command=inst.start_command, auto_restart=inst.auto_restart,
             rcon_host=inst.rcon_host, rcon_port=inst.rcon_port,
         ).model_dump(mode="json")
+
+    if executable.path is None:
+        raise HTTPException(400, serverjar.CANNOT_RESOLVE_DETAIL)
 
     provider = _provider_or_404(software)
     try:
@@ -111,7 +116,11 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
 
     payload = {
         "instance": spec,
-        "jar_name": jar_name,
+        "jar_name": executable.path,
+        # Only an operator-supplied path may be created when absent; a parsed one
+        # must already exist, so a mis-parse fails loudly instead of installing a
+        # jar that nothing runs.
+        "allow_create": executable.allow_create,
         "download": {
             "url": download.url,
             "filename": download.filename,
@@ -145,8 +154,9 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
 
     return {
         "ok": True,
+        "jar_source": executable.confidence,   # "explicit" | "parsed"
         "version": download.version,
         "build": download.build,
-        "jar": jar_name,
+        "jar": executable.path,
         "detail": resp.data,
     }

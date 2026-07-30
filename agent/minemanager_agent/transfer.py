@@ -111,4 +111,8 @@ async def handle(identity, data: dict, root: str) -> dict:
     tid, direction, path = data["tid"], data["direction"], data["path"]
     if direction == "download":
         return await _run_download(identity.http_base, tid, root, path, headers)
-    return await _run_upload(identity.http_base, tid, root, path, headers)
+    if direction == "upload":
+        return await _run_upload(identity.http_base, tid, root, path, headers)
+    # Anything unrecognised used to fall through to the upload path, which would
+    # happily overwrite `path` with whatever the hub streamed back.
+    raise TransferError(f"unknown transfer direction: {direction!r}")

@@ -12,6 +12,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 
+def _env_int(name: str, default: int) -> int:
+    """Read an integer env var, failing with a readable message.
+
+    A bare ``int(os.environ[...])`` raised ValueError during module import, which
+    surfaced as an opaque traceback with no mention of which variable was wrong.
+    """
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(f"{name} must be an integer, got {raw!r}") from None
+
+
 def _default_web_dir() -> Path:
     """Where the static web UI lives (served same-origin by the hub).
 
@@ -38,7 +53,7 @@ class Settings:
     data_dir: Path = field(default_factory=_default_data_dir)
     web_dir: Path = field(default_factory=_default_web_dir)
     host: str = field(default_factory=lambda: os.environ.get("MM_HOST", "127.0.0.1"))
-    port: int = field(default_factory=lambda: int(os.environ.get("MM_PORT", "8730")))
+    port: int = field(default_factory=lambda: _env_int("MM_PORT", 8730))
 
     # Secret-vault key. In production this comes from the environment (systemd
     # EnvironmentFile / a secret manager), never from the DB. Dev falls back to
@@ -47,7 +62,7 @@ class Settings:
 
     # How long an enrollment token is valid once minted (seconds).
     enrollment_ttl_s: int = field(
-        default_factory=lambda: int(os.environ.get("MM_ENROLLMENT_TTL", "900"))
+        default_factory=lambda: _env_int("MM_ENROLLMENT_TTL", 900)
     )
 
     # Comma-separated allowed CORS origins for the web UI during development
@@ -65,13 +80,13 @@ class Settings:
     # (non-streaming) upload/download path — larger transfers use the streaming
     # feature. All in bytes.
     editor_warn_bytes: int = field(
-        default_factory=lambda: int(os.environ.get("MM_EDITOR_WARN_BYTES", str(2_000_000)))
+        default_factory=lambda: _env_int("MM_EDITOR_WARN_BYTES", 2_000_000)
     )
     editor_max_bytes: int = field(
-        default_factory=lambda: int(os.environ.get("MM_EDITOR_MAX_BYTES", str(5_000_000)))
+        default_factory=lambda: _env_int("MM_EDITOR_MAX_BYTES", 5_000_000)
     )
     transfer_cap_bytes: int = field(
-        default_factory=lambda: int(os.environ.get("MM_TRANSFER_CAP_BYTES", str(8_388_608)))
+        default_factory=lambda: _env_int("MM_TRANSFER_CAP_BYTES", 8 * 1024 * 1024)
     )
 
     @property

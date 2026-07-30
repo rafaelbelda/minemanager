@@ -16,7 +16,25 @@ import os
 # server (and thus its systemd cgroup) — this is what lets a shutdown handler
 # stop the servers before systemd force-kills the group, and avoids clobbering a
 # user's tmux. All commands go through this socket.
-_SOCKET = os.environ.get("MM_TMUX_SOCKET", "minemanager")
+DEFAULT_SOCKET = "minemanager"
+_SOCKET = os.environ.get("MM_TMUX_SOCKET", DEFAULT_SOCKET)
+
+
+def socket_name() -> str:
+    """The tmux socket currently in use."""
+    return _SOCKET
+
+
+def use_socket(name: str) -> None:
+    """Pin the socket for the rest of this process.
+
+    The agent pins socket *and* session prefix to the values it last ran with, so
+    an edited env var cannot detach it from servers it is already supervising —
+    see :meth:`AgentConfig.pin_runtime_identity`. Read at call time by
+    :func:`_run`, so this applies to every subsequent tmux invocation.
+    """
+    global _SOCKET
+    _SOCKET = name
 
 
 class TmuxError(Exception):
@@ -34,15 +52,20 @@ async def _run(*args: str) -> tuple[int, str, str]:
     return proc.returncode or 0, out.decode(errors="replace"), err.decode(errors="replace")
 
 
-async def list_sessions(prefix: str) -> list[str]:
-    """Names of our live sessions (``<prefix>-*``). Empty if tmux/no server."""
+async def list_all_sessions() -> list[str]:
+    """Every session on our socket, whatever its prefix. Empty if tmux/no server."""
     try:
         code, out, _ = await _run("list-sessions", "-F", "#{session_name}")
     except FileNotFoundError:
         return []
     if code != 0:
         return []  # "no server running" → no sessions
-    return [n for n in out.splitlines() if n.startswith(prefix + "-")]
+    return out.splitlines()
+
+
+async def list_sessions(prefix: str) -> list[str]:
+    """Names of our live sessions (``<prefix>-*``). Empty if tmux/no server."""
+    return [n for n in await list_all_sessions() if n.startswith(prefix + "-")]
 
 
 async def has_session(name: str) -> bool:
@@ -74,7 +97,9 @@ async def send_keys(name: str, line: str) -> None:
     if not await has_session(name):
         raise TmuxError(f"no such session: {name}")
     # Literal (-l) text, then a separate Enter, so control chars aren't parsed.
-    code, _, err = await _run("send-keys", "-t", name, "-l", line)
+    # "--" terminates option parsing: without it a console line starting with
+    # "-" is read by tmux as flags instead of as text.
+    code, _, err = await _run("send-keys", "-t", name, "-l", "--", line)
     if code != 0:
         raise TmuxError(f"send-keys failed: {err.strip()}")
     await _run("send-keys", "-t", name, "Enter")

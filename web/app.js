@@ -1423,6 +1423,7 @@ function fillSettings(inst) {
   $('set-type').value = inst.type;
   $('set-root').value = inst.root_dir;
   $('set-cmd').value = inst.start_command;
+  $('set-jar').value = inst.jar_path || '';
   $('set-auto').classList.toggle('on', !!inst.auto_restart);
   $('set-rhost').value = inst.rcon_host || '';
   $('set-rport').value = inst.rcon_port ?? '';
@@ -1504,6 +1505,8 @@ async function saveInstance() {
     type: $('set-type').value,
     root_dir: $('set-root').value.trim(),
     start_command: $('set-cmd').value.trim(),
+    // Empty means "derive it from the start command" (see hub serverjar.py).
+    jar_path: $('set-jar').value.trim() || null,
     auto_restart: $('set-auto').classList.contains('on'),
     rcon_host: $('set-rhost').value.trim() || '127.0.0.1',
     rcon_port: portRaw ? Number(portRaw) : null,

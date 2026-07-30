@@ -34,11 +34,23 @@ class EnrollmentOut(BaseModel):
 
 
 # --- Instances -------------------------------------------------------------
+# Path to the server executable relative to the instance root. Optional: it is
+# parsed from the start command when that names it directly. Required only for
+# launches that hide it (wrapper script, @argfile, ambiguous -cp).
+_JAR_PATH = Field(
+    default=None,
+    examples=["paper.jar", "server.jar"],
+    description="Server executable, relative to the instance root. Leave empty to "
+                "derive it from the start command.",
+)
+
+
 class InstanceCreate(BaseModel):
     name: str
     type: InstanceType
     root_dir: str
     start_command: str
+    jar_path: Optional[str] = _JAR_PATH
     auto_restart: bool = True
     rcon_host: str = "127.0.0.1"
     rcon_port: Optional[int] = None
@@ -51,6 +63,7 @@ class InstanceUpdate(BaseModel):
     type: Optional[InstanceType] = None
     root_dir: Optional[str] = None
     start_command: Optional[str] = None
+    jar_path: Optional[str] = _JAR_PATH
     auto_restart: Optional[bool] = None
     rcon_host: Optional[str] = None
     rcon_port: Optional[int] = None
@@ -63,6 +76,7 @@ class InstanceOut(BaseModel):
     type: str
     root_dir: str
     start_command: str
+    jar_path: Optional[str] = None
     desired_running: bool
     auto_restart: bool
     rcon_host: str

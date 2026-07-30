@@ -21,6 +21,14 @@ from minemanager_shared.protocol import Command, Event, Response
 # A sink receives Event objects for a node the caller subscribed to.
 EventSink = Callable[[Event], None]
 
+# Per-subscriber backlog, in events. An unbounded queue let a single UI client on
+# a slow link grow the hub's memory without limit, since console output has no
+# natural ceiling.
+#
+# Sized to the UI's own console scrollback (``CONSOLE_CAP = 1500`` in
+# web/app.js)
+_EVENT_QUEUE_MAX = 1500
+
 
 class CommandTimeout(Exception):
     """Raised when an agent does not answer a command in time."""
@@ -87,6 +95,13 @@ class AgentRegistry:
 
     # -- connection lifecycle ------------------------------------------------
     def register(self, conn: AgentConnection) -> None:
+        previous = self._agents.get(conn.node_id)
+        if previous is not None and previous is not conn:
+            # Two live sockets for one node (a reconnect that raced its own
+            # disconnect, or a duplicate agent). Newest wins — but the displaced
+            # connection's in-flight commands must be rejected now rather than
+            # hanging until timeout on a socket nobody will read again.
+            previous.fail_all(ConnectionError("agent connection replaced by a newer one"))
         self._agents[conn.node_id] = conn
 
     def unregister(self, node_id: str) -> None:
@@ -125,8 +140,19 @@ class AgentRegistry:
 
     async def stream(self, node_id: str) -> AsyncIterator[Event]:
         """Async-iterate events for a node (for a UI WebSocket to forward)."""
-        queue: asyncio.Queue[Event] = asyncio.Queue()
-        with self._subscription(node_id, queue.put_nowait):
+        queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=_EVENT_QUEUE_MAX)
+
+        def sink(event: Event) -> None:
+            # Drop oldest when a subscriber falls behind: losing a stale console
+            # line beats letting one slow client grow the hub without bound.
+            if queue.full():
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:  # pragma: no cover - drained concurrently
+                    pass
+            queue.put_nowait(event)
+
+        with self._subscription(node_id, sink):
             while True:
                 yield await queue.get()
 

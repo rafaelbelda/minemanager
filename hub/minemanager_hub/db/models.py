@@ -10,7 +10,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -67,6 +76,12 @@ class Instance(Base):
     # Command the agent runs inside the tmux session to launch the process.
     start_command: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # Explicit path to the server executable, relative to root_dir. Only needed
+    # when the start command does not name it (wrapper script, @argfile launch,
+    # ambiguous -cp); otherwise it is parsed from start_command. See
+    # ``minemanager_hub.serverjar`` — the updater refuses rather than guess.
+    jar_path: Mapped[str | None] = mapped_column(String(1024), default=None)
+
     # Desired lifecycle: should the agent keep this running?
     desired_running: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_restart: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -94,6 +109,12 @@ class Secret(Base):
     """
 
     __tablename__ = "secrets"
+    # Both _lookup_secret and set_secret use .one_or_none(), so a duplicate row
+    # raises MultipleResultsFound — and because _lookup_secret runs inside
+    # _agent_and_spec, that breaks *every* command for the instance, permanently.
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_id", "key", name="uq_secret_scope_key"),
+    )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     # Owning scope: an instance id or node id.

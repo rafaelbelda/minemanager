@@ -78,18 +78,30 @@ def extract(root: str | Path, rel: str, overwrite: bool = False) -> dict:
 
 def _finish(plan, overwrite, write_one) -> dict:
     """Shared conflict-check + execution over a plan of (target, rel, is_dir)."""
-    conflicts = [rel for target, rel, is_dir in plan if not is_dir and target.exists()]
+    preexisting = {target for target, _rel, is_dir in plan if not is_dir and target.exists()}
+    conflicts = [rel for target, rel, is_dir in plan if not is_dir and target in preexisting]
     if conflicts and not overwrite:
         return {"extracted": False, "conflicts": conflicts[:_MAX_CONFLICTS],
                 "conflict_count": len(conflicts)}
     count = 0
-    for target, rel, is_dir in plan:
-        if is_dir:
-            target.mkdir(parents=True, exist_ok=True)
-        else:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            write_one(target, rel)
-            count += 1
+    created: list[Path] = []
+    try:
+        for target, rel, is_dir in plan:
+            if is_dir:
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                write_one(target, rel)
+                if target not in preexisting:
+                    created.append(target)
+                count += 1
+    except Exception:
+        for p in reversed(created):
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        raise
     return {"extracted": True, "count": count}
 
 

@@ -36,6 +36,27 @@ class TransferContext:
     created: float = field(default_factory=time.monotonic)
     finished_at: float | None = None
 
+    async def put(self, item: "bytes | None") -> bool:
+
+        if self.cancel.is_set():
+            return False
+        if not self.queue.full():
+            self.queue.put_nowait(item)
+            return True
+
+        putter = asyncio.ensure_future(self.queue.put(item))
+        waiter = asyncio.ensure_future(self.cancel.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {putter, waiter}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if putter in done:
+                return True
+            putter.cancel()
+            return False
+        finally:
+            waiter.cancel()
+
     def finish(self, state: str, error: str | None = None) -> None:
         self.state = state
         self.error = error
@@ -65,6 +86,7 @@ class TransferRegistry:
         return ctx
 
     def get(self, tid: str) -> TransferContext | None:
+        self._sweep()
         return self._t.get(tid)
 
     def remove(self, tid: str) -> None:

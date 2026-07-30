@@ -37,6 +37,7 @@ class Connection:
         self.hostname = hostname
         self._ws: websockets.WebSocketClientProtocol | None = None
         self._send_lock = asyncio.Lock()
+        self._inflight: set[asyncio.Task] = set()
         # The supervisor emits events through this connection.
         self.supervisor = Supervisor(config.session_prefix, self._emit_event)
 
@@ -52,12 +53,13 @@ class Connection:
 
     async def _handshake(self, ws: websockets.WebSocketClientProtocol) -> str:
         node_id, credential = self.config.load_identity()
+
         hello = Hello(
             agent_version=__version__,
             hostname=self.hostname,
             node_id=node_id,
             credential=credential,
-            enrollment_token=None if credential else self.config.enroll_token,
+            enrollment_token=self.config.enroll_token,
             capabilities=["power", "console", "files", "rcon", "logs"],
         )
         await ws.send(hello.model_dump_json())
@@ -86,15 +88,22 @@ class Connection:
         """
         while True:
             await asyncio.sleep(self.config.heartbeat_s)
-            await self._emit_event(
-                Event(
-                    action=Action.ev_heartbeat.value,
-                    data={
-                        "uptime_s": self.supervisor.uptime_s(),
-                        "instances": {k: v.value for k, v in self.supervisor.states().items()},
-                    },
+            try:
+                await self._emit_event(
+                    Event(
+                        action=Action.ev_heartbeat.value,
+                        data={
+                            "uptime_s": self.supervisor.uptime_s(),
+                            "instances": {k: v.value for k, v in self.supervisor.states().items()},
+                        },
+                    )
                 )
-            )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Never let one bad heartbeat kill the loop: a dead heartbeat
+                # task shows up as an "offline" node while the socket is fine.
+                log.exception("heartbeat failed; continuing")
 
     async def _serve(self, ws: websockets.WebSocketClientProtocol) -> None:
         self._ws = ws
@@ -112,7 +121,9 @@ class Connection:
                 continue
             if isinstance(frame, Command):
                 # Dispatch concurrently so a slow command can't block the socket.
-                asyncio.create_task(self._handle_command(ws, frame))
+                task = asyncio.create_task(self._handle_command(ws, frame))
+                self._inflight.add(task)
+                task.add_done_callback(self._inflight.discard)
 
     async def _handle_command(self, ws, cmd: Command) -> None:
         resp = await handlers.handle(cmd, self.supervisor)
@@ -134,7 +145,9 @@ class Connection:
                         log.info("connected to hub as node %s", node_id)
                         backoff = self.config.reconnect_min_s  # reset on success
                         await self._serve(ws)
-                except (OSError, websockets.WebSocketException, RuntimeError) as exc:
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
                     log.warning("connection lost (%s); retrying in %.0fs", exc, backoff)
                 finally:
                     self._ws = None

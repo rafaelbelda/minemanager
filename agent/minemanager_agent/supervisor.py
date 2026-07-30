@@ -54,6 +54,7 @@ class Supervisor:
         self._monitor: asyncio.Task | None = None
         self._started_at = time.monotonic()
         self._updating: set[str] = set()  # instance ids with an update in progress
+        self._shutting_down = False       # set by shutdown_all; freezes restart policy
         self.identity = None              # set by the connection after handshake
                                           # (node_id, credential, http_base) for transfers
 
@@ -85,7 +86,13 @@ class Supervisor:
         if spec.id in self._updating:
             raise RuntimeError("cannot start: a server update is in progress")
         if await tmux.has_session(mi.session):
+            # Already up — most often because the agent (re)connected to a server
+            # it did not itself launch. Adopt it: report the *real* state and
+            # start tailing, rather than returning a stale default of "stopped".
             mi.desired_running = True
+            self._ensure_tail(mi)
+            if mi.state is not RunState.running:
+                await self._set_state(mi, RunState.running, detail="already running; adopted")
             return {"state": mi.state.value, "already_running": True}
 
         await self._set_state(mi, RunState.starting, detail=f"launching: {spec.start_command}")
@@ -143,7 +150,9 @@ class Supervisor:
         return {"sent": True}
 
     # -- version updater -----------------------------------------------------
-    async def apply_update(self, spec: InstanceSpec, jar_name: str, download: dict) -> dict:
+    async def apply_update(
+        self, spec: InstanceSpec, jar_name: str, download: dict, *, allow_create: bool = False
+    ) -> dict:
         """Transactionally replace the server jar. Refuses if the instance is
         running or already updating; holds the ``updating`` state (which also
         blocks ``start``) for the duration."""
@@ -157,7 +166,9 @@ class Supervisor:
         prev_state = mi.state
         await self._set_state(mi, RunState.updating, detail=f"installing {download.get('version')}")
         try:
-            result = await updater.apply_update(spec.root_dir, jar_name, download)
+            result = await updater.apply_update(
+                spec.root_dir, jar_name, download, allow_create=allow_create
+            )
             await self._set_state(
                 mi, RunState.stopped,
                 detail=f"updated to {download.get('version')}"
@@ -202,6 +213,8 @@ class Supervisor:
                 await self._check_one(mi)
 
     async def _check_one(self, mi: ManagedInstance) -> None:
+        if self._shutting_down:
+            return  # a shutdown is in progress: sessions vanishing is expected
         if mi.spec.id in self._updating:
             return  # never treat a mid-update instance as crashed
         alive = await tmux.has_session(mi.session)
@@ -239,6 +252,17 @@ class Supervisor:
         then tear down our tmux server so nothing is left behind. Stops all
         ``<prefix>-*`` sessions (including any this agent didn't start itself).
         Returns the number stopped."""
+        # Freeze the restart policy *before* anything stops. The monitor task is
+        # still running at this point (the connection owns it and is cancelled
+        # only after we return), and a session exiting cleanly is indistinguishable
+        # from a crash — without this it would relaunch servers mid-shutdown and
+        # kill_server() would then tear the fresh ones down ungracefully.
+        self._shutting_down = True
+        for mi in self._instances.values():
+            mi.desired_running = False
+            if mi.tail_task and not mi.tail_task.done():
+                mi.tail_task.cancel()
+
         names = await tmux.list_sessions(self._prefix)
         await asyncio.gather(
             *(self._graceful_stop_session(n, graceful_s) for n in names),

@@ -7,12 +7,13 @@ The bare ``uvicorn minemanager_hub.main:app`` CLI ignores MM_HOST/MM_PORT (it
 uses uvicorn's own 127.0.0.1:8000 default); if you use it for --reload during
 dev, pass ``--host``/``--port`` explicitly.
 
-In production this sits behind Authelia + WireGuard; it does not authenticate
+In production this sits behind Auth Service + WireGuard; it does not authenticate
 end users itself.
 """
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -24,11 +25,35 @@ from minemanager_hub.api import agent_ws, control, nodes, transfers, versions
 from minemanager_hub.config import get_settings
 from minemanager_hub.db.session import init_db
 from minemanager_hub.providers.http import aclose as close_provider_http
+from minemanager_hub.security import vault
+
+log = logging.getLogger("minemanager.hub")
+
+
+def _configure_logging() -> None:
+    root = logging.getLogger("minemanager")
+    if not root.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+        )
+        root.addHandler(handler)
+    root.setLevel(logging.INFO)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    init_db()
+    _configure_logging()
+    settings = get_settings()
+    # State the resolved configuration
+    log.info(
+        "hub %s starting: data_dir=%s host=%s port=%s cors=%s",
+        __version__, settings.data_dir, settings.host, settings.port,
+        settings.cors_origins or "same-origin only",
+    )
+    init_db()                                # logs the DB path + node count
+    vault.verify_existing_secrets_readable()  # exits if the key can't read them
+    log.info("web: %s", _web_dir_status)
     yield
     await close_provider_http()
 
@@ -87,3 +112,6 @@ class _SpaStatic:
 _web_dir = get_settings().web_dir
 if _web_dir.is_dir():
     app.mount("/", _SpaStatic(_web_dir), name="web")
+    _web_dir_status = f"serving UI from {_web_dir}"
+else:
+    _web_dir_status = f"UI NOT mounted - {_web_dir} is not a directory (API-only)"

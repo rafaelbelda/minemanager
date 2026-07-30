@@ -24,6 +24,12 @@ _BINARY_SNIFF_BYTES = 8192
 # even when a huge directory slips past the transfer cap on uncompressed size.
 _ZIP_UNCOMPRESSED_GUARD = 256 * 1024 * 1024
 
+# Fallbacks used when the hub does not supply its configured limit. Defined here
+# so the agent and the hub's MM_EDITOR_MAX_BYTES / MM_TRANSFER_CAP_BYTES defaults
+# are not two independent magic numbers that can silently drift apart.
+DEFAULT_EDITOR_MAX_BYTES = 5_000_000
+DEFAULT_TRANSFER_CAP_BYTES = 8 * 1024 * 1024
+
 
 class JailError(Exception):
     """Raised when a requested path would escape the instance root."""
@@ -48,7 +54,11 @@ def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         if child.name == HIDDEN_DIR:
             continue  # hide our private scratch dir from the explorer
-        st = child.stat()
+        # Broken links  list as 0-byte entries.
+        try:
+            st = child.lstat()
+        except OSError:
+            continue  # vanished between iterdir() and here — skip it
         entries.append(
             {
                 "name": child.name,
@@ -61,7 +71,7 @@ def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
     return entries
 
 
-def read_file(root: str | Path, rel: str, max_bytes: int = 5_000_000) -> str:
+def read_file(root: str | Path, rel: str, max_bytes: int = DEFAULT_EDITOR_MAX_BYTES) -> str:
     target = _resolve_within(root, rel)
     if not target.is_file():
         raise FileNotFoundError(rel)
@@ -70,7 +80,7 @@ def read_file(root: str | Path, rel: str, max_bytes: int = 5_000_000) -> str:
     return target.read_text(encoding="utf-8", errors="replace")
 
 
-def read_for_editor(root: str | Path, rel: str, max_bytes: int = 5_000_000) -> dict:
+def read_for_editor(root: str | Path, rel: str, max_bytes: int = DEFAULT_EDITOR_MAX_BYTES) -> dict:
     """Read a file for the text editor, refusing binary content.
 
     Binary is detected by a NUL byte in the first chunk (the standard heuristic).

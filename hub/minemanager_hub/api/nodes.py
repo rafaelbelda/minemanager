@@ -20,11 +20,22 @@ from minemanager_hub.api.schemas import (
     NodeOut,
 )
 from minemanager_hub.config import get_settings
-from minemanager_hub.db.models import Instance, Node
+from minemanager_hub.db.models import Instance, Node, Secret
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import tokens
 
 router = APIRouter(prefix="/api", tags=["nodes"])
+
+
+def _delete_secrets_for(db, scope: str, scope_ids: list[str]) -> None:
+    """Drop encrypted secrets belonging to deleted nodes/instances."""
+    if not scope_ids:
+        return
+    (
+        db.query(Secret)
+        .filter(Secret.scope == scope, Secret.scope_id.in_(scope_ids))
+        .delete(synchronize_session=False)
+    )
 
 
 def _node_out(node: Node) -> NodeOut:
@@ -47,6 +58,7 @@ def _instance_out(inst: Instance) -> InstanceOut:
         type=inst.type,
         root_dir=inst.root_dir,
         start_command=inst.start_command,
+        jar_path=inst.jar_path,
         desired_running=inst.desired_running,
         auto_restart=inst.auto_restart,
         rcon_host=inst.rcon_host,
@@ -106,6 +118,10 @@ def delete_node(node_id: str) -> None:
         node = db.get(Node, node_id)
         if node is None:
             raise HTTPException(404, "node not found")
+        # Secrets are scoped by (scope, scope_id) with no FK, so nothing cascades to them
+        instance_ids = [i.id for i in node.instances]
+        _delete_secrets_for(db, "node", [node_id])
+        _delete_secrets_for(db, "instance", instance_ids)
         db.delete(node)
 
 
@@ -130,6 +146,7 @@ def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
             type=body.type.value,
             root_dir=body.root_dir,
             start_command=body.start_command,
+            jar_path=body.jar_path or None,
             auto_restart=body.auto_restart,
             rcon_host=body.rcon_host,
             rcon_port=body.rcon_port,
@@ -166,4 +183,5 @@ def delete_instance(instance_id: str) -> None:
         inst = db.get(Instance, instance_id)
         if inst is None:
             raise HTTPException(404, "instance not found")
+        _delete_secrets_for(db, "instance", [instance_id])
         db.delete(inst)
