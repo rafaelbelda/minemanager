@@ -64,6 +64,7 @@ def _ensure_columns(engine: Engine) -> None:
             "version": "VARCHAR(64)",
             "build": "VARCHAR(32)",
             "jar_path": "VARCHAR(1024)",
+            "java_home": "VARCHAR(1024)",
         },
     }
     inspector = inspect(engine)

@@ -1424,6 +1424,7 @@ function fillSettings(inst) {
   $('set-root').value = inst.root_dir;
   $('set-cmd').value = inst.start_command;
   $('set-jar').value = inst.jar_path || '';
+  $('set-java').value = inst.java_home || '';
   $('set-auto').classList.toggle('on', !!inst.auto_restart);
   $('set-rhost').value = inst.rcon_host || '';
   $('set-rport').value = inst.rcon_port ?? '';
@@ -1507,6 +1508,8 @@ async function saveInstance() {
     start_command: $('set-cmd').value.trim(),
     // Empty means "derive it from the start command" (see hub serverjar.py).
     jar_path: $('set-jar').value.trim() || null,
+    // Empty means "use whatever java the node's PATH resolves to".
+    java_home: $('set-java').value.trim() || null,
     auto_restart: $('set-auto').classList.contains('on'),
     rcon_host: $('set-rhost').value.trim() || '127.0.0.1',
     rcon_port: portRaw ? Number(portRaw) : null,

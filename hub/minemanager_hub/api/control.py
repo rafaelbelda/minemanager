@@ -68,6 +68,7 @@ def _agent_and_spec(instance_id: str) -> tuple[AgentConnection, dict]:
             name=inst.name,
             root_dir=inst.root_dir,
             start_command=inst.start_command,
+            java_home=inst.java_home,
             auto_restart=inst.auto_restart,
             rcon_host=inst.rcon_host,
             rcon_port=inst.rcon_port,

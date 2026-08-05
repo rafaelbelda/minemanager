@@ -65,6 +65,16 @@ class AgentConfig:
         return self.data_dir / "identity.json"
 
     @property
+    def pty_dir(self) -> Path:
+        """Where raw pane output is mirrored, one file per instance.
+
+        Kept in the agent's data dir rather than under the instance root so it
+        stays out of the operator's file browser and out of anything that gets
+        backed up with the world.
+        """
+        return self.data_dir / "pty"
+
+    @property
     def runtime_file(self) -> Path:
         """Records the session prefix + tmux socket this agent last ran with."""
         return self.data_dir / "runtime.json"

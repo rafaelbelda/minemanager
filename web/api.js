@@ -54,6 +54,16 @@ export function describe(err) {
   }
 }
 
+/* FastAPI reports a 422 as a list of per-field objects. Rendered raw that is a
+ * wall of JSON in a toast, so pull out the messages people can act on. */
+function errorList(detail) {
+  if (!Array.isArray(detail)) return JSON.stringify(detail);
+  const msgs = detail
+    .map((e) => (e && typeof e.msg === 'string' ? e.msg.replace(/^Value error,\s*/, '') : null))
+    .filter(Boolean);
+  return msgs.length ? msgs.join(' · ') : JSON.stringify(detail);
+}
+
 async function request(method, path, body) {
   const init = { method, headers: {} };
   if (body !== undefined) {
@@ -71,7 +81,7 @@ async function request(method, path, body) {
     try {
       const payload = await res.json();
       if (payload && payload.detail) {
-        detail = typeof payload.detail === 'string' ? payload.detail : JSON.stringify(payload.detail);
+        detail = typeof payload.detail === 'string' ? payload.detail : errorList(payload.detail);
       }
     } catch { /* non-JSON error body — keep the status text */ }
     throw new ApiError(res.status, detail);

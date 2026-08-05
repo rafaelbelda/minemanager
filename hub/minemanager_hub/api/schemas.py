@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from minemanager_shared.protocol import InstanceType
 
@@ -44,6 +44,39 @@ _JAR_PATH = Field(
                 "derive it from the start command.",
 )
 
+# Optional per-instance JDK, so one node can run servers on different Java
+# versions. A plain path (not a secret): it is returned by the API and edited in
+# the UI like any other field.
+_JAVA_HOME = Field(
+    default=None,
+    examples=["/usr/lib/jvm/java-21-openjdk", "/opt/jdk-17"],
+    description="Directory containing bin/java, used to launch this instance. "
+                "Leave empty to use the node's default java.",
+)
+
+# The value ends up in the agent's launch command line. It is shell-quoted there,
+# and anyone able to set it can already set start_command (arbitrary shell), so
+# this is not a privilege boundary — it is here to reject typos and paths that
+# would silently mangle the launch line rather than fail loudly.
+_JAVA_HOME_FORBIDDEN = set(";&|$`<>\n\r\t\"'\\")
+
+
+def _clean_java_home(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return None
+    value = value.strip().rstrip("/")
+    if not value:
+        return None            # empty means "use the node default"
+    if not value.startswith("/"):
+        raise ValueError("java_home must be an absolute path (e.g. /usr/lib/jvm/java-21-openjdk)")
+    bad = sorted(_JAVA_HOME_FORBIDDEN & set(value))
+    if bad:
+        raise ValueError(f"java_home may not contain {' '.join(repr(c) for c in bad)}")
+    if value.endswith("/bin/java"):
+        raise ValueError("java_home is the JDK directory, not the java binary "
+                         "— drop the trailing /bin/java")
+    return value
+
 
 class InstanceCreate(BaseModel):
     name: str
@@ -51,9 +84,15 @@ class InstanceCreate(BaseModel):
     root_dir: str
     start_command: str
     jar_path: Optional[str] = _JAR_PATH
+    java_home: Optional[str] = _JAVA_HOME
     auto_restart: bool = True
     rcon_host: str = "127.0.0.1"
     rcon_port: Optional[int] = None
+
+    @field_validator("java_home")
+    @classmethod
+    def _check_java_home(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_java_home(value)
 
 
 class InstanceUpdate(BaseModel):
@@ -64,9 +103,15 @@ class InstanceUpdate(BaseModel):
     root_dir: Optional[str] = None
     start_command: Optional[str] = None
     jar_path: Optional[str] = _JAR_PATH
+    java_home: Optional[str] = _JAVA_HOME
     auto_restart: Optional[bool] = None
     rcon_host: Optional[str] = None
     rcon_port: Optional[int] = None
+
+    @field_validator("java_home")
+    @classmethod
+    def _check_java_home(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_java_home(value)
 
 
 class InstanceOut(BaseModel):
@@ -77,6 +122,7 @@ class InstanceOut(BaseModel):
     root_dir: str
     start_command: str
     jar_path: Optional[str] = None
+    java_home: Optional[str] = None
     desired_running: bool
     auto_restart: bool
     rcon_host: str

@@ -82,6 +82,12 @@ class Instance(Base):
     # ``minemanager_hub.serverjar`` — the updater refuses rather than guess.
     jar_path: Mapped[str | None] = mapped_column(String(1024), default=None)
 
+    # Optional JDK directory used to launch *this* instance (must contain
+    # bin/java). Lets one node run servers on different Java versions. NULL =
+    # whatever ``java`` the agent's PATH resolves to. A plain path, not a
+    # secret — it is shown and edited in the UI like any other field.
+    java_home: Mapped[str | None] = mapped_column(String(1024), default=None)
+
     # Desired lifecycle: should the agent keep this running?
     desired_running: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_restart: Mapped[bool] = mapped_column(Boolean, default=True)

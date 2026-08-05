@@ -210,6 +210,11 @@ class InstanceSpec(BaseModel):
     name: str
     root_dir: str
     start_command: str
+    # Optional JDK directory (a JAVA_HOME, i.e. it contains ``bin/java``). When
+    # set, the agent launches the start command with JAVA_HOME/PATH pointed at
+    # it, so this instance runs a specific Java version without the start
+    # command having to name an interpreter. Empty = the node's default java.
+    java_home: Optional[str] = None
     auto_restart: bool = True
     rcon_host: str = "127.0.0.1"
     rcon_port: Optional[int] = None

@@ -73,6 +73,28 @@ The displayed version must represent the actual server version and, when applica
 
 # JAVA DOWNLOADER? dedicated minemanager dir to store java version to run older mc versions
 
+DONE (the "point at a java" half): each instance has an optional `java_home` in
+Settings — a JDK directory. When set, the agent launches that instance with
+JAVA_HOME/PATH pointed at it, so one node can run servers on different Java
+versions and switching is an edit + restart. The start command is untouched, so
+wrapper scripts inherit it too. Invalid/missing JDKs are refused with a reason
+instead of crash-looping.
+
+STILL OPEN: MineManager *downloading* and managing the JDKs itself (a dedicated
+dir of installed runtimes + a picker in the UI instead of a typed path). Natural
+follow-up: a `java.list` agent action that scans /usr/lib/jvm and friends so the
+field becomes a dropdown of what is actually installed on that node.
+
+# CONSOLE SHOWS WHY A SERVER DIED  — DONE
+
+Console output was only ever a tail of `logs/latest.log`, so anything that died
+before its logger started (JVM version mismatch, port in use, bad -Xmx) showed a
+bare "crashed" with no reason: the output went to the tmux pane and was
+destroyed with the session. The agent now mirrors each pane to a bounded file
+and replays its tail onto the console when an instance crashes, tagged
+`source: "pty"`. A launch that dies instantly is also reported as `crashed`
+rather than being announced `running` and contradicted seconds later.
+
 # D) SETTINGS UPDATE [VERSION DEPENDENT?]
 
 Add dedicated endpoint and flow to update/overwrite server-icon 

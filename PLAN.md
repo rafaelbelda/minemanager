@@ -312,6 +312,14 @@ disabled "coming soon" control (see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md)
   (re)connects streams no new lines until restarted. The UI backfills recent
   output via `console/history` on open, so the console isn't blank — but live
   updates for that case still wait on sync-on-connect.
+- **Crash-reason capture on adopted sessions** — the agent mirrors each pane to
+  a bounded file and replays its tail onto the console when an instance crashes,
+  which is what makes a pre-logger failure (JVM version mismatch, port in use)
+  explain itself. For a session the agent *adopts* rather than launches, the
+  mirror only starts at adoption, so anything printed before that is already
+  gone; later crashes are still explained. Two accepted rough edges: a crash
+  well after startup replays lines already streamed from the log, and the mirror
+  is trimmed to a size cap rather than rotated.
 - **Desired-state reconciliation** — `desired_running` is recorded but not
   pushed back to an agent on reconnect (no auto-restore yet).
 - **RCON REST surface** — agent supports `rcon.command`; not exposed via REST.

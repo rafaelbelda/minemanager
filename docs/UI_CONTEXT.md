@@ -74,6 +74,8 @@ copy button and the install hint; it cannot be retrieved again (only re-minted).
   "type": "paper",                 // paper | vanilla | velocity
   "root_dir": "/srv/minecraft/survival",
   "start_command": "java -Xmx4G -jar paper.jar nogui",
+  "jar_path": "paper.jar",         // or null — derived from start_command when unset
+  "java_home": "/opt/jdk-21",      // or null — the node's default java
   "desired_running": true,         // operator intent (see gap note in §6)
   "auto_restart": true,
   "rcon_host": "127.0.0.1",
@@ -85,6 +87,15 @@ copy button and the install hint; it cannot be retrieved again (only re-minted).
 
 `version`/`build` are set by the updater (and, later, a version detector). They
 are `null` on a freshly declared instance — show "not detected yet".
+
+`java_home` is a **plain field, not a secret** — it round-trips through the API
+like any other. It is the JDK *directory* (the one containing `bin/java`), which
+lets one node run instances on different Java versions. When set, the agent
+launches with `JAVA_HOME`/`PATH` pointed at it, so the start command itself is
+unchanged and wrapper scripts inherit the choice. The hub rejects a relative
+path or one containing shell metacharacters with `422`; the agent refuses to
+start (`502`) if `<java_home>/bin/java` is missing or not executable. Empty
+string and `null` both mean "use the node's default java".
 
 ### FileEntry (from files list)
 ```json
@@ -130,9 +141,10 @@ Base: `/api`. Request/response bodies are JSON. FastAPI errors are
 | DELETE | `/api/instances/{instance_id}` | — | `204` |
 
 `InstanceUpdate` is a partial update — send only the fields you want to change
-(`name`, `type`, `root_dir`, `start_command`, `auto_restart`, `rcon_host`,
-`rcon_port`). Changes to `root_dir`/`start_command` apply on the instance's
-**next start**; a running session keeps the spec it launched with.
+(`name`, `type`, `root_dir`, `start_command`, `jar_path`, `java_home`,
+`auto_restart`, `rcon_host`, `rcon_port`). Changes to `root_dir`,
+`start_command` and `java_home` apply on the instance's **next start**; a
+running session keeps the spec it launched with.
 
 `InstanceCreate`:
 ```json
@@ -141,6 +153,8 @@ Base: `/api`. Request/response bodies are JSON. FastAPI errors are
   "type": "paper",
   "root_dir": "/srv/minecraft/survival",
   "start_command": "java -Xmx4G -jar paper.jar nogui",
+  "jar_path": "paper.jar",       // optional, derived from start_command if unset
+  "java_home": "/opt/jdk-21",    // optional, null = the node's default java
   "auto_restart": true,          // optional, default true
   "rcon_host": "127.0.0.1",      // optional
   "rcon_port": 25575             // optional, null if RCON unused
@@ -270,6 +284,7 @@ Event actions and their `data`:
 | action | data | meaning |
 |---|---|---|
 | `console.output` | `{"line": "...", "source": "log"}` | one console/log line (append to terminal view) |
+| `console.output` | `{"line": "...", "source": "pty"}` | raw terminal output, replayed as a block when an instance crashes (see below) |
 | `state.changed` | `{"state": "running", "detail": null}` | instance runtime state transition (drive power UI + status badges) |
 | `heartbeat` | `{"uptime_s": 123.4, "instances": {"<id>": "running"}}` | ~every 15s; `instance_id` is null (node-level). Use to refresh all instance states + liveness at once |
 
@@ -278,7 +293,16 @@ Recommended UI wiring:
 - Maintain an instance→state map, seeded by `heartbeat.instances` and updated by
   `state.changed`.
 - Route `console.output` to the matching instance's console pane by
-  `instance_id`.
+  `instance_id`. `source` may be ignored — every source is a console line — but
+  it is there if you want to style them differently.
+- `source: "pty"` lines arrive as a short block (headed by
+  `--- last terminal output before exit ---`) immediately **before** the
+  `state.changed` → `crashed` event. They are what the process printed to its
+  terminal, which is the only place the reason lives when a server dies before
+  its logger starts — a JVM version mismatch, a port already bound, a bad
+  `-Xmx`. Nothing reaches `logs/latest.log` in those cases, so without this the
+  console shows a crash with no explanation. On a crash *after* startup these
+  lines may repeat log output you already streamed.
 - If the socket closes, reconnect with backoff (the node may just be offline).
 
 ---
