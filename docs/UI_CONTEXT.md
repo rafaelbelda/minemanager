@@ -78,8 +78,6 @@ copy button and the install hint; it cannot be retrieved again (only re-minted).
   "java_home": "/opt/jdk-21",      // or null — the node's default java
   "desired_running": true,         // operator intent (see gap note in §6)
   "auto_restart": true,
-  "rcon_host": "127.0.0.1",
-  "rcon_port": 25575,              // or null
   "version": "1.21.8",            // installed server version, or null if unknown
   "build": "60"                   // installed build (paper/velocity), else null
 }
@@ -142,7 +140,7 @@ Base: `/api`. Request/response bodies are JSON. FastAPI errors are
 
 `InstanceUpdate` is a partial update — send only the fields you want to change
 (`name`, `type`, `root_dir`, `start_command`, `jar_path`, `java_home`,
-`auto_restart`, `rcon_host`, `rcon_port`). Changes to `root_dir`,
+`auto_restart`). Changes to `root_dir`,
 `start_command` and `java_home` apply on the instance's **next start**; a
 running session keeps the spec it launched with.
 
@@ -155,9 +153,7 @@ running session keeps the spec it launched with.
   "start_command": "java -Xmx4G -jar paper.jar nogui",
   "jar_path": "paper.jar",       // optional, derived from start_command if unset
   "java_home": "/opt/jdk-21",    // optional, null = the node's default java
-  "auto_restart": true,          // optional, default true
-  "rcon_host": "127.0.0.1",      // optional
-  "rcon_port": 25575             // optional, null if RCON unused
+  "auto_restart": true           // optional, default true
 }
 ```
 
@@ -226,12 +222,12 @@ bounds the simple upload/download path.
 ### Secrets (write-only values)
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| PUT | `/api/instances/{instance_id}/secrets` | `{"key":"rcon_password","value":"..."}` | `204` |
-| GET | `/api/instances/{instance_id}/secrets` | — | `{"keys": ["rcon_password"]}` |
+| PUT | `/api/instances/{instance_id}/secrets` | `{"key":"forwarding_secret","value":"..."}` | `204` |
+| GET | `/api/instances/{instance_id}/secrets` | — | `{"keys": ["forwarding_secret"]}` |
 
 Values are encrypted at rest and **never returned**. The UI can show *which*
 keys are set and let the user overwrite them, but cannot display current values.
-Common keys: `rcon_password`, `forwarding_secret` (Velocity).
+The only key in use today is `forwarding_secret` (Velocity).
 
 ### Version / build updater
 
@@ -328,11 +324,8 @@ Build the UI so these degrade gracefully (hide, disable, or mark "coming soon"):
 4. **`desired_running`** is currently operator-intent bookkeeping only; the hub
    does not yet auto-reconcile it to the agent on reconnect. Don't present it as
    a guarantee the server will be restored automatically.
-5. **RCON tab** — RCON is secondary. There is no REST endpoint exposed for
-   ad-hoc RCON yet (the agent supports `rcon.command`). Primary console is the
-   `console` POST + events WS. Treat an RCON console as optional/future.
-6. **Audit log** — model exists but isn't populated or exposed. No history view yet.
-7. **No pagination** anywhere (small-scale by design — fine to render full lists).
+5. **Audit log** — model exists but isn't populated or exposed. No history view yet.
+6. **No pagination** anywhere (small-scale by design — fine to render full lists).
 
 ---
 
@@ -343,7 +336,7 @@ Build the UI so these degrade gracefully (hide, disable, or mark "coming soon"):
 | `400` | bad request (e.g. unknown power op) | dev error toast |
 | `404` | node/instance not found | "not found" state |
 | `409` | **agent offline** (or dropped mid-command) | "Node offline — can't reach agent." Disable live actions when `node.online` is false to avoid hitting this |
-| `502` | agent reported an error (bad path, tmux/RCON failure) | show `detail` — it's the agent's message |
+| `502` | agent reported an error (bad path, tmux failure) | show `detail` — it's the agent's message |
 | `504` | agent didn't answer in time | "Timed out talking to the agent" + retry |
 
 Since `409` is the common "offline" case, gate power/console/file controls on the
@@ -363,7 +356,7 @@ node's `online` flag (from `GET /api/nodes`) and/or recent heartbeats.
 4. **File manager** — breadcrumb + `files list`; text editor via `read`/`write`
    (great for `server.properties`, `velocity.toml`, `*.yml`); delete with confirm.
 5. **Settings/secrets** — edit the instance spec via `PATCH` (name, start
-   command, root dir, `auto_restart`, RCON); set `rcon_password` /
+   command, root dir, `jar_path`, `java_home`, `auto_restart`); set
    `forwarding_secret` (write-only).
 
 ---

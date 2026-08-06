@@ -655,7 +655,11 @@ function renderInstance() {
   st.style.cssText = `color:${m.color};border:1px solid ${m.color}55;background:${m.color}14`;
   fill(st, el('span.dot', { style: `width:7px;height:7px;background:${m.color};animation:${m.anim}` }), m.label);
 
-  $('inst-meta').textContent = inst.rcon_port ? `rcon ${inst.rcon_host}:${inst.rcon_port}` : '';
+  // Used to show the RCON endpoint; RCON is gone, so surface the installed
+  // build instead — the one other piece of per-instance metadata worth a glance.
+  $('inst-meta').textContent = inst.version
+    ? `${inst.version}${inst.build ? ` build ${inst.build}` : ''}`
+    : '';
 
   // Power controls — gated on reachability, and fully locked during an update.
   const updating = run === 'updating';
@@ -1426,8 +1430,6 @@ function fillSettings(inst) {
   $('set-jar').value = inst.jar_path || '';
   $('set-java').value = inst.java_home || '';
   $('set-auto').classList.toggle('on', !!inst.auto_restart);
-  $('set-rhost').value = inst.rcon_host || '';
-  $('set-rport').value = inst.rcon_port ?? '';
 }
 
 async function loadSecrets(inst) {
@@ -1443,7 +1445,7 @@ async function loadSecrets(inst) {
 }
 
 function renderSecrets(inst) {
-  const known = ['rcon_password', ...(inst.type === 'velocity' ? ['forwarding_secret'] : [])];
+  const known = inst.type === 'velocity' ? ['forwarding_secret'] : [];
   const keys = [...new Set([...known, ...state.secrets])];
   const list = clear($('secrets-list'));
 
@@ -1473,7 +1475,7 @@ async function setSecret(inst, key) {
     title: key ? `Set ${key}` : 'New secret',
     description: 'Stored encrypted at rest. The value is never returned by the API — you can only overwrite it later.',
     fields: [
-      ...(key ? [] : [{ name: 'key', label: 'Key', placeholder: 'rcon_password', mono: true }]),
+      ...(key ? [] : [{ name: 'key', label: 'Key', placeholder: 'forwarding_secret', mono: true }]),
       { name: 'value', label: 'Value', type: 'password', mono: true },
     ],
     confirmText: 'Save secret',
@@ -1496,11 +1498,6 @@ async function setSecret(inst, key) {
 async function saveInstance() {
   const inst = curInst();
   if (!inst) return;
-  const portRaw = $('set-rport').value.trim();
-  if (portRaw && !/^\d+$/.test(portRaw)) {
-    toast('RCON port must be a number (or empty for no RCON).', 'error');
-    return;
-  }
   const changes = {
     name: $('set-name').value.trim(),
     type: $('set-type').value,
@@ -1511,8 +1508,6 @@ async function saveInstance() {
     // Empty means "use whatever java the node's PATH resolves to".
     java_home: $('set-java').value.trim() || null,
     auto_restart: $('set-auto').classList.contains('on'),
-    rcon_host: $('set-rhost').value.trim() || '127.0.0.1',
-    rcon_port: portRaw ? Number(portRaw) : null,
   };
   if (!changes.name || !changes.root_dir || !changes.start_command) {
     toast('Name, root directory and start command are all required.', 'error');
@@ -1784,7 +1779,7 @@ async function deleteNode(node) {
 
 async function addInstance(node) {
   // Beginner-friendly: pick a type and memory; the launch command is built from
-  // those and can be fine-tuned later in Settings. RCON also lives in Settings.
+  // those and can be fine-tuned later in Settings.
   const values = await dialog({
     title: `Add instance on ${node.name}`,
     description: 'Declares a server the agent should manage. The directory must already exist on the node. The launch command is built from the type and memory — fine-tune it later in the instance’s Settings.',

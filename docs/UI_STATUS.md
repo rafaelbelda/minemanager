@@ -57,8 +57,8 @@ and delete.
 **Instances** — per-node table with type, live state, root and inline power
 controls; a beginner-friendly create dialog (name, type, root, and a memory
 control — slider paired with an exact `-Xmx` field — from which the launch
-command is built; no raw command or RCON here); delete; and full spec editing
-(name, type, root, start command, auto-restart, RCON host/port) via `PATCH`,
+command is built; no raw command here); delete; and full spec editing
+(name, type, root, start command, auto-restart) via `PATCH`,
 with the "applies on next start" caveat stated in the form and repeated in the
 save toast.
 
@@ -115,7 +115,6 @@ These need a backend endpoint first. Tracked in PLAN.md §11b.
 |---|---|---|
 | **Multi-GB streamed transfers** | upload/download work for normal files (base64, capped ~8 MB); over-cap uploads are skipped with a note | a streaming channel (progress + cancel, memory-bounded) for whole worlds |
 | **Full log viewer** | console backfills via `console/history`; Files → `logs/` → `latest.log` opens the current log | a rotation-aware viewer; rotated `*.log.gz` list but can't be opened (`files/read` is utf-8, so it 502s) |
-| **RCON console** | not offered at all | REST surface for the agent's `rcon.command` |
 | **Audit log** | no history view | the model to be populated and exposed |
 | **`desired_running`** | deliberately not shown | reconciliation on agent reconnect; showing it now would imply a restore guarantee that doesn't exist |
 | **Secret deletion** | can overwrite, can't remove | `DELETE /api/instances/{id}/secrets/{key}` |

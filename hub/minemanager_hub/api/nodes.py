@@ -62,8 +62,6 @@ def _instance_out(inst: Instance) -> InstanceOut:
         java_home=inst.java_home,
         desired_running=inst.desired_running,
         auto_restart=inst.auto_restart,
-        rcon_host=inst.rcon_host,
-        rcon_port=inst.rcon_port,
         version=inst.version,
         build=inst.build,
     )
@@ -150,8 +148,6 @@ def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
             jar_path=body.jar_path or None,
             java_home=body.java_home or None,
             auto_restart=body.auto_restart,
-            rcon_host=body.rcon_host,
-            rcon_port=body.rcon_port,
         )
         db.add(inst)
         db.flush()

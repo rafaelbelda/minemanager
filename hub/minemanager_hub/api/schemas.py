@@ -86,8 +86,6 @@ class InstanceCreate(BaseModel):
     jar_path: Optional[str] = _JAR_PATH
     java_home: Optional[str] = _JAVA_HOME
     auto_restart: bool = True
-    rcon_host: str = "127.0.0.1"
-    rcon_port: Optional[int] = None
 
     @field_validator("java_home")
     @classmethod
@@ -105,8 +103,6 @@ class InstanceUpdate(BaseModel):
     jar_path: Optional[str] = _JAR_PATH
     java_home: Optional[str] = _JAVA_HOME
     auto_restart: Optional[bool] = None
-    rcon_host: Optional[str] = None
-    rcon_port: Optional[int] = None
 
     @field_validator("java_home")
     @classmethod
@@ -125,8 +121,6 @@ class InstanceOut(BaseModel):
     java_home: Optional[str] = None
     desired_running: bool
     auto_restart: bool
-    rcon_host: str
-    rcon_port: Optional[int] = None
     version: Optional[str] = None    # installed server version (updater / detector)
     build: Optional[str] = None      # installed build, when applicable
 
@@ -157,7 +151,7 @@ class FileExtract(BaseModel):
 
 
 class SecretSet(BaseModel):
-    key: str = Field(..., examples=["rcon_password", "forwarding_secret"])
+    key: str = Field(..., examples=["forwarding_secret"])
     value: str
 
 

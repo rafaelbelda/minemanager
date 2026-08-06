@@ -99,7 +99,6 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
             id=inst.id, type=inst.type, name=inst.name, root_dir=inst.root_dir,
             start_command=inst.start_command, java_home=inst.java_home,
             auto_restart=inst.auto_restart,
-            rcon_host=inst.rcon_host, rcon_port=inst.rcon_port,
         ).model_dump(mode="json")
 
     if executable.path is None:

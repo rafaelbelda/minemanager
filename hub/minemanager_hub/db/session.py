@@ -42,6 +42,7 @@ def _init() -> None:
 
     Base.metadata.create_all(_engine)
     _ensure_columns(_engine)
+    _drop_removed_columns(_engine)
     _ensure_secret_uniqueness(_engine)
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
 
@@ -76,6 +77,48 @@ def _ensure_columns(engine: Engine) -> None:
             for name, ddl in cols.items():
                 if name not in existing:
                     conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+
+
+def _drop_removed_columns(engine: Engine) -> None:
+    """Drop columns whose feature has been removed, and their orphaned secrets.
+
+    This is not cosmetic. ``instances.rcon_host`` was declared ``NOT NULL`` with
+    no DDL default (SQLAlchemy's ``default=`` is applied in Python, not by the
+    database), so once the ORM stops sending the column every INSERT on an
+    existing database would fail the constraint. Dropping it is what keeps older
+    databases working, not just tidy.
+
+    RCON was never reachable — it had no REST surface at all (``PLAN.md §11b``) —
+    so nothing here can be in use.
+    """
+    from sqlalchemy import inspect, text
+
+    removed = {"instances": ["rcon_host", "rcon_port"]}
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table, cols in removed.items():
+            if not inspector.has_table(table):
+                continue
+            existing = {c["name"] for c in inspector.get_columns(table)}
+            for name in cols:
+                if name in existing:
+                    conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
+                    log.info("dropped removed column %s.%s (RCON support was removed)", table, name)
+
+        # The stored RCON password is now unreachable: nothing can read it and
+        # nothing can use it. Leaving decryptable credentials for a deleted
+        # feature is strictly worse than removing them.
+        if inspector.has_table("secrets"):
+            n = conn.execute(
+                text("DELETE FROM secrets WHERE key = 'rcon_password'")
+            ).rowcount
+            if n:
+                log.warning(
+                    "deleted %d stored rcon_password secret(s): RCON has been removed, so they "
+                    "were unreachable. The password itself still lives in each server's "
+                    "server.properties, which is where the server reads it from anyway.",
+                    n,
+                )
 
 
 def _ensure_secret_uniqueness(engine: Engine) -> None:

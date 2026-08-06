@@ -137,6 +137,8 @@ save below to properties?
 5-remove the hover effect on the slider
 
 # NOTES
+bring back rcon later but with a better design and as a global, light weight tool in the hub
+
 BUGS:
 cleanup shutdown flow + systemd stop?
 

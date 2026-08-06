@@ -10,7 +10,7 @@ Notice: Being written with AI collaboration. In BETA.
 ## What it does (v1, manage-only)
 
 From a web UI, per server/proxy: **power** (start/stop/restart), a live
-**console** (real pty, RCON secondary), **file** management (jailed to the
+**console** (real pty), **file** management (jailed to the
 instance root), **log** tailing, and config editing. Works whether the node is
 local or remote — every node runs an agent; the hub talks to them over a
 persistent WebSocket.
@@ -21,7 +21,7 @@ persistent WebSocket.
 |------------|------------------------------------------------------------------|
 | `shared/`  | Wire-protocol models shared by hub and agent (single source).    |
 | `hub/`     | FastAPI control plane: state (SQLite), agent registry, secrets.  |
-| `agent/`   | Per-node daemon: tmux supervisor, console, files, RCON.          |
+| `agent/`   | Per-node daemon: tmux supervisor, console, files.               |
 | `web/`     | The web UI — static HTML/CSS/JS, served same-origin by the hub.  |
 | `deploy/`  | systemd unit + install docs (the agent is the only daemon).      |
 
@@ -70,7 +70,7 @@ what the UI does and does not yet cover is in
 ## Status
 
 v1 scaffold: shared protocol, hub (REST + agent WebSocket + secret vault), and
-agent (connection, tmux supervisor with crash-loop protection, jailed files,
-RCON) are implemented and covered by integration tests. The web UI covers the
+agent (connection, tmux supervisor with crash-loop protection, jailed files)
+are implemented and covered by integration tests. The web UI covers the
 manage-only v1 surface — nodes and enrollment, instances, power, live console,
 files, settings and secrets. Roadmap and v2 (provisioning) are in PLAN.md.

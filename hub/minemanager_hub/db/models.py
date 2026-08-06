@@ -15,7 +15,6 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
-    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -92,10 +91,6 @@ class Instance(Base):
     desired_running: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_restart: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    # Optional RCON coordinates (password stored separately as a Secret).
-    rcon_host: Mapped[str] = mapped_column(String(255), default="127.0.0.1")
-    rcon_port: Mapped[int | None] = mapped_column(Integer, default=None)
-
     # Installed server-binary version/build. Set by the updater; until a proper
     # Version Detector lands (v2) this reflects what we last installed, or NULL
     # when unknown.
@@ -108,7 +103,7 @@ class Instance(Base):
 
 
 class Secret(Base):
-    """Encrypted-at-rest secret (RCON password, Velocity forwarding secret, …).
+    """Encrypted-at-rest secret (e.g. the Velocity forwarding secret).
 
     The ciphertext is opaque; decryption needs the vault key from the
     environment. Plaintext is never returned to the UI once set.
@@ -126,7 +121,7 @@ class Secret(Base):
     # Owning scope: an instance id or node id.
     scope: Mapped[str] = mapped_column(String(16), nullable=False)  # "instance" | "node"
     scope_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    key: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g. "rcon_password"
+    key: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g. "forwarding_secret"
 
     ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)

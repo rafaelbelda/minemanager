@@ -60,7 +60,7 @@ class Connection:
             node_id=node_id,
             credential=credential,
             enrollment_token=self.config.enroll_token,
-            capabilities=["power", "console", "files", "rcon", "logs"],
+            capabilities=["power", "console", "files", "logs"],
         )
         await ws.send(hello.model_dump_json())
         raw = json.loads(await ws.recv())

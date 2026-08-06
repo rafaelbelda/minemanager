@@ -102,9 +102,6 @@ class Action(str, Enum):
     # Logs ------------------------------------------------------------------
     logs_tail = "logs.tail"
 
-    # RCON (secondary command channel) --------------------------------------
-    rcon_command = "rcon.command"
-
     # Version / build updater -----------------------------------------------
     update_apply = "update.apply"   # transactionally replace the server jar
 
@@ -216,9 +213,6 @@ class InstanceSpec(BaseModel):
     # command having to name an interpreter. Empty = the node's default java.
     java_home: Optional[str] = None
     auto_restart: bool = True
-    rcon_host: str = "127.0.0.1"
-    rcon_port: Optional[int] = None
-    rcon_password: Optional[str] = None  # decrypted just-in-time by the hub
 
 
 class UpdateDownload(BaseModel):
@@ -248,7 +242,10 @@ class ConsoleSendData(BaseModel):
 
 class ConsoleOutputData(BaseModel):
     line: str
-    source: Literal["log", "pty", "rcon"] = "log"
+    # "log" = tail of logs/latest.log (the normal stream); "pty" = replayed tail
+    # of the mirrored tmux pane, used to explain a crash that happened before the
+    # server's own logger started.
+    source: Literal["log", "pty"] = "log"
 
 
 class StateChangedData(BaseModel):
@@ -286,10 +283,6 @@ class FilesWriteData(BaseModel):
 class FilesDeleteData(BaseModel):
     path: str
     recursive: bool = False
-
-
-class RconCommandData(BaseModel):
-    command: str
 
 
 # --------------------------------------------------------------------------- #

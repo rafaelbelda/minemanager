@@ -18,7 +18,7 @@ on remote machines.
 From the web UI an operator can, per node:
 
 - **Power:** start / stop / restart, see live running state.
-- **Console:** live output stream + type commands (real console, RCON secondary).
+- **Console:** live output stream + type commands (the real server console).
 - **Files:** browse, read, edit, upload, delete — jailed to the node's root dir.
 - **Logs:** live tail + historical.
 - **Config:** edit `server.properties`, `velocity.toml`, etc. (they're just files).
@@ -41,7 +41,7 @@ From the web UI an operator can, per node:
   internet. Therefore MineManager does **not** implement its own user login — it
   trusts the authenticated reverse-proxy in front of it.
 - **Security concern for us:** in-app **secrets and tokens** (agent enrollment
-  tokens, RCON passwords, Velocity forwarding secrets). Everything else is handled
+  tokens, Velocity forwarding secrets). Everything else is handled
   by the perimeter (Authelia + WireGuard).
 
 ---
@@ -93,7 +93,7 @@ The agent is the **only** systemd-managed daemon on a node. Each Minecraft
 server/proxy runs in **its own detached pty session (tmux) owned by the agent**.
 
 **Why this over per-server systemd units:** the live console is the core feature.
-A real pty gives clean bidirectional I/O (type any command, not just RCON) and a
+A real pty gives clean bidirectional I/O (type any command) and a
 single source of truth for process lifecycle. Per-server systemd units would still
 need a pty wrapper for console input anyway, and would split lifecycle state
 between systemd and the agent.
@@ -115,7 +115,6 @@ between systemd and the agent.
 - **Input:** `tmux send-keys` into the session (real stdin).
 - **Output stream:** tail `logs/latest.log` (clean, no ANSI — what we display);
   raw pane pipe available if we ever need it.
-- **RCON:** secondary command channel / fallback, not the primary console.
 
 ### Resource limits (optional, v2)
 
@@ -135,15 +134,15 @@ MineManager owns **machine-to-machine** trust and **secret storage**.
   can be revoked independently.
 - **Transport:** TLS on the agent↔hub WebSocket, plus the per-agent token. (mTLS
   is an option since it's a closed WG network; token-over-TLS is the v1 baseline.)
-- **Secret storage:** RCON passwords, Velocity forwarding secrets, agent
+- **Secret storage:** Velocity forwarding secrets and agent
   credentials are encrypted at rest in the hub with a key from the environment /
   a key file outside the DB. Never logged, never returned in plaintext to the UI
   once set, and attached to an agent command only when that command needs them.
   **What this does and does not buy:** it protects the DB at rest (backups, a
   stolen `.db` file). It is *not* a control against a caller who can reach the
-  file API — the RCON password also lives in plaintext in `server.properties`,
-  and the Velocity forwarding secret in `velocity.toml`, both readable through
-  the file endpoints. Do not count the vault twice. (`SECURITY.md` S-19.)
+  file API — the Velocity forwarding secret also lives in plaintext in
+  `velocity.toml`, readable through the file endpoints. Do not count the vault
+  twice. (`SECURITY.md` S-19.)
 - **No agent runs as root.** Agent runs as a dedicated non-root user (the mc user
   or a service user in its group); all file/process operations happen as that user.
 - **Path jailing:** every file operation is confined to the node's configured root
@@ -187,7 +186,7 @@ MineManager owns **machine-to-machine** trust and **secret storage**.
 - **Instance** — a server or proxy on a node: id, node_id, type
   (`paper` | `vanilla` | `velocity`), name, root dir, start command, jar/launch
   info, auto-restart flag, desired state.
-- **Secret** — encrypted blobs (RCON password, Velocity forwarding secret),
+- **Secret** — encrypted blobs (Velocity forwarding secret),
   scoped to an instance or node.
 - **AuditLog** (nice-to-have v1): who did what, when — power actions, file writes,
   deletes.
@@ -201,12 +200,11 @@ MineManager owns **machine-to-machine** trust and **secret storage**.
   **SQLAlchemy** (perfect for single-tenant, 5–10 nodes — no Postgres needed),
   **Pydantic** for schemas. Serves the static web UI (built later).
 - **Agent:** asyncio Python daemon; **websockets**/httpx client (dials out); wraps
-  `tmux`, `systemctl --user` where relevant, and RCON. No inbound web server.
+  `tmux` and `systemctl --user` where relevant. No inbound web server.
 - **Shared:** `minemanager_shared` package — Pydantic protocol models + version,
   imported by both hub and agent so message contracts never drift.
 - **Console session backend:** **tmux** (bonus: a human can `tmux attach` to debug
   a server directly).
-- **RCON:** a small Source-RCON client in the agent.
 
 ---
 
@@ -236,7 +234,6 @@ minemanager/
 │   │   ├── supervisor.py       # tmux sessions, restart policy, crash-loop
 │   │   ├── console.py          # log tail (output) + send-keys (input)
 │   │   ├── files.py            # jailed file operations
-│   │   ├── rcon.py             # secondary command channel
 │   │   └── handlers.py         # map protocol commands → actions
 │   └── tests/
 ├── shared/                     # protocol library (imported by hub + agent)
@@ -264,7 +261,7 @@ minemanager/
 - Hub: agent registry, node/instance CRUD, WebSocket hub, secret vault, serves UI.
 - Agent: enroll + persistent connection, tmux supervisor with restart/crash-loop
   policy, power actions, live console (out via log tail, in via send-keys), jailed
-  file ops, log tail, RCON secondary.
+  file ops, log tail.
 - **Graceful shutdown** — stopping/restarting the agent (or rebooting) always
   gracefully stops its servers: on SIGTERM the agent sends each a clean console
   stop, waits for the world to save (bounded, under `TimeoutStopSec`), then tears
@@ -332,7 +329,10 @@ disabled "coming soon" control (see [`docs/UI_CONTEXT.md`](docs/UI_CONTEXT.md)
   is trimmed to a size cap rather than rotated.
 - **Desired-state reconciliation** — `desired_running` is recorded but not
   pushed back to an agent on reconnect (no auto-restore yet).
-- **RCON REST surface** — agent supports `rcon.command`; not exposed via REST.
+- ~~**RCON REST surface**~~ — **removed entirely.** RCON was never reachable (no
+  REST endpoint ever existed) and the console is the tmux pty, so the client, the
+  `rcon.command` action, the `rcon_host`/`rcon_port` columns and the stored
+  `rcon_password` secrets were all deleted rather than finished.
 - **Audit log** — model exists but is not populated or exposed.
 
 ## 12. Open items to confirm as we build

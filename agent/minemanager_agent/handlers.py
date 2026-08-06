@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import asyncio
 
-from minemanager_agent import archive, files, rcon, transfer
+from minemanager_agent import archive, files, transfer
 from minemanager_agent.supervisor import Supervisor
 from minemanager_shared.protocol import Action, Command, InstanceSpec, Response, RunState
 
@@ -132,16 +132,6 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
             return Response.failure(cmd.id, "agent identity not ready for transfers")
         result = await transfer.handle(sup.identity, cmd.data, spec.root_dir)
         return Response.success(cmd.id, result)
-
-    # -- rcon (secondary) ---------------------------------------------------
-    if action == Action.rcon_command.value:
-        spec = _spec(cmd)
-        if not spec.rcon_port or not spec.rcon_password:
-            return Response.failure(cmd.id, "RCON not configured for this instance")
-        out = await rcon.execute(
-            spec.rcon_host, spec.rcon_port, spec.rcon_password, cmd.data["command"]
-        )
-        return Response.success(cmd.id, {"output": out})
 
     # -- introspection ------------------------------------------------------
     if action == Action.instance_status.value:
