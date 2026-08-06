@@ -65,6 +65,7 @@ async def _warn_about_orphans(prefix: str) -> None:
 async def _amain() -> None:
     config = AgentConfig()
     config.ensure_dirs()
+    config.check_transport_security()   # exits on plaintext to a remote hub
     # Pin prefix/socket before the supervisor is built from them, so an edited
     # env var cannot detach this agent from servers it is already supervising.
     await config.pin_runtime_identity()

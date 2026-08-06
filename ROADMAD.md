@@ -2,7 +2,8 @@ ROADMAD v0.1.0 - v0.1.5
 fixes and improvements
 ---------------------------------------
 
-DECENT DEPLOY SCRIPT AND EASY SETUP
+CLEANER DEPLOY SCRIPT AND EASY SETUP
+decent default .env example with "advanced" part with optional "MM_" env vars.
 
 branch /dev
 
@@ -139,9 +140,13 @@ save below to properties?
 # NOTES
 bring back rcon later but with a better design and as a global, light weight tool in the hub
 
+add a proper logger to the software. Crashes, server starts, debug info are currently not being logged
+
+nicely format json checkbox in file editor
 BUGS:
 cleanup shutdown flow + systemd stop?
 
+bug: after crash not stopping? still marked as running and i have to kill it
 ----
 
 add instance runtime
@@ -190,10 +195,9 @@ the only nice thing we can add that Always remains the same is to make ON/OFF sw
 
 
 NEW TAB - PERFORMANCE
-sdsadsadsas
-
 
 # HUB
+also track MineManager hub/agents performance
 
 # HUB TABS: PERFORMANCE / STATISTICS (player activity, peak hours)
 filters for whole network, individual nodes, and individual instances

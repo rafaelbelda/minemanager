@@ -20,6 +20,7 @@ import os
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 from minemanager_agent import tmux
 
@@ -62,6 +63,15 @@ class AgentConfig:
     tmux_socket: str = field(
         default_factory=lambda: os.environ.get("MM_TMUX_SOCKET", tmux.DEFAULT_SOCKET)
     )
+    # Permit a plaintext ws:// hub URL to a non-loopback host. Off by default:
+    # the agent credential is a long-lived bearer token that grants full control
+    # of this node's files and processes, and it crosses the network on every
+    # transfer as a cleartext header.
+    allow_insecure: bool = field(
+        default_factory=lambda: os.environ.get("MM_ALLOW_INSECURE", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
     reconnect_min_s: float = 1.0
     reconnect_max_s: float = 30.0
     heartbeat_s: float = 15.0
@@ -94,6 +104,57 @@ class AgentConfig:
 
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
+
+    # -- transport security --------------------------------------------------
+    @property
+    def hub_is_loopback(self) -> bool:
+        host = urlparse(self.hub_url).hostname or ""
+        return host in ("127.0.0.1", "localhost", "::1") or host.startswith("127.")
+
+    @property
+    def hub_is_encrypted(self) -> bool:
+        return urlparse(self.hub_url).scheme == "wss"
+
+    def check_transport_security(self) -> None:
+        """Refuse a plaintext hub URL unless the operator opted in.
+
+        Loopback is exempt: ``ws://127.0.0.1`` never leaves the machine, so
+        requiring a flag for every dev run would be noise that teaches people to
+        set the flag permanently — the opposite of the point.
+
+        Everything else is a real network hop carrying the node credential in
+        clear. `PLAN.md §5` calls TLS the v1 baseline; nothing enforced it, and a
+        WireGuard-less deployment would have been silently insecure.
+        """
+        if self.hub_is_encrypted:
+            if self.allow_insecure:
+                log.warning(
+                    "MM_ALLOW_INSECURE is set but the hub URL is already wss:// - the flag has "
+                    "no effect here and should be removed so it cannot mask a later downgrade"
+                )
+            return
+
+        if self.hub_is_loopback:
+            log.info("hub URL is plaintext ws:// but loopback-only; traffic never leaves this host")
+            return
+
+        if self.allow_insecure:
+            log.warning(
+                "INSECURE TRANSPORT: talking to %s over plaintext ws://. This node's long-lived "
+                "credential crosses the network in clear on every transfer. Permitted only "
+                "because MM_ALLOW_INSECURE is set - acceptable inside WireGuard, not otherwise. "
+                "Switch to wss:// when you can.",
+                self.hub_url,
+            )
+            return
+
+        raise SystemExit(
+            f"refusing to start: MM_HUB_URL={self.hub_url} is plaintext ws:// to a non-loopback "
+            f"host, so this node's long-lived credential would cross the network in clear.\n"
+            f"  - use wss:// (recommended), or\n"
+            f"  - set MM_ALLOW_INSECURE=1 to accept the risk (e.g. the hop is already inside "
+            f"WireGuard)."
+        )
 
     # -- pinned runtime identity (session prefix + tmux socket) --------------
     def _load_runtime(self) -> dict[str, str] | None:

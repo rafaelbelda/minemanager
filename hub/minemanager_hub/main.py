@@ -25,7 +25,7 @@ from minemanager_hub.api import agent_ws, control, nodes, transfers, versions
 from minemanager_hub.config import get_settings
 from minemanager_hub.db.session import init_db
 from minemanager_hub.providers.http import aclose as close_provider_http
-from minemanager_hub.security import vault
+from minemanager_hub.security import vault, webguard
 
 log = logging.getLogger("minemanager.hub")
 
@@ -51,6 +51,25 @@ async def lifespan(_app: FastAPI):
         __version__, settings.data_dir, settings.host, settings.port,
         settings.cors_origins or "same-origin only",
     )
+    # Say exactly which requests will be accepted: a too-narrow MM_ALLOWED_HOSTS
+    # presents as a total outage, and there is no other clue why.
+    log.info(
+        "guards: allowed_hosts=%s docs=%s api_clients_without_origin=%s",
+        "any (checks disabled)" if webguard.ANY_HOST in settings.allowed_hosts
+        else ", ".join(sorted(settings.allowed_hosts)),
+        "on" if settings.enable_docs else "off",
+        "allowed" if settings.allow_api_clients else "blocked",
+    )
+    if settings.host not in ("127.0.0.1", "localhost", "::1") and \
+            webguard.ANY_HOST not in settings.allowed_hosts and \
+            not (settings.allowed_hosts - {"localhost", "127.0.0.1", "::1", "[::1]"}):
+        log.warning(
+            "bound to %s but MM_ALLOWED_HOSTS is still loopback-only — every request "
+            "arriving under this hub's real hostname will be rejected with HTTP 400. "
+            "Set MM_ALLOWED_HOSTS to the name clients use.",
+            settings.host,
+        )
+
     init_db()                                # logs the DB path + node count
     vault.verify_existing_secrets_readable()  # exits if the key can't read them
     log.info("web: %s", _web_dir_status)
@@ -81,6 +100,17 @@ if _origins:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+# Same-origin enforcement. Added after CORSMiddleware so it runs *outside* it:
+# a rejected cross-site request must not be handed CORS headers on the way out.
+# These are the only controls left once a hostile page is in the operator's
+# browser — CORS covers neither WebSockets nor bodyless POSTs. See webguard.
+app.add_middleware(
+    webguard.OriginGuard,
+    extra_origins=set(_settings.cors_origins),
+    allow_api_clients=_settings.allow_api_clients,
+)
+app.add_middleware(webguard.HostGuard, allowed=_settings.allowed_hosts)
 
 # Agent transport (agents dial in here).
 app.include_router(agent_ws.router, prefix="/ws")

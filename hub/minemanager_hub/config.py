@@ -85,6 +85,28 @@ class Settings:
         default_factory=lambda: _env_int("MM_TRANSFER_CAP_BYTES", 8 * 1024 * 1024)
     )
 
+    # Hostnames this hub answers to. With no app-layer auth, an unexpected Host
+    # means a DNS-rebinding attempt, which reaches the hub's port directly and so
+    # bypasses the reverse proxy (and Authelia). Defaults to loopback only, which
+    # is correct for the default MM_HOST=127.0.0.1 bind; any real deployment must
+    # list its own name, e.g. MM_ALLOWED_HOSTS=mm.example.com. "*" disables.
+    allowed_hosts: set[str] = field(
+        default_factory=lambda: {
+            h.strip() for h in os.environ.get(
+                "MM_ALLOWED_HOSTS", "localhost,127.0.0.1,::1,[::1]"
+            ).split(",") if h.strip()
+        }
+    )
+
+    # Let clients that send no Origin header (curl, scripts, CI) make
+    # state-changing requests. Off by default: a missing Origin means "not a
+    # browser", and allowing it unconditionally would reopen the CSRF hole that
+    # checking Origin closes.
+    allow_api_clients: bool = field(
+        default_factory=lambda: os.environ.get("MM_ALLOW_API_CLIENTS", "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+
     # Serve /docs, /redoc and /openapi.json. Off by default: there is no
     # app-layer auth, so they hand anyone who reaches the hub a complete map of
     # the attack surface, parameter names included. Set MM_ENABLE_DOCS=1 in dev.
