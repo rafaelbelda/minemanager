@@ -311,7 +311,7 @@
                   <label class="field-label" for="set-java">Java directory
                     <span class="hint-inline">&middot; optional &middot; run this instance on a specific Java version</span></label>
                   <input class="input mono" id="set-java" type="text" autocomplete="off" spellcheck="false"
-                         placeholder="the node's default java">
+                         placeholder="empty = node's default java">
                 </div>
                 <div class="switch-row">
                   <div>
@@ -319,16 +319,6 @@
                     <div class="d">Restart the server automatically after a crash</div>
                   </div>
                   <div class="toggle" id="set-auto"><div class="knob"></div></div>
-                </div>
-                <div class="form-row">
-                  <div>
-                    <label class="field-label" for="set-rhost">RCON host</label>
-                    <input class="input mono" id="set-rhost" type="text" autocomplete="off" spellcheck="false">
-                  </div>
-                  <div>
-                    <label class="field-label" for="set-rport">RCON port</label>
-                    <input class="input mono" id="set-rport" type="text" inputmode="numeric" autocomplete="off">
-                  </div>
                 </div>
                 <div style="display:flex;gap:10px;margin-top:4px">
                   <button class="btn btn-primary btn-lg" id="set-save">Save changes</button>
