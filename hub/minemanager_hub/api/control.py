@@ -52,11 +52,16 @@ def _lookup_secret(db, instance_id: str, key: str) -> str | None:
     return vault.decrypt(row.ciphertext) if row is not None else None
 
 
-def _agent_and_spec(instance_id: str) -> tuple[AgentConnection, dict]:
+def _agent_and_spec(instance_id: str, *, with_rcon_password: bool = False) -> tuple[AgentConnection, dict]:
     """Resolve an instance to its live agent connection + declared spec.
 
-    The spec (including a just-in-time decrypted RCON password) is attached to
-    every instance-scoped command so the agent stays stateless about config.
+    The spec is attached to every instance-scoped command so the agent stays
+    stateless about config — but the **RCON password is only included when the
+    command actually needs it** (``rcon.command``). It used to ride along on
+    every action, so browsing a directory shipped the plaintext password across
+    the wire dozens of times for no functional reason. `PLAN.md §5` names in-app
+    secrets as the one asset this system owns; minimising how often they move is
+    part of that.
     """
     with session_scope() as db:
         inst = db.get(Instance, instance_id)
@@ -72,7 +77,9 @@ def _agent_and_spec(instance_id: str) -> tuple[AgentConnection, dict]:
             auto_restart=inst.auto_restart,
             rcon_host=inst.rcon_host,
             rcon_port=inst.rcon_port,
-            rcon_password=_lookup_secret(db, instance_id, "rcon_password"),
+            rcon_password=(
+                _lookup_secret(db, instance_id, "rcon_password") if with_rcon_password else None
+            ),
         ).model_dump(mode="json")
         node_id = inst.node_id
     conn = registry.get(node_id)
@@ -81,8 +88,10 @@ def _agent_and_spec(instance_id: str) -> tuple[AgentConnection, dict]:
     return conn, spec
 
 
-async def _proxy(instance_id: str, action: str, data: dict | None = None) -> dict:
-    conn, spec = _agent_and_spec(instance_id)
+async def _proxy(
+    instance_id: str, action: str, data: dict | None = None, *, with_rcon_password: bool = False
+) -> dict:
+    conn, spec = _agent_and_spec(instance_id, with_rcon_password=with_rcon_password)
     payload = dict(data or {})
     payload["instance"] = spec
     try:

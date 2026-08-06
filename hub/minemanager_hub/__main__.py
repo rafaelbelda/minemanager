@@ -22,6 +22,12 @@ def main() -> None:
         host=settings.host,
         port=settings.port,
         log_level="info",
+        # Bound what an agent can push in a single frame. uvicorn already
+        # defaults to 16 MB, but state it explicitly and tie it to the transfer
+        # cap so raising MM_TRANSFER_CAP_BYTES cannot silently start rejecting
+        # legitimate base64 responses (base64 is 4/3 of the payload, plus JSON
+        # envelope), while a compromised node still cannot push arbitrary size.
+        ws_max_size=max(16 * 1024 * 1024, settings.transfer_cap_bytes * 2),
     )
 
 

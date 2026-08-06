@@ -55,9 +55,9 @@ async def _warn_about_orphans(prefix: str) -> None:
     orphans = [n for n in names if not n.startswith(prefix + "-")]
     if orphans:
         log.warning(
-            "%d tmux session(s) on socket %r do not match session prefix %r and will NOT be "
-            "managed or stopped by this agent: %s - check MM_SESSION_PREFIX/MM_TMUX_SOCKET, or "
-            "stop them with: tmux -L %s kill-session -t <name>",
+            "%d tmux session(s) on socket '%r' do not match session prefix '%r' and will NOT be "
+            "managed or stopped by this agent: '%s' - check MM_SESSION_PREFIX/MM_TMUX_SOCKET, or "
+            "stop them with: tmux -L '%s' kill-session -t <name>",
             len(orphans), tmux.socket_name(), prefix, ", ".join(orphans), tmux.socket_name(),
         )
 

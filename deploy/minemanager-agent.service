@@ -1,8 +1,7 @@
 # MineManager agent — the ONLY MineManager daemon on a node.
 #
 # systemd supervises the agent (auto-restart, start-on-boot); the agent in turn
-# supervises the Minecraft servers/proxies in their own tmux sessions. Do NOT
-# create per-server systemd units — that's the agent's job (see PLAN.md, §4).
+# supervises the Minecraft servers/proxies in their own tmux sessions.
 #
 # Install:
 #   sudo cp deploy/minemanager-agent.service /etc/systemd/system/
@@ -34,17 +33,6 @@ ExecStart=/opt/minemanager/venv/bin/minemanager-agent
 Restart=always
 RestartSec=3
 
-# KillMode=process: on stop, systemd sends SIGTERM to ONLY the agent, never its
-# children. The agent's SIGTERM handler then gracefully stops every server
-# (console "stop", waits for a clean world save) and tears down its tmux server
-# before exiting — so systemd never force-kills a live world. Do NOT use
-# control-group/mixed here: those SIGTERM/SIGKILL the servers out from under the
-# agent and can corrupt worlds mid-write.
-#
-# Stopping/restarting the agent (or rebooting) always stops the servers — simple
-# and predictable. TimeoutStopSec must exceed the worst-case world save; if the
-# agent ever fails to handle SIGTERM, on reboot systemd's final SIGTERM still
-# triggers the JVM shutdown hooks (a second world-safety layer).
 KillMode=process
 TimeoutStopSec=300
 
@@ -56,8 +44,9 @@ ProtectHome=true
 # per-invocation /tmp would hide the running servers' tmux server from the agent
 # after a restart, breaking the survive-restart design.
 # Grant write access to the agent's state dir and wherever your servers live.
+
 # Adjust ReadWritePaths to your server root(s), e.g. /srv/minecraft.
-ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft
+# ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft
 
 [Install]
 WantedBy=multi-user.target

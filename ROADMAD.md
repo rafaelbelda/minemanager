@@ -2,6 +2,12 @@ ROADMAD v0.1.0 - v0.1.5
 fixes and improvements
 ---------------------------------------
 
+DECENT DEPLOY SCRIPT AND EASY SETUP
+
+branch /dev
+
+UPDATE FROM GITHUB RELEASES - define when version change happens 
+
 # CREATE A NEW SERVER
 
 # RECOGNIZE VERSION (PAPER AND VANILLA) AND BUILD (PAPER-ONLY, displayed alongside ver (ex: 1.20-60, 26.2-45))
@@ -131,6 +137,11 @@ save below to properties?
 5-remove the hover effect on the slider
 
 # NOTES
+BUGS:
+cleanup shutdown flow + systemd stop?
+
+----
+
 add instance runtime
 handle diff java versions for diff mc versions?
 

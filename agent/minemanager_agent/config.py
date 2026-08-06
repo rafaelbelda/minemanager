@@ -26,6 +26,19 @@ from minemanager_agent import tmux
 log = logging.getLogger("minemanager.agent")
 
 
+def _write_private(path: Path, text: str) -> None:
+    # Write a file that only the owner may read, with no readable window.
+  
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+    os.replace(tmp, path)          # atomic; keeps the 0600 mode
+
+
 def _default_data_dir() -> Path:
     env = os.environ.get("MM_AGENT_DATA_DIR")
     if env:
@@ -94,7 +107,7 @@ class AgentConfig:
 
     def _save_runtime(self, values: dict[str, str]) -> None:
         self.ensure_dirs()
-        self.runtime_file.write_text(json.dumps(values, indent=2))
+        _write_private(self.runtime_file, json.dumps(values, indent=2))
 
     async def pin_runtime_identity(self) -> None:
         """Pin the session prefix + tmux socket to what this agent last used.
@@ -189,9 +202,9 @@ class AgentConfig:
         return data.get("node_id"), data.get("credential")
 
     def save_identity(self, node_id: str, credential: str) -> None:
+        """Persist the node's long-lived credential, 0600 from the moment it exists."""
         self.ensure_dirs()
-        self.identity_file.write_text(json.dumps({"node_id": node_id, "credential": credential}))
-        try:
-            os.chmod(self.identity_file, stat.S_IRUSR | stat.S_IWUSR)  # 0600
-        except OSError:
-            pass
+        _write_private(
+            self.identity_file,
+            json.dumps({"node_id": node_id, "credential": credential}),
+        )

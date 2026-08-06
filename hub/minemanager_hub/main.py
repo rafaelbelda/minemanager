@@ -58,7 +58,19 @@ async def lifespan(_app: FastAPI):
     await close_provider_http()
 
 
-app = FastAPI(title="MineManager Hub", version=__version__, lifespan=lifespan)
+_settings = get_settings()
+
+app = FastAPI(
+    title="MineManager Hub",
+    version=__version__,
+    lifespan=lifespan,
+    # Interactive docs are opt-in (MM_ENABLE_DOCS=1). With no app-layer auth they
+    # publish a complete, accurate map of the attack surface to anyone who can
+    # reach the hub — including a page that got there via DNS rebinding (S-17).
+    docs_url="/docs" if _settings.enable_docs else None,
+    redoc_url="/redoc" if _settings.enable_docs else None,
+    openapi_url="/openapi.json" if _settings.enable_docs else None,
+)
 
 # CORS for UI dev only (empty in production — UI is served same-origin).
 _origins = get_settings().cors_origins

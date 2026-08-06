@@ -13,11 +13,7 @@ from pathlib import Path
 
 
 def _env_int(name: str, default: int) -> int:
-    """Read an integer env var, failing with a readable message.
-
-    A bare ``int(os.environ[...])`` raised ValueError during module import, which
-    surfaced as an opaque traceback with no mention of which variable was wrong.
-    """
+    # Read an integer env var, failing with a readable message.
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
@@ -87,6 +83,14 @@ class Settings:
     )
     transfer_cap_bytes: int = field(
         default_factory=lambda: _env_int("MM_TRANSFER_CAP_BYTES", 8 * 1024 * 1024)
+    )
+
+    # Serve /docs, /redoc and /openapi.json. Off by default: there is no
+    # app-layer auth, so they hand anyone who reaches the hub a complete map of
+    # the attack surface, parameter names included. Set MM_ENABLE_DOCS=1 in dev.
+    enable_docs: bool = field(
+        default_factory=lambda: os.environ.get("MM_ENABLE_DOCS", "").strip().lower()
+        in {"1", "true", "yes", "on"}
     )
 
     @property

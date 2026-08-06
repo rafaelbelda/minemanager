@@ -43,7 +43,14 @@ def _load_key() -> bytes:
     # first and chmod-ing after left it world-readable under a default umask).
     key = Fernet.generate_key()
     key_file.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    try:
+        fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, stat.S_IRUSR | stat.S_IWUSR)
+    except FileExistsError:
+        # Another process won the race between the exists() check above and here.
+        # Adopt its key: minting a second one would silently orphan everything the
+        # winner has already encrypted. O_EXCL is what makes this detectable.
+        _key_source = f"{key_file} (created concurrently)"
+        return key_file.read_bytes().strip()
     try:
         os.write(fd, key)
     finally:

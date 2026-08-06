@@ -10,7 +10,9 @@ GZ, and RAR when the node has the ``rarfile`` lib + ``unrar`` tool.
 from __future__ import annotations
 
 import gzip
+import os
 import shutil
+import stat
 import tarfile
 import zipfile
 from pathlib import Path
@@ -18,6 +20,53 @@ from pathlib import Path
 from minemanager_agent.files import JailError, _resolve_within
 
 _MAX_CONFLICTS = 200
+
+# Ceiling on total *uncompressed* output. Uploads are capped around 8 MB, and a
+# well-formed archive that size expands to hundreds of GB — filling a node's disk
+# is worse than crashing it, because servers then cannot save chunks and the next
+# write can corrupt a world. Override with MM_MAX_EXTRACT_BYTES.
+MAX_EXTRACT_BYTES = int(os.environ.get("MM_MAX_EXTRACT_BYTES", str(20 * 1024 * 1024 * 1024)))
+
+# Keep some room on the filesystem after extracting, so a large-but-legal archive
+# still cannot be the thing that leaves a world with nowhere to save.
+_FREE_SPACE_MARGIN = 512 * 1024 * 1024
+
+
+def _is_regular_zip_member(info: zipfile.ZipInfo) -> bool:
+    """Reject anything that is not a plain file or directory.
+
+    ZIP stores the unix mode in the top 16 bits of ``external_attr``. Python's
+    ``zipfile`` happens not to materialise symlinks (``zf.open`` + copyfileobj
+    writes the *link target string* as file content), so this was safe by
+    accident. The tar path has always filtered explicitly; make the guarantee
+    explicit here too rather than resting on a library implementation detail.
+    """
+    fmt = stat.S_IFMT(info.external_attr >> 16)
+    # Plenty of writers store permission bits with no file-type field at all
+    # (Python's own ``writestr`` stores 0o600), and DOS-created entries store
+    # nothing. Only reject when a type *is* recorded and it is not a file or dir —
+    # otherwise a legitimate archive would extract to nothing.
+    if fmt == 0:
+        return True
+    return fmt in (stat.S_IFREG, stat.S_IFDIR)
+
+
+def _check_budget(total: int, root: str | Path) -> None:
+    """Refuse an extraction that would blow the size cap or fill the disk."""
+    if total > MAX_EXTRACT_BYTES:
+        raise ValueError(
+            f"archive expands to {total} bytes, over the {MAX_EXTRACT_BYTES}-byte limit "
+            f"(MM_MAX_EXTRACT_BYTES)"
+        )
+    try:
+        free = shutil.disk_usage(Path(root)).free
+    except OSError:
+        return
+    if total + _FREE_SPACE_MARGIN > free:
+        raise ValueError(
+            f"archive expands to {total} bytes but only {free} bytes are free; refusing "
+            f"so the node keeps room to save worlds"
+        )
 
 
 class UnsupportedArchive(Exception):
@@ -107,11 +156,15 @@ def _finish(plan, overwrite, write_one) -> dict:
 
 def _do_zip(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
     with zipfile.ZipFile(archive) as zf:
-        plan, by_rel = [], {}
+        plan, by_rel, total = [], {}, 0
         for info in zf.infolist():
+            if not _is_regular_zip_member(info):
+                continue          # symlink / device / socket — never materialise it
             target, joined = _safe_target(root, dest_rel, info.filename)
             plan.append((target, joined, info.is_dir()))
             by_rel[joined] = info
+            total += info.file_size
+        _check_budget(total, root)
 
         def write_one(target: Path, joined: str) -> None:
             with zf.open(by_rel[joined]) as src, open(target, "wb") as dst:
@@ -122,13 +175,15 @@ def _do_zip(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
 
 def _do_tar(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
     with tarfile.open(archive, "r:*") as tf:
-        plan, by_rel = [], {}
+        plan, by_rel, total = [], {}, 0
         for m in tf.getmembers():
             if not (m.isfile() or m.isdir()):
                 continue  # skip symlinks / hardlinks / devices for safety
             target, joined = _safe_target(root, dest_rel, m.name)
             plan.append((target, joined, m.isdir()))
             by_rel[joined] = m
+            total += m.size
+        _check_budget(total, root)
 
         def write_one(target: Path, joined: str) -> None:
             src = tf.extractfile(by_rel[joined])
@@ -143,10 +198,29 @@ def _do_tar(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
 def _do_gz(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
     out_name = archive.name[:-3] or (archive.stem + ".out")   # strip ".gz"
     target, joined = _safe_target(root, dest_rel, out_name)
-    if target.exists() and not overwrite:
+    preexisting = target.exists()
+    if preexisting and not overwrite:
         return {"extracted": False, "conflicts": [joined], "conflict_count": 1}
-    with gzip.open(archive, "rb") as src, open(target, "wb") as dst:
-        shutil.copyfileobj(src, dst)
+    # A single gzip stream does not declare its uncompressed size up front (the
+    # footer's ISIZE is only mod 2^32), so the budget is enforced while copying.
+    written = 0
+    try:
+        with gzip.open(archive, "rb") as src, open(target, "wb") as dst:
+            while True:
+                chunk = src.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > MAX_EXTRACT_BYTES:
+                    raise ValueError(
+                        f"gzip stream exceeds the {MAX_EXTRACT_BYTES}-byte extraction "
+                        f"limit (MM_MAX_EXTRACT_BYTES)"
+                    )
+                dst.write(chunk)
+    except Exception:
+        if not preexisting:      # never delete a file that was already there
+            target.unlink(missing_ok=True)
+        raise
     return {"extracted": True, "count": 1}
 
 
@@ -163,11 +237,15 @@ def _do_rar(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
         raise UnsupportedArchive(f"RAR is not supported on this node ({exc})") from exc
 
     with rf:
-        plan, by_rel = [], {}
+        plan, by_rel, total = [], {}, 0
         for info in rf.infolist():
+            if getattr(info, "is_symlink", lambda: False)():
+                continue          # same rule as zip/tar: never materialise links
             target, joined = _safe_target(root, dest_rel, info.filename)
             plan.append((target, joined, info.isdir()))
             by_rel[joined] = info
+            total += getattr(info, "file_size", 0) or 0
+        _check_budget(total, root)
 
         def write_one(target: Path, joined: str) -> None:
             with rf.open(by_rel[joined]) as src, open(target, "wb") as dst:

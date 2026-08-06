@@ -138,11 +138,21 @@ MineManager owns **machine-to-machine** trust and **secret storage**.
 - **Secret storage:** RCON passwords, Velocity forwarding secrets, agent
   credentials are encrypted at rest in the hub with a key from the environment /
   a key file outside the DB. Never logged, never returned in plaintext to the UI
-  once set.
+  once set, and attached to an agent command only when that command needs them.
+  **What this does and does not buy:** it protects the DB at rest (backups, a
+  stolen `.db` file). It is *not* a control against a caller who can reach the
+  file API — the RCON password also lives in plaintext in `server.properties`,
+  and the Velocity forwarding secret in `velocity.toml`, both readable through
+  the file endpoints. Do not count the vault twice. (`SECURITY.md` S-19.)
 - **No agent runs as root.** Agent runs as a dedicated non-root user (the mc user
   or a service user in its group); all file/process operations happen as that user.
 - **Path jailing:** every file operation is confined to the node's configured root
   directory; path traversal is rejected server-side in the agent.
+  **This is a guardrail against operator mistakes, not a boundary against server
+  content.** Every instance runs under the *same* UID as the agent (no containers,
+  no per-instance users), so a hostile plugin or mod on any instance already has
+  code execution as that user and reaches every other instance's files directly,
+  bypassing the jail via the filesystem. (`SECURITY.md` S-18.)
 
 ---
 

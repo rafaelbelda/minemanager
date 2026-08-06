@@ -4,8 +4,8 @@ Replaces *only* the server jar, never worlds/plugins/mods/config/player data —
 those all live elsewhere in the instance root and are never touched. The swap is
 transactional:
 
-  1. download the new jar to a temp file (bounded by time and size, checksum
-     verified when the provider supplied one),
+  1. download the new jar to a temp file over https, bounded by time and size,
+     with a mandatory checksum verification (no checksum → no install),
   2. back up the current jar,
   3. atomically replace it (``os.replace`` on the same filesystem),
   4. on any failure, leave the original in place (the atomic replace guarantees
@@ -22,6 +22,7 @@ import hashlib
 import os
 import shutil
 import time
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -44,9 +45,34 @@ class UpdateError(Exception):
 
 def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
               timeout: float, max_bytes: int) -> int:
-    """Blocking streamed download with time + size guards and checksum verify."""
+    """Blocking streamed download with time + size guards and checksum verify.
+
+    Both guards **fail closed**. This file becomes the process the node executes,
+    so an unverifiable download is refused rather than installed:
+
+    * the URL must be ``https`` — ``urlopen`` also honours ``file://`` and
+      ``ftp://``, and providers are pluggable by design ("a new module + one
+      registry line"), so the scheme is pinned here rather than trusted;
+    * a checksum and a known algorithm must both be present. Previously
+      ``if hasher and expected`` silently skipped verification whenever either
+      was missing — a security control that opted itself out exactly when it had
+      nothing to check.
+    """
+    scheme = urllib.parse.urlparse(url).scheme.lower()
+    if scheme != "https":
+        raise UpdateError(f"refusing to download over {scheme or 'an unknown scheme'!r}: https required")
+
+    if not expected or not algo:
+        raise UpdateError(
+            "provider supplied no verifiable checksum for this build; refusing to install "
+            "an unverified server binary"
+        )
+    try:
+        hasher = hashlib.new(algo)
+    except ValueError as exc:
+        raise UpdateError(f"unsupported checksum algorithm {algo!r}: {exc}") from None
+
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
-    hasher = hashlib.new(algo) if algo else None
     started = time.monotonic()
     total = 0
     try:
@@ -61,17 +87,15 @@ def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
                 if total > max_bytes:
                     raise UpdateError("download exceeds the size limit")
                 fh.write(chunk)
-                if hasher:
-                    hasher.update(chunk)
+                hasher.update(chunk)
     except UpdateError:
         raise
     except Exception as exc:  # noqa: BLE001 - network/IO → uniform error
         raise UpdateError(f"download failed: {exc}") from exc
 
-    if hasher and expected:
-        got = hasher.hexdigest().lower()
-        if got != expected.lower():
-            raise UpdateError(f"checksum mismatch (expected {expected[:12]}…, got {got[:12]}…)")
+    got = hasher.hexdigest().lower()
+    if got != expected.lower():
+        raise UpdateError(f"checksum mismatch (expected {expected[:12]}..., got {got[:12]}...)")
     return total
 
 
