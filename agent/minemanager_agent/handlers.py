@@ -1,24 +1,45 @@
 """Map incoming protocol commands to agent actions and build responses.
 
-Instance-scoped commands carry the declared :class:`InstanceSpec` in
-``cmd.data['instance']`` (the hub attaches it), so the agent never keeps its own
-copy of instance config.
+Every action is one row in :data:`_HANDLERS`: the payload model it expects and
+the coroutine that carries it out. The payload is validated against that model
+before the handler runs, so a handler receives typed fields rather than indexing
+a raw dict — a contract mismatch becomes one clear error instead of a ``KeyError``
+surfacing as "KeyError: 'new_name'" in the UI.
+
+Instance-scoped payloads carry the declared :class:`InstanceSpec` (the hub
+attaches it), so the agent never keeps its own copy of instance config.
 """
 
 from __future__ import annotations
 
 import asyncio
+from typing import Awaitable, Callable
+
+from pydantic import BaseModel, ValidationError
 
 from minemanager_agent import archive, files, transfer
 from minemanager_agent.supervisor import Supervisor
-from minemanager_shared.protocol import Action, Command, InstanceSpec, Response, RunState
+from minemanager_shared.protocol import (
+    Action,
+    Command,
+    ConsoleSendData,
+    FilesDeleteData,
+    FilesExtractData,
+    FilesFetchData,
+    FilesListData,
+    FilesReadData,
+    FilesRenameData,
+    FilesUploadData,
+    FilesWriteData,
+    InstanceStatesData,
+    LogsTailData,
+    PowerData,
+    Response,
+    TransferStartData,
+    UpdateApplyData,
+)
 
-
-def _spec(cmd: Command) -> InstanceSpec:
-    raw = cmd.data.get("instance")
-    if not raw:
-        raise ValueError("command missing instance spec")
-    return InstanceSpec.model_validate(raw)
+Handler = Callable[[BaseModel, Supervisor], Awaitable[dict]]
 
 
 async def _off(fn, *args):
@@ -26,120 +47,133 @@ async def _off(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
 
+# -- power ------------------------------------------------------------------
+async def _power_start(d: PowerData, sup: Supervisor) -> dict:
+    return await sup.start(d.instance)
+
+
+async def _power_stop(d: PowerData, sup: Supervisor) -> dict:
+    return await sup.stop(d.instance)
+
+
+async def _power_restart(d: PowerData, sup: Supervisor) -> dict:
+    return await sup.restart(d.instance)
+
+
+async def _power_kill(d: PowerData, sup: Supervisor) -> dict:
+    return await sup.kill(d.instance)
+
+
+# -- console / logs ---------------------------------------------------------
+async def _console_send(d: ConsoleSendData, sup: Supervisor) -> dict:
+    return await sup.send(d.instance, d.line)
+
+
+async def _logs_tail(d: LogsTailData, sup: Supervisor) -> dict:
+    return await _off(files.tail_lines, d.instance.root_dir, d.path, d.lines)
+
+
+# -- files (all jailed to the instance root) --------------------------------
+async def _files_list(d: FilesListData, sup: Supervisor) -> dict:
+    return {"entries": await _off(files.list_dir, d.instance.root_dir, d.path)}
+
+
+async def _files_read(d: FilesReadData, sup: Supervisor) -> dict:
+    limit = d.max_bytes or files.DEFAULT_EDITOR_MAX_BYTES
+    return await _off(files.read_for_editor, d.instance.root_dir, d.path, limit)
+
+
+async def _files_write(d: FilesWriteData, sup: Supervisor) -> dict:
+    return await _off(files.write_file, d.instance.root_dir, d.path, d.content)
+
+
+async def _files_upload(d: FilesUploadData, sup: Supervisor) -> dict:
+    return await _off(files.write_bytes, d.instance.root_dir, d.path, d.content_b64)
+
+
+async def _files_delete(d: FilesDeleteData, sup: Supervisor) -> dict:
+    return await _off(files.delete, d.instance.root_dir, d.path, d.recursive)
+
+
+async def _files_fetch(d: FilesFetchData, sup: Supervisor) -> dict:
+    cap = d.cap or files.DEFAULT_TRANSFER_CAP_BYTES
+    return await _off(files.fetch, d.instance.root_dir, d.path, cap)
+
+
+async def _files_rename(d: FilesRenameData, sup: Supervisor) -> dict:
+    return await _off(files.rename, d.instance.root_dir, d.path, d.new_name)
+
+
+async def _files_extract(d: FilesExtractData, sup: Supervisor) -> dict:
+    return await _off(archive.extract, d.instance.root_dir, d.path, d.overwrite)
+
+
+# -- updater / transfers ----------------------------------------------------
+async def _update_apply(d: UpdateApplyData, sup: Supervisor) -> dict:
+    return await sup.apply_update(
+        d.instance, d.jar_name, d.download.model_dump(mode="json"),
+        allow_create=d.allow_create,
+    )
+
+
+async def _transfer_start(d: TransferStartData, sup: Supervisor) -> dict:
+    if sup.identity is None:
+        raise RuntimeError("agent identity not ready for transfers")
+    return await transfer.handle(sup.identity, d, d.instance.root_dir)
+
+
+# -- introspection ----------------------------------------------------------
+async def _instance_states(d: InstanceStatesData, sup: Supervisor) -> dict:
+    return {"states": await sup.states_for(d.ids)}
+
+
+_HANDLERS: dict[str, tuple[type[BaseModel], Handler]] = {
+    Action.power_start.value: (PowerData, _power_start),
+    Action.power_stop.value: (PowerData, _power_stop),
+    Action.power_restart.value: (PowerData, _power_restart),
+    Action.power_kill.value: (PowerData, _power_kill),
+    Action.console_send.value: (ConsoleSendData, _console_send),
+    Action.logs_tail.value: (LogsTailData, _logs_tail),
+    Action.files_list.value: (FilesListData, _files_list),
+    Action.files_read.value: (FilesReadData, _files_read),
+    Action.files_write.value: (FilesWriteData, _files_write),
+    Action.files_upload.value: (FilesUploadData, _files_upload),
+    Action.files_delete.value: (FilesDeleteData, _files_delete),
+    Action.files_fetch.value: (FilesFetchData, _files_fetch),
+    Action.files_rename.value: (FilesRenameData, _files_rename),
+    Action.files_extract.value: (FilesExtractData, _files_extract),
+    Action.update_apply.value: (UpdateApplyData, _update_apply),
+    Action.transfer_start.value: (TransferStartData, _transfer_start),
+    Action.instance_states.value: (InstanceStatesData, _instance_states),
+}
+
+
+def _brief(exc: ValidationError) -> str:
+    """One readable line from a validation failure, not a wall of JSON."""
+    return "; ".join(
+        f"{'.'.join(str(p) for p in e['loc']) or 'payload'}: {e['msg']}"
+        for e in exc.errors()[:4]
+    )
+
+
 async def handle(cmd: Command, sup: Supervisor) -> Response:
+    entry = _HANDLERS.get(cmd.action)
+    if entry is None:
+        return Response.failure(cmd.id, f"unknown action: {cmd.action}")
+    model, handler = entry
+
     try:
-        return await _dispatch(cmd, sup)
+        data = model.model_validate(cmd.data)
+    except ValidationError as exc:
+        return Response.failure(cmd.id, f"invalid payload for {cmd.action}: {_brief(exc)}")
+
+    try:
+        return Response.success(cmd.id, await handler(data, sup))
     except FileNotFoundError as exc:
         return Response.failure(cmd.id, f"not found: {exc}")
     except files.JailError as exc:
         return Response.failure(cmd.id, f"path rejected: {exc}")
+    except archive.UnsupportedArchive as exc:
+        return Response.failure(cmd.id, str(exc))
     except Exception as exc:  # noqa: BLE001 - surface any handler error to the hub
         return Response.failure(cmd.id, f"{type(exc).__name__}: {exc}")
-
-
-async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
-    action = cmd.action
-
-    # -- power --------------------------------------------------------------
-    if action == Action.power_start.value:
-        return Response.success(cmd.id, await sup.start(_spec(cmd)))
-    if action == Action.power_stop.value:
-        return Response.success(cmd.id, await sup.stop(_spec(cmd)))
-    if action == Action.power_restart.value:
-        return Response.success(cmd.id, await sup.restart(_spec(cmd)))
-    if action == Action.power_kill.value:
-        return Response.success(cmd.id, await sup.kill(_spec(cmd)))
-
-    # -- console ------------------------------------------------------------
-    if action == Action.console_send.value:
-        return Response.success(cmd.id, await sup.send(_spec(cmd), cmd.data["line"]))
-
-    # -- files (jailed to instance root) ------------------------------------
-    if action == Action.files_list.value:
-        root = _spec(cmd).root_dir
-        entries = await _off(files.list_dir, root, cmd.data.get("path", "."))
-        return Response.success(cmd.id, {"entries": entries})
-    if action == Action.files_read.value:
-        root = _spec(cmd).root_dir
-        max_bytes = int(cmd.data.get("max_bytes") or files.DEFAULT_EDITOR_MAX_BYTES)
-        return Response.success(
-            cmd.id, await _off(files.read_for_editor, root, cmd.data["path"], max_bytes)
-        )
-    if action == Action.files_write.value:
-        root = _spec(cmd).root_dir
-        return Response.success(
-            cmd.id, await _off(files.write_file, root, cmd.data["path"], cmd.data["content"])
-        )
-    if action == Action.files_upload.value:
-        root = _spec(cmd).root_dir
-        return Response.success(
-            cmd.id, await _off(files.write_bytes, root, cmd.data["path"], cmd.data["content_b64"])
-        )
-    if action == Action.files_delete.value:
-        root = _spec(cmd).root_dir
-        return Response.success(
-            cmd.id,
-            await _off(files.delete, root, cmd.data["path"], cmd.data.get("recursive", False)),
-        )
-    if action == Action.files_fetch.value:
-        root = _spec(cmd).root_dir
-        cap = int(cmd.data.get("cap") or files.DEFAULT_TRANSFER_CAP_BYTES)
-        return Response.success(cmd.id, await _off(files.fetch, root, cmd.data["path"], cap))
-
-    if action == Action.files_rename.value:
-        root = _spec(cmd).root_dir
-        return Response.success(
-            cmd.id, await _off(files.rename, root, cmd.data["path"], cmd.data["new_name"])
-        )
-
-    if action == Action.files_extract.value:
-        root = _spec(cmd).root_dir
-        try:
-            result = await _off(
-                archive.extract, root, cmd.data["path"], bool(cmd.data.get("overwrite", False))
-            )
-        except archive.UnsupportedArchive as exc:
-            return Response.failure(cmd.id, str(exc))
-        return Response.success(cmd.id, result)
-
-    # -- logs / console backfill --------------------------------------------
-    if action == Action.logs_tail.value:
-        root = _spec(cmd).root_dir
-        path = cmd.data.get("path") or "logs/latest.log"
-        lines = int(cmd.data.get("lines", 200))
-        return Response.success(cmd.id, await _off(files.tail_lines, root, path, lines))
-
-    # -- version updater ----------------------------------------------------
-    if action == Action.update_apply.value:
-        spec = _spec(cmd)
-        jar_name = cmd.data.get("jar_name")
-        download = cmd.data.get("download")
-        if not jar_name or not download:
-            return Response.failure(cmd.id, "update.apply requires jar_name and download")
-        result = await sup.apply_update(
-            spec, jar_name, download, allow_create=bool(cmd.data.get("allow_create", False))
-        )
-        return Response.success(cmd.id, result)
-
-    # -- large-file streaming transfer --------------------------------------
-    if action == Action.transfer_start.value:
-        spec = _spec(cmd)
-        if sup.identity is None:
-            return Response.failure(cmd.id, "agent identity not ready for transfers")
-        result = await transfer.handle(sup.identity, cmd.data, spec.root_dir)
-        return Response.success(cmd.id, result)
-
-    # -- introspection ------------------------------------------------------
-    if action == Action.instance_status.value:
-        state = sup.states().get(cmd.instance_id or "", RunState.unknown)
-        return Response.success(cmd.id, {"state": state.value})
-    if action == Action.instance_states.value:
-        ids = cmd.data.get("ids") or []
-        return Response.success(cmd.id, {"states": await sup.states_for(ids)})
-    if action == Action.node_info.value:
-        return Response.success(
-            cmd.id,
-            {"uptime_s": sup.uptime_s(), "instances": {k: v.value for k, v in sup.states().items()}},
-        )
-
-    return Response.failure(cmd.id, f"unknown action: {action}")

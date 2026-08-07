@@ -33,8 +33,13 @@ class JailError(Exception):
     """Raised when a requested path would escape the instance root."""
 
 
-def _resolve_within(root: str | Path, rel: str) -> Path:
-    """Resolve ``rel`` against ``root`` and ensure it stays inside ``root``."""
+def resolve_within(root: str | Path, rel: str) -> Path:
+    """Resolve ``rel`` against ``root`` and ensure it stays inside ``root``.
+
+    Public because it is the jail: archive, updater and transfer all depend on
+    it for correctness, and a shared security primitive should be named as one
+    rather than reached for through an underscore.
+    """
     root_path = Path(root).resolve()
     # Reject absolute inputs outright; everything is relative to the root.
     candidate = (root_path / rel.lstrip("/\\")).resolve()
@@ -44,7 +49,7 @@ def _resolve_within(root: str | Path, rel: str) -> Path:
 
 
 def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
-    target = _resolve_within(root, rel)
+    target = resolve_within(root, rel)
     if not target.is_dir():
         raise NotADirectoryError(rel)
     root_path = Path(root).resolve()
@@ -71,7 +76,7 @@ def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
 def read_for_editor(root: str | Path, rel: str, max_bytes: int = DEFAULT_EDITOR_MAX_BYTES) -> dict:
     """Read a file for the text editor. Binary content (detected by a NUL byte in
     the first chunk) returns ``{"binary": True}`` and is download-only."""
-    target = _resolve_within(root, rel)
+    target = resolve_within(root, rel)
     if not target.is_file():
         raise FileNotFoundError(rel)
     size = target.stat().st_size
@@ -92,7 +97,7 @@ def read_for_editor(root: str | Path, rel: str, max_bytes: int = DEFAULT_EDITOR_
 def fetch(root: str | Path, rel: str, cap: int) -> dict:
     """Return a file's bytes as base64, or a directory zipped. Anything over
     ``cap`` must use the streaming transfer path instead."""
-    target = _resolve_within(root, rel)
+    target = resolve_within(root, rel)
     if target.is_dir():
         buf = io.BytesIO()
         uncompressed = 0
@@ -122,13 +127,13 @@ def fetch(root: str | Path, rel: str, cap: int) -> dict:
 
 def rename(root: str | Path, rel: str, new_name: str) -> dict:
     """Rename an entry within its own directory (new_name is a bare filename)."""
-    src = _resolve_within(root, rel)
+    src = resolve_within(root, rel)
     if not src.exists():
         raise FileNotFoundError(rel)
     if not new_name or new_name in (".", "..") or "/" in new_name or "\\" in new_name:
         raise ValueError("invalid name")
     root_path = Path(root).resolve()
-    dst = _resolve_within(root, str(Path(rel).parent / new_name))
+    dst = resolve_within(root, str(Path(rel).parent / new_name))
     if dst == root_path:
         raise JailError("refusing to rename the instance root")
     if dst.exists():
@@ -149,7 +154,7 @@ def tail_lines(
     fully. A missing file is not an error — it just yields no lines (a server
     that has never produced ``logs/latest.log`` is a normal state).
     """
-    target = _resolve_within(root, rel)
+    target = resolve_within(root, rel)
     if not target.is_file():
         return {"lines": [], "path": rel, "missing": True}
 
@@ -167,21 +172,21 @@ def tail_lines(
 
 
 def write_file(root: str | Path, rel: str, content: str) -> dict:
-    target = _resolve_within(root, rel)
+    target = resolve_within(root, rel)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(content, encoding="utf-8")
     return {"path": rel, "size": target.stat().st_size}
 
 
 def write_bytes(root: str | Path, rel: str, b64: str) -> dict:
-    target = _resolve_within(root, rel)
+    target = resolve_within(root, rel)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_bytes(base64.b64decode(b64))
     return {"path": rel, "size": target.stat().st_size}
 
 
 def delete(root: str | Path, rel: str, recursive: bool = False) -> dict:
-    target = _resolve_within(root, rel)
+    target = resolve_within(root, rel)
     if target == Path(root).resolve():
         raise JailError("refusing to delete the instance root")
     if target.is_dir():

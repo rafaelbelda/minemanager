@@ -23,7 +23,14 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 from minemanager_agent import logtail, tmux, updater
-from minemanager_shared.protocol import Action, Event, InstanceSpec, RunState
+from minemanager_shared.protocol import (
+    Action,
+    ConsoleOutputData,
+    Event,
+    InstanceSpec,
+    RunState,
+    StateChangedData,
+)
 
 EmitFn = Callable[[Event], Awaitable[None]]
 
@@ -168,7 +175,7 @@ class Supervisor:
             Event(
                 action=Action.ev_state_changed.value,
                 instance_id=mi.spec.id,
-                data={"state": state.value, "detail": detail},
+                data=StateChangedData(state=state, detail=detail).model_dump(mode="json"),
             )
         )
 
@@ -340,7 +347,7 @@ class Supervisor:
                     Event(
                         action=Action.ev_console_output.value,
                         instance_id=mi.spec.id,
-                        data={"line": line, "source": "log"},
+                        data=ConsoleOutputData(line=line).model_dump(mode="json"),
                     )
                 )
                 if not mi.ready and _READY_RE.search(line):
@@ -433,7 +440,7 @@ class Supervisor:
                 Event(
                     action=Action.ev_console_output.value,
                     instance_id=mi.spec.id,
-                    data={"line": line, "source": "pty"},
+                    data=ConsoleOutputData(line=line, source="pty").model_dump(mode="json"),
                 )
             )
 

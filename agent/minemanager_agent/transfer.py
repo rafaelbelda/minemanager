@@ -21,6 +21,7 @@ from pathlib import Path
 import httpx
 
 from minemanager_agent import files
+from minemanager_shared.protocol import TransferStartData
 
 CHUNK = 256 * 1024
 
@@ -39,7 +40,7 @@ def _build_zip(src_dir: Path, dest_zip: Path) -> None:
 
 
 async def _run_download(http_base: str, tid: str, root: str, path: str, headers: dict) -> dict:
-    src = files._resolve_within(root, path)     # jailed
+    src = files.resolve_within(root, path)     # jailed
     tmp_zip: Path | None = None
     if src.is_dir():
         work = Path(root) / files.HIDDEN_DIR
@@ -81,7 +82,7 @@ async def _run_download(http_base: str, tid: str, root: str, path: str, headers:
 
 
 async def _run_upload(http_base: str, tid: str, root: str, path: str, headers: dict) -> dict:
-    target = files._resolve_within(root, path)   # jailed
+    target = files.resolve_within(root, path)   # jailed
     work = Path(root) / files.HIDDEN_DIR
     work.mkdir(parents=True, exist_ok=True)
     tmp = work / f"ul-{uuid.uuid4().hex}.tmp"
@@ -104,15 +105,15 @@ async def _run_upload(http_base: str, tid: str, root: str, path: str, headers: d
     return {"ok": True, "path": path}
 
 
-async def handle(identity, data: dict, root: str) -> dict:
+async def handle(identity, data: TransferStartData, root: str) -> dict:
     """Dispatch a ``transfer.start`` command. ``identity`` carries node_id,
-    credential and the hub's http base."""
+    credential and the hub's http base.
+
+    ``direction`` is a closed set on the payload model, so an unrecognised value
+    is rejected before it reaches here — it must never fall through to the upload
+    path, which would overwrite ``path`` with whatever the hub streamed back.
+    """
     headers = {"x-mm-node": identity.node_id, "x-mm-cred": identity.credential}
-    tid, direction, path = data["tid"], data["direction"], data["path"]
-    if direction == "download":
-        return await _run_download(identity.http_base, tid, root, path, headers)
-    if direction == "upload":
-        return await _run_upload(identity.http_base, tid, root, path, headers)
-    # Never fall through: an unrecognised direction must not reach the upload
-    # path, which would overwrite `path` with whatever the hub streamed back.
-    raise TransferError(f"unknown transfer direction: {direction!r}")
+    if data.direction == "download":
+        return await _run_download(identity.http_base, data.tid, root, data.path, headers)
+    return await _run_upload(identity.http_base, data.tid, root, data.path, headers)

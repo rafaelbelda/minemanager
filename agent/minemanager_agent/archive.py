@@ -17,7 +17,7 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-from minemanager_agent.files import JailError, _resolve_within
+from minemanager_agent.files import JailError, resolve_within
 
 _MAX_CONFLICTS = 200
 
@@ -85,7 +85,7 @@ def _safe_target(root: str | Path, dest_rel: str, member: str) -> tuple[Path, st
     if not m or ".." in Path(m).parts:
         raise JailError(f"unsafe archive member: {member!r}")
     joined = m if dest_rel in ("", ".") else f"{dest_rel}/{m}"
-    target = _resolve_within(root, joined)   # raises JailError if it escapes root
+    target = resolve_within(root, joined)   # raises JailError if it escapes root
     return target, joined
 
 
@@ -95,7 +95,7 @@ def extract(root: str | Path, rel: str, overwrite: bool = False) -> dict:
     When conflicts exist and ``overwrite`` is false nothing is written and the
     conflicting paths are returned instead.
     """
-    archive = _resolve_within(root, rel)
+    archive = resolve_within(root, rel)
     if not archive.is_file():
         raise FileNotFoundError(rel)
     fmt = detect_format(archive.name)

@@ -21,12 +21,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from minemanager_hub.agents.registry import CommandTimeout, registry
-from minemanager_hub.api.control import _agent_and_spec
+from minemanager_hub.api.proxy import agent_and_spec
 from minemanager_hub.db.models import Node
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import tokens
 from minemanager_hub.transfers import TransferIdInUse, transfers
-from minemanager_shared.protocol import Action
+from minemanager_shared.protocol import Action, TransferStartData
 
 router = APIRouter(prefix="/api", tags=["transfers"])
 
@@ -55,13 +55,15 @@ def _auth_agent(request: Request, expected_node: str) -> None:
 # --- browser-facing --------------------------------------------------------
 @router.get("/instances/{instance_id}/files/download-stream")
 async def download_stream(instance_id: str, path: str, tid: str) -> StreamingResponse:
-    conn, spec = _agent_and_spec(instance_id)
+    conn, spec = agent_and_spec(instance_id)
     ctx = _new_transfer(tid, node_id=conn.node_id, direction="download", path=path)
 
     # Ask the agent to push; the command resolves only when the push completes.
     fut = asyncio.ensure_future(conn.call(
         Action.transfer_start.value, instance_id=instance_id,
-        data={"tid": tid, "direction": "download", "path": path, "instance": spec},
+        data=TransferStartData(
+            instance=spec, tid=tid, direction="download", path=path,
+        ).model_dump(mode="json"),
         timeout=_CMD_TIMEOUT,
     ))
     fut.add_done_callback(lambda f: f.exception())  # swallow late errors
@@ -106,7 +108,7 @@ async def download_stream(instance_id: str, path: str, tid: str) -> StreamingRes
 
 @router.post("/instances/{instance_id}/files/upload-stream")
 async def upload_stream(instance_id: str, path: str, tid: str, request: Request) -> dict:
-    conn, spec = _agent_and_spec(instance_id)
+    conn, spec = agent_and_spec(instance_id)
     ctx = _new_transfer(tid, node_id=conn.node_id, direction="upload", path=path)
     ctx.filename = path.rsplit("/", 1)[-1]
     try:
@@ -116,8 +118,9 @@ async def upload_stream(instance_id: str, path: str, tid: str, request: Request)
 
     fut = asyncio.ensure_future(conn.call(
         Action.transfer_start.value, instance_id=instance_id,
-        data={"tid": tid, "direction": "upload", "path": path,
-              "total": ctx.total, "instance": spec},
+        data=TransferStartData(
+            instance=spec, tid=tid, direction="upload", path=path, total=ctx.total,
+        ).model_dump(mode="json"),
         timeout=_CMD_TIMEOUT,
     ))
 

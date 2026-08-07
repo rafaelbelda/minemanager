@@ -13,9 +13,17 @@ Frame kinds
 - ``event`` — an unsolicited push from the agent (console output, log lines,
   state changes, heartbeats). No correlation id; consumers match on ``action``.
 
-Payloads are intentionally left as free-form ``dict`` on the envelope so the
-transport layer never needs to know every action. Typed payload models for the
-known actions live below and are validated by whichever side handles them.
+Payloads are free-form ``dict`` on the *envelope* so the transport layer never
+needs to know every action, but each action's payload has a model below and both
+sides use it: the hub builds command payloads by constructing the model, and the
+agent validates incoming ones against it before handling.
+
+Two deliberate limits:
+  1) Modelling it is worth doing, but it is
+  simply not done yet, and saying so beats implying otherwise.
+  2) Unknown fields are ignored, not rejected (pydantic's default). A newer hub
+  that adds a field must not break an older agent, so ``extra="forbid"`` would
+  make version skew worse rather than better.
 """
 
 from __future__ import annotations
@@ -106,8 +114,6 @@ class Action(str, Enum):
     transfer_start = "transfer.start"   # hub tells agent to open a data connection
 
     # Introspection ---------------------------------------------------------
-    node_info = "node.info"
-    instance_status = "instance.status"
     instance_states = "instance.states"   # batch: real run-state for a set of ids
 
     # ---- Event actions (agent -> hub, unsolicited) ------------------------
@@ -226,14 +232,107 @@ class UpdateDownload(BaseModel):
 
 
 class UpdateApplyData(BaseModel):
-    """Payload for the ``update.apply`` command (hub -> agent)."""
+    """Payload for the ``update.apply`` command (hub -> agent).
 
+    Declared here rather than with the other commands because it needs
+    :class:`UpdateDownload` above; it is instance-scoped like the rest.
+    """
+
+    instance: "InstanceSpec"
     jar_name: str                    # target jar to replace, relative to root
+    # Only an operator-supplied jar path may be created when missing, so a
+    # mis-parsed one fails loudly instead of installing a jar nothing runs.
+    allow_create: bool = False
     download: UpdateDownload
 
 
-class ConsoleSendData(BaseModel):
+# --------------------------------------------------------------------------- #
+# Command payloads (hub -> agent)
+# --------------------------------------------------------------------------- #
+
+
+class InstanceCommand(BaseModel):
+    """Base for every instance-scoped command.
+
+    The hub attaches the declared spec to each one, which is what lets the agent
+    stay stateless about instance config.
+    """
+
+    instance: InstanceSpec
+
+
+class PowerData(InstanceCommand):
+    """power.start / power.stop / power.restart / power.kill — spec only."""
+
+
+class ConsoleSendData(InstanceCommand):
     line: str
+
+
+class LogsTailData(InstanceCommand):
+    path: str = "logs/latest.log"
+    lines: int = 200
+
+
+class FilesListData(InstanceCommand):
+    path: str = "."
+
+
+class FilesReadData(InstanceCommand):
+    path: str
+    # None = use the agent's own default; the hub normally sends its configured
+    # limit. Optional so an older hub that omits it still works.
+    max_bytes: Optional[int] = None
+
+
+class FilesWriteData(InstanceCommand):
+    path: str
+    content: str  # utf-8; binary uploads use files.upload with base64
+
+
+class FilesUploadData(InstanceCommand):
+    path: str
+    content_b64: str
+
+
+class FilesDeleteData(InstanceCommand):
+    path: str
+    recursive: bool = False
+
+
+class FilesFetchData(InstanceCommand):
+    path: str
+    cap: Optional[int] = None      # as max_bytes above
+
+
+class FilesRenameData(InstanceCommand):
+    path: str
+    new_name: str                  # bare filename; the agent rejects separators
+
+
+class FilesExtractData(InstanceCommand):
+    path: str
+    overwrite: bool = False
+
+
+class TransferStartData(InstanceCommand):
+    tid: str
+    # Closed set: an unrecognised direction previously fell through to the
+    # upload path and overwrote `path` with whatever the hub streamed back.
+    direction: Literal["download", "upload"]
+    path: str
+    total: Optional[int] = None
+
+
+class InstanceStatesData(BaseModel):
+    """instance.states — node-scoped, so no instance spec."""
+
+    ids: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Event payloads (agent -> hub), built by the agent at each emit site
+# --------------------------------------------------------------------------- #
 
 
 class ConsoleOutputData(BaseModel):
@@ -246,39 +345,12 @@ class ConsoleOutputData(BaseModel):
 
 class StateChangedData(BaseModel):
     state: RunState
-    pid: Optional[int] = None
     detail: Optional[str] = None
 
 
 class HeartbeatData(BaseModel):
     uptime_s: float
     instances: dict[str, RunState] = Field(default_factory=dict)
-
-
-class FilesListData(BaseModel):
-    path: str = "."
-
-
-class FileEntry(BaseModel):
-    name: str
-    path: str
-    is_dir: bool
-    size: int
-    modified: float
-
-
-class FilesReadData(BaseModel):
-    path: str
-
-
-class FilesWriteData(BaseModel):
-    path: str
-    content: str  # utf-8; binary uploads use files.upload with base64
-
-
-class FilesDeleteData(BaseModel):
-    path: str
-    recursive: bool = False
 
 
 # --------------------------------------------------------------------------- #

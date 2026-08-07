@@ -27,7 +27,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from minemanager_agent.files import _resolve_within
+from minemanager_agent.files import resolve_within
 
 _UA = "minemanager-agent/0.1 (+https://github.com/rafaelbelda/minemanager)"
 
@@ -112,7 +112,7 @@ async def apply_update(
     if not root_p.is_dir():
         raise UpdateError(f"instance root does not exist: {root}")
 
-    jar_path = _resolve_within(root, jar_name)   # jailed to the instance root
+    jar_path = resolve_within(root, jar_name)   # jailed to the instance root
     if not jar_path.exists() and not allow_create:
         raise UpdateError(
             f"{jar_name!r} does not exist in the instance root, "

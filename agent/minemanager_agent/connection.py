@@ -20,6 +20,7 @@ from minemanager_shared.protocol import (
     Action,
     Command,
     Event,
+    HeartbeatData,
     Hello,
     Welcome,
     parse_frame,
@@ -86,10 +87,10 @@ class Connection:
                 await self._emit_event(
                     Event(
                         action=Action.ev_heartbeat.value,
-                        data={
-                            "uptime_s": self.supervisor.uptime_s(),
-                            "instances": {k: v.value for k, v in self.supervisor.states().items()},
-                        },
+                        data=HeartbeatData(
+                            uptime_s=self.supervisor.uptime_s(),
+                            instances=self.supervisor.states(),
+                        ).model_dump(mode="json"),
                     )
                 )
             except asyncio.CancelledError:
