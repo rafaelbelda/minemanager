@@ -25,7 +25,7 @@ from minemanager_hub.api.control import _agent_and_spec
 from minemanager_hub.db.models import Node
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import tokens
-from minemanager_hub.transfers import CHUNK, transfers
+from minemanager_hub.transfers import transfers
 from minemanager_shared.protocol import Action
 
 router = APIRouter(prefix="/api", tags=["transfers"])

@@ -43,7 +43,6 @@ def _init() -> None:
     Base.metadata.create_all(_engine)
     _ensure_columns(_engine)
     _drop_removed_columns(_engine)
-    _ensure_secret_uniqueness(_engine)
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
 
     with _engine.connect() as conn:
@@ -80,16 +79,12 @@ def _ensure_columns(engine: Engine) -> None:
 
 
 def _drop_removed_columns(engine: Engine) -> None:
-    """Drop columns whose feature has been removed, and their orphaned secrets.
+    """Drop columns whose feature has been removed.
 
-    This is not cosmetic. ``instances.rcon_host`` was declared ``NOT NULL`` with
-    no DDL default (SQLAlchemy's ``default=`` is applied in Python, not by the
-    database), so once the ORM stops sending the column every INSERT on an
-    existing database would fail the constraint. Dropping it is what keeps older
-    databases working, not just tidy.
-
-    RCON was never reachable — it had no REST surface at all (``PLAN.md §11b``) —
-    so nothing here can be in use.
+    ``instances.rcon_host`` was ``NOT NULL`` with no DDL default (SQLAlchemy's
+    ``default=`` is applied in Python), so once the ORM stops sending it every
+    INSERT on an existing database fails the constraint. Dropping it is what
+    keeps older databases working.
     """
     from sqlalchemy import inspect, text
 
@@ -103,58 +98,7 @@ def _drop_removed_columns(engine: Engine) -> None:
             for name in cols:
                 if name in existing:
                     conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
-                    log.info("dropped removed column %s.%s (RCON support was removed)", table, name)
-
-        # The stored RCON password is now unreachable: nothing can read it and
-        # nothing can use it. Leaving decryptable credentials for a deleted
-        # feature is strictly worse than removing them.
-        if inspector.has_table("secrets"):
-            n = conn.execute(
-                text("DELETE FROM secrets WHERE key = 'rcon_password'")
-            ).rowcount
-            if n:
-                log.warning(
-                    "deleted %d stored rcon_password secret(s): RCON has been removed, so they "
-                    "were unreachable. The password itself still lives in each server's "
-                    "server.properties, which is where the server reads it from anyway.",
-                    n,
-                )
-
-
-def _ensure_secret_uniqueness(engine: Engine) -> None:
-    # Bring existing DBs forward to the (scope, scope_id, key) uniqueness rule.
-    from sqlalchemy import inspect, text
-
-    inspector = inspect(engine)
-    if not inspector.has_table("secrets"):
-        return
-    if any(ix["name"] == "uq_secret_scope_key" for ix in inspector.get_indexes("secrets")):
-        return
-
-    with engine.begin() as conn:
-        # SQLite's bare-column rule: `id` is taken from the row supplying MAX().
-        removed = conn.execute(
-            text(
-                "DELETE FROM secrets WHERE id NOT IN ("
-                "  SELECT id FROM ("
-                "    SELECT id, MAX(updated_at) FROM secrets"
-                "    GROUP BY scope, scope_id, key"
-                "  )"
-                ")"
-            )
-        ).rowcount
-        if removed:
-            log.warning(
-                "removed %d duplicate secret row(s) while adding the uniqueness "
-                "constraint; the most recently updated value of each key was kept",
-                removed,
-            )
-        conn.execute(
-            text(
-                "CREATE UNIQUE INDEX uq_secret_scope_key "
-                "ON secrets (scope, scope_id, key)"
-            )
-        )
+                    log.info("dropped removed column %s.%s", table, name)
 
 
 def init_db() -> None:

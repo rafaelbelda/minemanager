@@ -1,49 +1,35 @@
 """Thin async wrapper over the ``tmux`` CLI.
 
 Each managed instance runs in its own detached tmux session named
-``<prefix>-<instance_id>``. tmux gives us a real pty (clean stdin via
-``send-keys``) and, as a bonus, lets a human ``tmux attach`` to debug a server
-directly. Process supervision (restart policy, crash detection) lives one layer
-up in :mod:`minemanager_agent.supervisor`.
+``<SESSION_PREFIX>-<instance_id>``. tmux gives us a real pty (clean stdin via
+``send-keys``) and lets a human ``tmux attach`` to debug a server directly.
+Process supervision (restart policy, crash detection) lives one layer up in
+:mod:`minemanager_agent.supervisor`.
+
+Both names below are constants, not configuration. Together they *are* a running
+server's identity: changing either while servers are up makes every existing
+session invisible to the agent, so it reports them stopped, starts duplicates
+that crash-loop against ``session.lock``, and never stops them on shutdown.
+Nothing about a deployment needs them to differ.
 """
 
 from __future__ import annotations
 
 import asyncio
-import os
 import shlex
 
 # Dedicated tmux server socket, so our sessions live in the agent's own tmux
-# server (and thus its systemd cgroup) — this is what lets a shutdown handler
-# stop the servers before systemd force-kills the group, and avoids clobbering a
-# user's tmux. All commands go through this socket.
-DEFAULT_SOCKET = "minemanager"
-_SOCKET = os.environ.get("MM_TMUX_SOCKET", DEFAULT_SOCKET)
-
-
-def socket_name() -> str:
-    """The tmux socket currently in use."""
-    return _SOCKET
-
-
-def use_socket(name: str) -> None:
-    """Pin the socket for the rest of this process.
-
-    The agent pins socket *and* session prefix to the values it last ran with, so
-    an edited env var cannot detach it from servers it is already supervising —
-    see :meth:`AgentConfig.pin_runtime_identity`. Read at call time by
-    :func:`_run`, so this applies to every subsequent tmux invocation.
-    """
-    global _SOCKET
-    _SOCKET = name
+# server (and thus its systemd cgroup) — this is what lets the shutdown handler
+# stop servers before systemd force-kills the group, and avoids clobbering a
+# user's tmux.
+SOCKET = "minemanager"
+SESSION_PREFIX = "mm"
 
 
 # Occupies the pane between creating a session and respawning the real command
-# into it (see new_session). It must print *nothing* — the default interactive
-# shell writes a prompt, which then shows up in the mirrored pane output and
-# gets replayed to the operator as if the server had printed it. Blocking on a
-# read from the pty is silent and adds no dependency: tmux already requires
-# /bin/sh to run any command at all.
+# into it (see new_session). It must print *nothing*: an interactive shell writes
+# a prompt, which then shows up in the mirrored pane and gets replayed to the
+# operator as if the server had printed it.
 _PLACEHOLDER = "sh -c 'read _'"
 
 
@@ -53,7 +39,7 @@ class TmuxError(Exception):
 
 async def _run(*args: str) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
-        "tmux", "-L", _SOCKET,
+        "tmux", "-L", SOCKET,
         *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -73,9 +59,9 @@ async def list_all_sessions() -> list[str]:
     return out.splitlines()
 
 
-async def list_sessions(prefix: str) -> list[str]:
-    """Names of our live sessions (``<prefix>-*``). Empty if tmux/no server."""
-    return [n for n in await list_all_sessions() if n.startswith(prefix + "-")]
+async def list_sessions() -> list[str]:
+    """Names of our live sessions (``<SESSION_PREFIX>-*``)."""
+    return [n for n in await list_all_sessions() if n.startswith(SESSION_PREFIX + "-")]
 
 
 async def has_session(name: str) -> bool:
@@ -92,16 +78,6 @@ async def new_session(name: str, workdir: str, command: str, mirror_path: str | 
 
     When ``command`` exits, the session ends — that transition is how the
     supervisor detects a stop/crash.
-
-    The launch is deliberately **two steps** — an empty session, then
-    ``respawn-pane`` — rather than the obvious ``new-session <command>``. A pipe
-    can only be attached to a pane that already exists, so with the one-step
-    form the command has already run (and, when it fails at once, already died
-    and taken its session with it) before :func:`pipe_pane` can attach: the
-    mirror captures nothing in exactly the case it exists for. Creating the pane
-    idle lets the pipe be in place *before* anything runs. Verified against tmux
-    3.6: the pipe survives the respawn, ``send-keys`` still reaches the new
-    process, and the session still ends when it exits.
     """
     if await has_session(name):
         raise TmuxError(f"session already exists: {name}")
@@ -126,16 +102,14 @@ async def new_session(name: str, workdir: str, command: str, mirror_path: str | 
 async def pipe_pane(name: str, path: str) -> bool:
     """Mirror everything the session's pane prints into ``path``.
 
-    This is the *only* way to keep output a server writes before (or instead of)
-    ``logs/latest.log`` — a JVM that dies on ``UnsupportedClassVersionError``, a
-    port already in use, a bad ``-Xmx`` — because when the command exits tmux
-    destroys the session and its scrollback with it, leaving nothing to
-    ``capture-pane`` by the time the supervisor notices. The pipe writes as the
+    The only way to keep output written before (or instead of)
+    ``logs/latest.log`` — an ``UnsupportedClassVersionError``, a port already in
+    use, a bad ``-Xmx``. When the command exits tmux destroys the session and its
+    scrollback, so there is nothing left to ``capture-pane``; the pipe writes as
     output happens, so the file outlives the session.
 
-    ``-o`` makes this a no-op if a pipe is already open, so it is safe to call
-    on an adopted session. Never raises: losing diagnostics must not stop a
-    server from launching.
+    ``-o`` makes this a no-op if a pipe is already open, so it is safe on an
+    adopted session. Never raises: losing diagnostics must not block a launch.
     """
     try:
         code, _, _ = await _run("pipe-pane", "-o", "-t", name, f"cat >> {shlex.quote(path)}")
@@ -163,17 +137,9 @@ async def kill_session(name: str) -> None:
 
 
 async def kill_server() -> None:
-    """Tear down our whole tmux server (dedicated socket), leaving nothing behind
-    after a shutdown. Tolerates 'no server running'."""
+    """Tear down our whole tmux server, leaving nothing behind after a shutdown.
+    Tolerates 'no server running'."""
     try:
         await _run("kill-server")
     except FileNotFoundError:
         pass
-
-
-async def tmux_available() -> bool:
-    try:
-        code, _, _ = await _run("-V")
-        return code == 0
-    except FileNotFoundError:
-        return False

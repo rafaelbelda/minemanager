@@ -2,15 +2,6 @@
 
 Console *output* comes from tailing ``logs/latest.log`` (clean, no ANSI — what
 we display), rather than scraping the pty.
-
-The file is read in **binary** and decoded per chunk: mixing byte offsets from
-``stat()`` with text-mode ``seek``/``tell`` cookies happened to work for UTF-8
-but is not a supported use of ``TextIOWrapper``.
-
-Rotation is detected two ways — the file shrinking (truncated in place) *and*
-its identity changing (``st_ino``/``st_dev``, i.e. replaced by a new file). Size
-alone missed the case where the replacement is already larger than the old
-offset, which silently resumed mid-file.
 """
 
 from __future__ import annotations

@@ -47,7 +47,6 @@ const state = {
   files: { path: '.', entries: [], loading: false, error: null },
   editor: { path: null, original: '', size: 0 },
   editorFullscreen: false,
-  secrets: [],
   // File-explorer thresholds from /api/config (overwritten at boot).
   config: { editor_warn_bytes: 2_000_000, editor_max_bytes: 5_000_000, transfer_cap_bytes: 8_388_608 },
   transfers: new Map(),   // tid -> live transfer (for the bottom-right pills)
@@ -221,8 +220,7 @@ async function refreshHealth() {
 
 function onNodeEvent(frame, nodeId) {
   switch (frame.action) {
-    case 'console.output':
-    case 'log.line': {
+    case 'console.output': {
       const id = frame.instance_id;
       if (!id) break;
       pushConsole(id, frame.data?.line ?? '');
@@ -242,7 +240,7 @@ function onNodeEvent(frame, nodeId) {
       const detail = frame.data?.detail;
       pushConsole(id, detail ? `${st} — ${detail}` : st, 'sys');
       if (st === 'stopped' || st === 'crashed') pushConsole(id, '', 'sys');  // trailing gap
-      if (st === 'running') maybeLoadConsole(id);   // (#5) backfill once running
+      if (st === 'running') maybeLoadConsole(id);
       render();
       break;
     }
@@ -311,8 +309,8 @@ function pushConsole(instId, raw, kind) {
 async function loadConsoleHistory(inst) {
   if (!inst || state.consoleLoaded.has(inst.id)) return;
   if (!isOnline(inst)) return; // retry when the console is reopened online
-  // (#5) A stopped instance shows an empty console — don't replay the last run's
-  // log. Not marked loaded, so it backfills if/when it starts running.
+  // A stopped instance shows an empty console rather than replaying the last
+  // run's log. Not marked loaded, so it backfills if/when it starts running.
   if (runStateOf(inst) !== 'running') {
     if (!state.console.has(inst.id)) state.console.set(inst.id, []);
     return;
@@ -680,7 +678,6 @@ function renderInstance() {
   if (state.tab === 'console') renderConsole(inst, m, live);
   if (state.tab === 'files') renderFiles(inst, live);
   if (state.tab === 'version') renderVersion(inst, live);
-  if (state.tab === 'settings') renderSecrets(inst);
 }
 
 function renderConsole(inst, m, live) {
@@ -755,7 +752,6 @@ async function sendConsole() {
 function resetInstancePanes() {
   state.files = { path: '.', entries: [], loading: false, error: null };
   state.editor = { path: null, original: '', size: 0 };
-  state.secrets = [];
   state.version = {
     instId: null, loading: false, error: null,
     software: null, label: '', hasBuilds: false,
@@ -775,7 +771,7 @@ function loadTab() {
   if (state.tab === 'console') loadConsoleHistory(inst);
   if (state.tab === 'files' && !state.files.entries.length && !state.files.loading) loadFiles(state.files.path);
   if (state.tab === 'version' && state.version.instId !== inst.id) loadVersion(inst);
-  if (state.tab === 'settings') { fillSettings(inst); loadSecrets(inst); }
+  if (state.tab === 'settings') fillSettings(inst);
 }
 
 async function loadFiles(path) {
@@ -818,7 +814,7 @@ function renderFiles(inst, live) {
   $('files-upload').disabled = !live;
   $('files-download').disabled = !live;
 
-  // #1 fullscreen editor — pure class toggle, so file/editor state is untouched.
+  // Pure class toggle, so file/editor state is untouched.
   document.querySelector('.files-wrap')?.classList.toggle('editor-fullscreen', state.editorFullscreen);
   $('editor-fullscreen').title = state.editorFullscreen ? 'Exit fullscreen' : 'Toggle fullscreen editor';
 
@@ -843,9 +839,9 @@ function renderFiles(inst, live) {
       const attrs = {
         title: f.path,
         onclick: () => (f.is_dir ? loadFiles(f.path) : openFile(f)),
-        oncontextmenu: (ev) => showContextMenu(ev, f),   // #8 acts on this item
+        oncontextmenu: (ev) => showContextMenu(ev, f),
       };
-      if (f.is_dir) {   // #2A drop files onto a folder to upload into it
+      if (f.is_dir) {   // drop files onto a folder to upload into it
         attrs.ondragover = (ev) => { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.add('drop-hi'); };
         attrs.ondragleave = (ev) => ev.currentTarget.classList.remove('drop-hi');
         attrs.ondrop = (ev) => { ev.stopPropagation(); ev.currentTarget.classList.remove('drop-hi'); handleDrop(ev, f.path); };
@@ -881,10 +877,10 @@ async function openFile(entry) {
   const inst = curInst();
   if (!inst) return;
 
-  // #5 Binary guard by extension — never even try to open these as text.
+  // Binary guard by extension — never even try to open these as text.
   if (isBinaryName(entry.name)) return binaryNotice(entry);
 
-  // #4 Large-file guard, using configurable thresholds from the hub.
+  // Large-file guard, using configurable thresholds from the hub.
   const { editor_warn_bytes: warn, editor_max_bytes: max } = state.config;
   if (entry.size > max) {
     const ok = await confirmDialog({
@@ -908,7 +904,7 @@ async function openFile(entry) {
   try {
     const res = await api.readFile(inst.id, entry.path);
     if (state.sel.instId !== inst.id) return;
-    // #5 Server-side content detection (NUL bytes) — belt and suspenders.
+    // Server-side content detection (NUL bytes) — belt and suspenders.
     if (res.binary) return binaryNotice(entry);
     state.editor = { path: entry.path, original: res.content ?? '', size: entry.size };
     $('editor-area').value = state.editor.original;
@@ -1089,7 +1085,7 @@ async function uploadFiles(items, destPath) {
   }
   if (ok) toast(`Uploaded ${ok} file${ok === 1 ? '' : 's'}`, 'ok');
   if (failed) toast(`${failed} file(s) failed to upload.`, 'error');
-  if (ok || failed) loadFiles(state.files.path);    // #9 auto-refresh (streamed ones refresh on finish)
+  if (ok || failed) loadFiles(state.files.path);   // streamed ones refresh on finish
 }
 
 /* --- files: streaming transfers + progress pills ------------------------- */
@@ -1430,69 +1426,6 @@ function fillSettings(inst) {
   $('set-jar').value = inst.jar_path || '';
   $('set-java').value = inst.java_home || '';
   $('set-auto').classList.toggle('on', !!inst.auto_restart);
-}
-
-async function loadSecrets(inst) {
-  try {
-    const res = await api.listSecrets(inst.id);
-    if (state.sel.instId !== inst.id) return;
-    state.secrets = res.keys || [];
-  } catch (err) {
-    state.secrets = [];
-    toast(describe(err), 'error');
-  }
-  if (state.tab === 'settings') renderSecrets(inst);
-}
-
-function renderSecrets(inst) {
-  const known = inst.type === 'velocity' ? ['forwarding_secret'] : [];
-  const keys = [...new Set([...known, ...state.secrets])];
-  const list = clear($('secrets-list'));
-
-  for (const key of keys) {
-    const isSet = state.secrets.includes(key);
-    list.append(el('div.secret-row', {},
-      el('span.secret-key', { text: key }),
-      isSet
-        ? el('span.secret-mask', {}, '••••••••••••')
-        : null,
-      isSet
-        ? el('span.badge-set', {}, 'SET')
-        : el('span.pill', {}, 'NOT SET'),
-      el('span.spacer'),
-      el('button.btn.btn-sm', {
-        onclick: () => setSecret(inst, key),
-      }, isSet ? 'Overwrite' : 'Set')));
-  }
-  list.append(el('div.secret-row', {},
-    el('span', { style: 'font-size:12px;color:var(--dim-2)' }, 'Add another key'),
-    el('span.spacer'),
-    el('button.btn.btn-sm', { onclick: () => setSecret(inst, null) }, '+ New secret')));
-}
-
-async function setSecret(inst, key) {
-  const values = await dialog({
-    title: key ? `Set ${key}` : 'New secret',
-    description: 'Stored encrypted at rest. The value is never returned by the API — you can only overwrite it later.',
-    fields: [
-      ...(key ? [] : [{ name: 'key', label: 'Key', placeholder: 'forwarding_secret', mono: true }]),
-      { name: 'value', label: 'Value', type: 'password', mono: true },
-    ],
-    confirmText: 'Save secret',
-  });
-  if (!values) return;
-  const finalKey = (key || values.key || '').trim();
-  if (!finalKey || !values.value) {
-    toast('A key and a value are both required.', 'error');
-    return;
-  }
-  try {
-    await api.setSecret(inst.id, finalKey, values.value);
-    toast(`${finalKey} saved`, 'ok');
-    loadSecrets(inst);
-  } catch (err) {
-    toast(describe(err), 'error');
-  }
 }
 
 async function saveInstance() {

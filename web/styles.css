@@ -166,7 +166,6 @@ select.input option { background: var(--panel); color: var(--fg); }
   border: 2px solid var(--warn); border-top-color: transparent;
   animation: mm-spin .8s linear infinite;
 }
-@keyframes mm-spin { to { transform: rotate(360deg); } }
 
 .toggle {
   width: 40px; height: 22px; border-radius: 11px; flex: none;
@@ -220,12 +219,6 @@ select.input option { background: var(--panel); color: var(--fg); }
 }
 .hub-health .sep { color: var(--dim-2); }
 .divider-v { width: 1px; height: 22px; background: var(--line-2); }
-.avatar {
-  width: 30px; height: 30px; border-radius: 4px;
-  background: var(--btn); border: 1px solid var(--line-2);
-  display: grid; place-items: center;
-  font-family: var(--mono); font-size: 11px; color: var(--fg-2);
-}
 
 .body { flex: 1; display: flex; min-height: 0; }
 
@@ -558,7 +551,7 @@ select.input option { background: var(--panel); color: var(--fg); }
 .files-list.drop-hi { outline: 1.5px dashed var(--mm-accent); outline-offset: -3px; border-radius: 4px; }
 .file-row.dir.drop-hi { background: color-mix(in srgb, var(--mm-accent) 18%, transparent); outline: 1px dashed var(--mm-accent); }
 
-/* #1 fullscreen editor: hide the file list, editor covers the whole workspace */
+/* fullscreen editor: hide the file list, editor covers the whole workspace */
 .files-wrap.editor-fullscreen { padding: 0; }
 .files-wrap.editor-fullscreen .files-pane { display: none; }
 .files-wrap.editor-fullscreen .editor-pane {
@@ -566,7 +559,7 @@ select.input option { background: var(--panel); color: var(--fg); }
   position: fixed; inset: 0; z-index: 40; border-radius: 0; border: none;
 }
 
-/* #8 right-click context menu */
+/* right-click context menu */
 .ctx-menu {
   position: fixed; z-index: 200; min-width: 168px; padding: 5px;
   background: var(--panel); border: 1px solid var(--line-2); border-radius: 7px;
@@ -637,19 +630,6 @@ select.input option { background: var(--panel); color: var(--fg); }
 .switch-row .t { font-size: 13px; font-weight: 500; }
 .switch-row .d { font-size: 11.5px; color: var(--muted); }
 .hint-inline { color: var(--dim-2); font-weight: 400; }
-
-.secret-row {
-  display: flex; align-items: center; gap: 12px;
-  padding: 13px 16px; border-bottom: 1px solid var(--line-3);
-}
-.secret-row:last-child { border-bottom: none; }
-.secret-key { font-family: var(--mono); font-size: 12.5px; color: var(--fg); }
-.secret-mask { font-family: var(--mono); font-size: 13px; color: var(--dim-2); letter-spacing: .15em; }
-.badge-set {
-  font-family: var(--mono); font-size: 9.5px; letter-spacing: .08em;
-  color: var(--ok); border: 1px solid #47d18a44; background: #47d18a14;
-  padding: 2px 7px; border-radius: 3px;
-}
 
 /* --- toasts & modals ----------------------------------------------------- */
 /* Large-file transfer pills (bottom-right, above toasts) */
@@ -727,12 +707,6 @@ select.input option { background: var(--panel); color: var(--fg); }
 .modal-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
 .modal-foot {
   padding: 0 18px 16px; display: flex; justify-content: flex-end; gap: 8px;
-}
-
-.spinner {
-  width: 12px; height: 12px; flex: none;
-  border: 2px solid var(--line-2); border-top-color: var(--mm-accent);
-  border-radius: 50%; animation: mm-spin .7s linear infinite;
 }
 
 @media (max-width: 1100px) {

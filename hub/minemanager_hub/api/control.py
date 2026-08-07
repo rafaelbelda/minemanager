@@ -1,5 +1,5 @@
-"""Control-plane routes: proxy power/console/file commands to the owning agent,
-manage per-instance secrets, and stream a node's live events to the UI.
+"""Control-plane routes: proxy power/console/file commands to the owning agent
+and stream a node's live events to the UI.
 
 Each command looks up the instance's node, finds its live agent connection, and
 forwards the command over the WebSocket, awaiting the correlated response.
@@ -20,12 +20,10 @@ from minemanager_hub.api.schemas import (
     FileRename,
     FileUpload,
     FileWrite,
-    SecretSet,
 )
 from minemanager_hub.config import get_settings
-from minemanager_hub.db.models import Instance, Secret
+from minemanager_hub.db.models import Instance
 from minemanager_hub.db.session import session_scope
-from minemanager_hub.security import vault
 from minemanager_shared.protocol import Action, InstanceSpec
 
 router = APIRouter(prefix="/api", tags=["control"])
@@ -87,9 +85,8 @@ async def _proxy(instance_id: str, action: str, data: dict | None = None) -> dic
 # --- Batch run-state (fast initial load) -----------------------------------
 @router.get("/nodes/{node_id}/instance-states")
 async def node_instance_states(node_id: str) -> dict:
-    """Real run-state for all of a node's instances, straight from the agent's
-    tmux view. Lets the UI show stopped/running immediately on load instead of
-    waiting for the first heartbeat. Offline node → empty (UI keeps 'unknown')."""
+    """Real run-state for a node's instances, so the UI need not wait for the
+    first heartbeat. Best-effort: an unreachable agent yields no states."""
     conn = registry.get(node_id)
     if conn is None:
         return {"states": {}}
@@ -118,11 +115,9 @@ async def power(instance_id: str, op: str) -> dict:
 
     result = await _proxy(instance_id, action.value)
 
-    # Record desired state for start/stop, but only once the agent has actually
-    # accepted the command — writing it first left the DB claiming "should be
-    # running" after a 409 (agent offline), 502 or 504.
-    # NOTE (v1 gap): the hub does not yet push desired state back to an agent on
-    # reconnect, so this is bookkeeping for the UI, not reconciliation. See PLAN.md.
+    # Recorded only after the agent accepts, so a failed command cannot leave the
+    # DB claiming "should be running". Not yet pushed back on reconnect, so this
+    # is bookkeeping for the UI rather than reconciliation.
     if op in ("start", "stop"):
         with session_scope() as db:
             inst = db.get(Instance, instance_id)
@@ -221,63 +216,15 @@ async def files_extract(instance_id: str, body: FileExtract) -> dict:
     )
 
 
-# --- Secrets ---------------------------------------------------------------
-@router.put("/instances/{instance_id}/secrets", status_code=204)
-def set_secret(instance_id: str, body: SecretSet) -> None:
-    """Store/replace an encrypted secret for this instance. Write-only via API."""
-    with session_scope() as db:
-        if db.get(Instance, instance_id) is None:
-            raise HTTPException(404, "instance not found")
-        existing = (
-            db.query(Secret)
-            .filter(
-                Secret.scope == "instance",
-                Secret.scope_id == instance_id,
-                Secret.key == body.key,
-            )
-            .one_or_none()
-        )
-        ciphertext = vault.encrypt(body.value)
-        if existing is None:
-            db.add(
-                Secret(
-                    scope="instance",
-                    scope_id=instance_id,
-                    key=body.key,
-                    ciphertext=ciphertext,
-                )
-            )
-        else:
-            existing.ciphertext = ciphertext
-
-
-@router.get("/instances/{instance_id}/secrets")
-def list_secret_keys(instance_id: str) -> dict:
-    """List which secret keys are set — never returns plaintext values."""
-    with session_scope() as db:
-        rows = (
-            db.query(Secret)
-            .filter(Secret.scope == "instance", Secret.scope_id == instance_id)
-            .all()
-        )
-        return {"keys": [r.key for r in rows]}
-
-
 # --- Live event stream (UI) ------------------------------------------------
 @router.websocket("/nodes/{node_id}/events")
 async def node_events(ws: WebSocket, node_id: str) -> None:
-    """Forward a node's live agent events (console/log/state) to a UI client.
-
-    The client receives every event for the node (each carries ``instance_id``,
-    so the UI filters client-side). We race the event stream against a receive
-    so a client disconnect is noticed promptly even when no events are flowing,
-    and the subscription is always torn down.
-    """
+    """Forward a node's live agent events (console/state) to a UI client."""
     await ws.accept()
     stream = registry.stream(node_id)
 
     async def _watch_disconnect() -> None:
-        # The UI isn't expected to send anything; this returns on disconnect.
+        # The UI never sends; this returns only on disconnect.
         try:
             while True:
                 await ws.receive_text()
@@ -300,4 +247,4 @@ async def node_events(ws: WebSocket, node_id: str) -> None:
         pass
     finally:
         watcher.cancel()
-        await stream.aclose()  # runs the subscription's cleanup deterministically
+        await stream.aclose()

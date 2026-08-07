@@ -94,7 +94,6 @@ async function request(method, path, body) {
 const get = (p) => request('GET', p);
 const post = (p, b) => request('POST', p, b);
 const patch = (p, b) => request('PATCH', p, b);
-const put = (p, b) => request('PUT', p, b);
 const del = (p) => request('DELETE', p);
 
 const q = encodeURIComponent;
@@ -144,10 +143,6 @@ export const api = {
     `${base}/api/instances/${id}/files/download-stream?path=${q(path)}&tid=${tid}`,
   transferStatus: (tid) => get(`/api/transfers/${tid}`),
   cancelTransfer: (tid) => post(`/api/transfers/${tid}/cancel`),
-
-  // Secrets (write-only values)
-  listSecrets: (id) => get(`/api/instances/${id}/secrets`),
-  setSecret: (id, key, value) => put(`/api/instances/${id}/secrets`, { key, value }),
 
   // Version / build updater (catalog from the hub; install runs on the agent)
   listSoftwareVersions: (software) => get(`/api/providers/${q(software)}/versions`),

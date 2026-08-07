@@ -8,9 +8,8 @@ Under systemd this is the ExecStart target — the only daemon on the node.
 
 On SIGTERM/SIGINT (systemctl stop, restart, or a system reboot) the agent
 gracefully stops every running server — console stop, wait for a clean world
-save (bounded) — then tears down its tmux server and exits. Stopping the agent
-always stops its servers: simpler and more predictable than trying to keep them
-running across the agent's own lifecycle.
+save (bounded), then tears down its tmux server and exits. Stopping the agent
+always stops its servers
 """
 
 from __future__ import annotations
@@ -24,12 +23,9 @@ import socket
 from minemanager_agent import tmux
 from minemanager_agent.config import AgentConfig
 from minemanager_agent.connection import Connection
+from minemanager_agent.supervisor import SHUTDOWN_GRACE_S
 
 log = logging.getLogger("minemanager.agent")
-
-# Generous but bounded window for worlds to save on shutdown (well under the
-# unit's TimeoutStopSec). Sessions are stopped concurrently.
-from minemanager_agent.supervisor import SHUTDOWN_GRACE_S as _SHUTDOWN_GRACE_S
 
 
 def _configure_logging() -> None:
@@ -39,26 +35,19 @@ def _configure_logging() -> None:
     )
 
 
-async def _warn_about_orphans(prefix: str) -> None:
-    """Sanity check: live sessions on our socket that our prefix will not match.
-
-    ``pin_runtime_identity`` is what actually *prevents* a mid-flight prefix or
-    socket change from orphaning servers. This stays as a backstop, because a
-    session can end up unmatched by routes it does not cover — a hand-started
-    ``tmux -L minemanager`` session, or a ``runtime.json`` that was deleted or
-    edited by hand.
-    """
+async def _warn_about_orphans() -> None:
+    """Report sessions on our socket that this agent will not manage — i.e. ones
+    started by hand rather than through the hub."""
     try:
         names = await tmux.list_all_sessions()
     except Exception:  # noqa: BLE001 - never block startup on a diagnostic
         return
-    orphans = [n for n in names if not n.startswith(prefix + "-")]
+    orphans = [n for n in names if not n.startswith(tmux.SESSION_PREFIX + "-")]
     if orphans:
         log.warning(
-            "%d tmux session(s) on socket '%r' do not match session prefix '%r' and will NOT be "
-            "managed or stopped by this agent: '%s' - check MM_SESSION_PREFIX/MM_TMUX_SOCKET, or "
-            "stop them with: tmux -L '%s' kill-session -t <name>",
-            len(orphans), tmux.socket_name(), prefix, ", ".join(orphans), tmux.socket_name(),
+            "%d tmux session(s) on socket %r do not match the %r prefix and will NOT be managed "
+            "or stopped by this agent: %s - stop them with: tmux -L %s kill-session -t <name>",
+            len(orphans), tmux.SOCKET, tmux.SESSION_PREFIX, ", ".join(orphans), tmux.SOCKET,
         )
 
 
@@ -66,11 +55,8 @@ async def _amain() -> None:
     config = AgentConfig()
     config.ensure_dirs()
     config.check_transport_security()   # exits on plaintext to a remote hub
-    # Pin prefix/socket before the supervisor is built from them, so an edited
-    # env var cannot detach this agent from servers it is already supervising.
-    await config.pin_runtime_identity()
     config.log_resolved()
-    await _warn_about_orphans(config.session_prefix)
+    await _warn_about_orphans()
     conn = Connection(config, hostname=socket.gethostname())
 
     stop = asyncio.Event()
@@ -88,7 +74,7 @@ async def _amain() -> None:
     # Always stop servers gracefully — including when `serve` died on its own
     # (a crashed connection loop must never leave worlds running unsupervised).
     try:
-        n = await conn.supervisor.shutdown_all(graceful_s=_SHUTDOWN_GRACE_S)
+        n = await conn.supervisor.shutdown_all(graceful_s=SHUTDOWN_GRACE_S)
         log.info("agent stopping — gracefully stopped %d server(s)", n)
     except Exception:
         log.exception("graceful shutdown failed; servers may still be running")

@@ -73,16 +73,7 @@ if [ "$DO_HUB" = 1 ]; then
     note "$ETC/hub.env exists, left alone"
   else
     run install -o root -g "$HUB_USER" -m 0640 "$REPO/deploy/hub.env.example" "$ETC/hub.env"
-    # Mint the vault key now so the operator never has to, and never has to
-    # change it later (changing it after secrets exist stops the hub booting).
-    if [ "$DRY" = 1 ]; then
-      echo "  + generate MM_SECRET_KEY into $ETC/hub.env"
-    else
-      KEY=$("$VENV/bin/python" -c \
-        'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())')
-      sed -i "s|^MM_SECRET_KEY=.*|MM_SECRET_KEY=$KEY|" "$ETC/hub.env"
-    fi
-    note "wrote $ETC/hub.env with a freshly generated vault key"
+    note "wrote $ETC/hub.env"
   fi
   run install -m 0644 "$REPO/deploy/minemanager-hub.service" /etc/systemd/system/
 fi

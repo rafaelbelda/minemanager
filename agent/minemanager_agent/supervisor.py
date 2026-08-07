@@ -1,16 +1,14 @@
-"""Process supervisor: the agent owns each server's lifecycle (Model B).
+"""Process supervisor: the agent owns each server's lifecycle.
 
-Each instance runs in its own tmux session. The supervisor starts/stops them,
-streams console output by tailing ``logs/latest.log``, and — crucially — is the
-thing that keeps them running: it watches for vanished sessions and restarts
-crashed instances, with crash-loop protection so a broken server doesn't spin
-forever.
+Each instance runs in its own tmux session. The supervisor starts and stops them,
+streams console output by tailing ``logs/latest.log``, watches for vanished
+sessions, and restarts crashed instances under a crash-loop limit.
 
 systemd supervises the *agent*; the agent supervises the *servers*.
 
-Two things make a *failed* launch explain itself, which tailing the log alone
-cannot do (see :func:`tmux.pipe_pane`): the pane is mirrored to a file, and the
-tail of that file is replayed onto the console when an instance crashes.
+A failed launch explains itself through the mirrored tmux pane (see
+:func:`tmux.pipe_pane`), whose tail is replayed onto the console on a crash —
+tailing the log alone cannot show output written before the logger starts.
 """
 
 from __future__ import annotations
@@ -32,41 +30,30 @@ EmitFn = Callable[[Event], Awaitable[None]]
 # Console command that asks each software to shut down gracefully.
 _STOP_COMMAND = {"paper": "stop", "vanilla": "stop", "velocity": "end"}
 
-# Verb for a session whose instance type we no longer know (a session that
-# outlived the agent's map). "stop" is the right guess: the only supported
-# software it is wrong for is Velocity, and a proxy holds no world — falling
-# back to the kill path costs it nothing. The alternative, typing *both* verbs
-# at every console, put an unknown-command error in every Paper server's log.
+# Verb for a session whose instance type we no longer know. "stop" is wrong only
+# for Velocity, and a proxy holds no world, so falling back to the kill path
+# costs it nothing.
 _DEFAULT_STOP_VERB = "stop"
 
 # Crash-loop policy: if an instance crashes more than N times within WINDOW
 # seconds, stop auto-restarting it and surface a crashed state.
 _CRASH_LIMIT = 5
 _CRASH_WINDOW_S = 60.0
-# Stop budgets. These are one chain and must stay ordered:
-#
-#   _GRACEFUL_STOP_S   (45s)  one instance, stopped on request
-#   SHUTDOWN_GRACE_S  (120s)  one instance during agent shutdown; sessions are
-#                             stopped concurrently, so this is the whole budget
-#   TimeoutStopSec    (300s)  systemd's SIGKILL deadline (deploy unit)
-#
-# The unit uses KillMode=mixed: systemd signals only the agent, so the sequence
-# below is what actually stops worlds — but anything still alive at
-# TimeoutStopSec is SIGKILLed, which is what makes orphans impossible if the
-# agent hangs or dies. Keep SHUTDOWN_GRACE_S comfortably under TimeoutStopSec.
+# Stop budgets, one ordered chain. Keep SHUTDOWN_GRACE_S well under the unit's
+# TimeoutStopSec (300s) — that is systemd's SIGKILL deadline and the backstop if
+# the agent hangs. KillMode=mixed means systemd signals only the agent, so the
+# sequence below is what actually stops worlds.
 _GRACEFUL_STOP_S = 45.0
 SHUTDOWN_GRACE_S = 120.0
 
 # tmux reports success as soon as the *session* exists, which says nothing about
-# whether the command inside it survived. Re-check after this long before
-# claiming "running", so an instantly-dying JVM is reported as crashed instead
-# of being announced as running and contradicted seconds later by the monitor.
+# whether the command inside it survived. Re-check after this long so an
+# instantly-dying JVM is reported as crashed rather than running.
 _LAUNCH_SETTLE_S = 1.0
 
-# Raw pane mirror (see tmux.pipe_pane): how much of it to replay on a crash, and
-# the ceiling we keep the file under. It is a diagnostic ring buffer, not a log:
-# it duplicates console output for a healthy server, so it must stay bounded or
-# a long-lived instance would grow it without limit.
+# Raw pane mirror (see tmux.pipe_pane): how much to replay on a crash, and the
+# ceiling the file is kept under. It duplicates console output for a healthy
+# server, so it must stay bounded.
 _PTY_TAIL_LINES = 40
 _PTY_MAX_BYTES = 2 * 1024 * 1024
 _PTY_KEEP_BYTES = 512 * 1024
@@ -87,10 +74,8 @@ class ManagedInstance:
     desired_running: bool = False
     crash_times: list[float] = field(default_factory=list)
     tail_task: asyncio.Task | None = None
-    # Whether the current run's pane output has already been replayed. A failed
-    # launch is noticed twice — once by the settle check, then again by the
-    # monitor — and without this the same error is printed to the console twice
-    # per attempt. Reset by _launch, i.e. once per run.
+    # A failed launch is noticed twice (settle check, then monitor); this stops
+    # the same error printing twice. Reset by _launch, once per run.
     pty_replayed: bool = False
 
     @property
@@ -101,9 +86,8 @@ class ManagedInstance:
 def java_home_problem(java_home: str) -> str | None:
     """Why ``java_home`` is unusable, or None if it looks fine.
 
-    Checked before every launch: an instance pointed at a JDK that was moved or
-    uninstalled should say so once, not crash-loop five times with a shell
-    "command not found" as its only explanation.
+    Checked before every launch, so an instance pointed at a moved JDK says so
+    once instead of crash-looping with "command not found".
     """
     exe = Path(java_home) / "bin" / "java"
     if not exe.is_file():
@@ -114,13 +98,13 @@ def java_home_problem(java_home: str) -> str | None:
 
 
 def launch_command(spec: InstanceSpec) -> str:
-    """The start command as it is actually run, with the instance's JDK applied.
+    """The start command as actually run, with the instance's JDK applied.
 
-    Injecting JAVA_HOME/PATH rather than rewriting the command's ``java`` token
-    keeps the operator's command untouched and works for launches that never
-    name an interpreter — wrapper scripts, ``@argfile`` — because a child
-    process inherits the environment either way. Only the directory is quoted:
-    ``$PATH`` has to stay expandable by the shell tmux runs the command with.
+    Injecting JAVA_HOME/PATH rather than rewriting the ``java`` token leaves the
+    operator's command untouched and works for launches that never name an
+    interpreter (wrapper scripts, ``@argfile``), since the child inherits the
+    environment either way. Only the directory is quoted — ``$PATH`` must stay
+    expandable by the shell tmux runs the command with.
     """
     if not spec.java_home:
         return spec.start_command
@@ -129,8 +113,7 @@ def launch_command(spec: InstanceSpec) -> str:
 
 
 class Supervisor:
-    def __init__(self, session_prefix: str, emit: EmitFn, pty_dir: Path | None = None):
-        self._prefix = session_prefix
+    def __init__(self, emit: EmitFn, pty_dir: Path | None = None):
         self._emit = emit
         self._pty_dir = pty_dir
         self._instances: dict[str, ManagedInstance] = {}
@@ -143,7 +126,7 @@ class Supervisor:
 
     # -- lifecycle -----------------------------------------------------------
     def session_name(self, instance_id: str) -> str:
-        return f"{self._prefix}-{instance_id}"
+        return f"{tmux.SESSION_PREFIX}-{instance_id}"
 
     def _managed(self, spec: InstanceSpec) -> ManagedInstance:
         mi = self._instances.get(spec.id)
@@ -169,9 +152,8 @@ class Supervisor:
         if spec.id in self._updating:
             raise RuntimeError("cannot start: a server update is in progress")
         if await tmux.has_session(mi.session):
-            # Already up — most often because the agent (re)connected to a server
-            # it did not itself launch. Adopt it: report the *real* state and
-            # start tailing, rather than returning a stale default of "stopped".
+            # Already up, usually because the agent reconnected to a server it
+            # did not launch. Adopt it and report the real state.
             mi.desired_running = True
             await self._attach_pty_mirror(mi)  # no-op if one is already piped
             self._ensure_tail(mi)
@@ -193,9 +175,8 @@ class Supervisor:
             await self._set_state(mi, RunState.stopped, detail=f"failed to start: {exc}")
             raise RuntimeError(f"failed to start: {exc}") from exc
 
-        # Only now is it this instance's declared state to be running — setting it
-        # earlier would let the monitor race the settle window below and count the
-        # same launch as a crash twice.
+        # Set only now: any earlier and the monitor races the settle window below
+        # and counts the same launch as a crash twice.
         mi.desired_running = True
         mi.crash_times.clear()
         if not alive:
@@ -210,8 +191,7 @@ class Supervisor:
         was still alive after the settle window.
 
         Raises :class:`tmux.TmuxError` only when the session could not be created
-        at all — a command that starts and dies is a ``False`` return, not an
-        error, because tmux considers that a successful launch.
+        at all; a command that starts and then dies returns ``False``.
         """
         await asyncio.to_thread(self._reset_pty_log, mi)
         mi.pty_replayed = False
@@ -301,12 +281,8 @@ class Supervisor:
         mi.tail_task = asyncio.create_task(self._tail(mi))
 
     def _cancel_tail(self, mi: ManagedInstance) -> None:
-        """Stop following a log we no longer expect to grow.
-
-        Called from every path that ends a server (stop, kill, shutdown), so a
-        stopped instance does not leave a polling task behind for the life of
-        the agent.
-        """
+        """Stop following a log we no longer expect to grow. Called from every
+        path that ends a server, so no polling task outlives the instance."""
         if mi.tail_task and not mi.tail_task.done():
             mi.tail_task.cancel()
 
@@ -331,8 +307,8 @@ class Supervisor:
 
     def _reset_pty_log(self, mi: ManagedInstance) -> None:
         """Begin each run with an empty mirror, so a replay is never the previous
-        run's output. Truncates *in place*: the pipe's ``cat`` appends to an open
-        inode, so replacing the file would leave it writing to an unlinked one."""
+        run's output. Truncates *in place*: the pipe's ``cat`` holds the inode
+        open, so replacing the file would leave it writing to an unlinked one."""
         path = self._pty_path(mi)
         if path is None:
             return
@@ -344,8 +320,8 @@ class Supervisor:
             pass  # diagnostics are best-effort; never block a launch
 
     def _trim_pty_log(self, mi: ManagedInstance) -> None:
-        """Keep the mirror bounded. For a healthy server it duplicates console
-        output, so left alone it would grow for as long as the instance runs."""
+        """Keep the mirror bounded: it duplicates console output, so left alone
+        it grows for as long as the instance runs."""
         path = self._pty_path(mi)
         if path is None:
             return
@@ -376,22 +352,17 @@ class Supervisor:
         return [ln for ln in lines if ln.strip()][-_PTY_TAIL_LINES:]
 
     async def _attach_pty_mirror(self, mi: ManagedInstance) -> None:
-        """Mirror an *adopted* session (one this agent did not launch). Whatever
-        it printed before we got here is already gone, but a later crash still
-        gets explained. Fresh launches mirror from the start — see
-        :func:`tmux.new_session`."""
+        """Mirror an adopted session. Whatever it printed before we arrived is
+        gone, but a later crash still gets explained. Fresh launches mirror from
+        the start — see :func:`tmux.new_session`."""
         path = self._pty_path(mi)
         if path is not None:
             await tmux.pipe_pane(mi.session, str(path))
 
     async def _replay_pty(self, mi: ManagedInstance) -> None:
-        """Push the tail of the raw pane onto the console.
-
-        This is the output that never reached ``logs/latest.log`` — the JVM error
-        an instance actually died with, written before (or instead of) any
-        logging framework starting. Emitted *before* the crashed state so the
-        reason reads above the verdict.
-        """
+        """Push the tail of the raw pane onto the console: the output that never
+        reached ``logs/latest.log``. Emitted before the crashed state so the
+        reason reads above the verdict."""
         if mi.pty_replayed:
             return                  # already shown for this run
         lines = await asyncio.to_thread(self._read_pty_tail, mi)
@@ -427,9 +398,8 @@ class Supervisor:
         if not mi.desired_running:
             return
 
-        # Session gone while it was supposed to be running -> a crash. Replay the
-        # raw pane first: for anything that dies before its logger is up, this is
-        # the only place the reason exists.
+        # Gone while it was supposed to be running -> a crash. Replay the raw
+        # pane first: for a death before the logger is up, that is the only record.
         await self._replay_pty(mi)
         now = time.monotonic()
         mi.crash_times = [t for t in mi.crash_times if now - t < _CRASH_WINDOW_S]
@@ -470,21 +440,20 @@ class Supervisor:
     async def shutdown_all(self, graceful_s: float = SHUTDOWN_GRACE_S) -> int:
         """Stop every live managed server cleanly, then tear down our tmux server.
 
-        Covers all ``<prefix>-*`` sessions, including any this agent did not
-        start itself. Sessions are stopped concurrently, so ``graceful_s`` is the
-        budget for the whole operation, not per server. Returns the number found.
+        Covers all ``<SESSION_PREFIX>-*`` sessions, including any this agent did
+        not start itself. Sessions are stopped concurrently, so ``graceful_s`` is
+        the budget for the whole operation, not per server. Returns how many.
         """
-        # Freeze the restart policy *before* anything stops. The monitor task is
-        # still running at this point (the connection owns it and is cancelled
-        # only after we return), and a session exiting cleanly is indistinguishable
-        # from a crash — without this it would relaunch servers mid-shutdown and
-        # kill_server() would then tear the fresh ones down ungracefully.
+        # Freeze the restart policy *before* anything stops. The monitor is still
+        # running, and a clean exit is indistinguishable from a crash — without
+        # this it relaunches servers mid-shutdown and kill_server() then tears the
+        # fresh ones down ungracefully.
         self._shutting_down = True
         for mi in self._instances.values():
             mi.desired_running = False
             self._cancel_tail(mi)
 
-        names = await tmux.list_sessions(self._prefix)
+        names = await tmux.list_sessions()
         await asyncio.gather(
             *(self._stop_session(n, self._verb_for_session(n), graceful_s) for n in names),
             return_exceptions=True,
@@ -502,10 +471,9 @@ class Supervisor:
     async def _stop_session(self, name: str, verb: str, graceful_s: float) -> bool:
         """Type ``verb`` at the console, wait for the session to end, else kill it.
 
-        The single stop primitive: both the per-instance ``stop`` and the
-        shutdown path go through here, so there is one wait loop and one
-        kill-on-timeout rule rather than two that could drift apart.
-        Returns True if the server exited on its own.
+        The single stop primitive — both per-instance ``stop`` and the shutdown
+        path go through here, so there is one wait loop and one kill-on-timeout
+        rule. Returns True if the server exited on its own.
         """
         try:
             await tmux.send_keys(name, verb)
@@ -520,9 +488,8 @@ class Supervisor:
         return False
 
     async def states_for(self, ids: list[str]) -> dict[str, str]:
-        """Report the real run-state for a set of instances, checking tmux for
-        anything not actively tracked (so a freshly-connected agent reports
-        stopped/running truthfully instead of unknown)."""
+        """Real run-state for a set of instances, checking tmux for anything not
+        actively tracked, so a freshly-connected agent answers truthfully."""
         transient = (RunState.starting, RunState.stopping, RunState.crashed)
         out: dict[str, str] = {}
         for iid in ids:

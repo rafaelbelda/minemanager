@@ -13,6 +13,7 @@ Flow per connection:
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -33,21 +34,8 @@ router = APIRouter()
 
 
 def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
-    """Return ``(node_id, issued_credential, error)``.
-
-    ``issued_credential`` is non-None only when an enrollment just succeeded.
-
-    Precedence: **a still-valid enrollment token wins over a stored credential.**
-    Presenting one is an explicit operator action (the node was just created or
-    re-minted), and it is the only way to recover a node whose stored credential
-    has gone stale. An *already-used* token falls through to the stored
-    credential, so a one-time token left behind in ``agent.env`` is harmless.
-
-    The agent sends everything it holds and lets this function arbitrate;
-    deciding it agent-side let a stale ``identity.json`` silently shadow
-    ``MM_ENROLL_TOKEN``, with no way to recover but deleting a file that no error
-    message ever named.
-    """
+    # Return ``(node_id, issued_credential, error)``.
+    # "issued_credential" is non-None only when an enrollment just succeeded.
     if hello.protocol.split(".")[0] != PROTOCOL_VERSION.split(".")[0]:
         return None, None, f"protocol mismatch: hub={PROTOCOL_VERSION} agent={hello.protocol}"
 
@@ -142,10 +130,9 @@ async def agent_endpoint(ws: WebSocket) -> None:
         pass
     finally:
         # Only tear down the registry entry if it is still *ours*. Half-open TCP
-        # is normal here (WireGuard, sleeping laptops, NAT): the agent can
-        # reconnect and register a replacement before this socket's disconnect is
-        # noticed, and unregistering unconditionally would evict the live
-        # connection and strand a healthy node as "offline".
+        # is normal here (WireGuard, sleeping laptops, NAT): a reconnect can
+        # register a replacement before this socket's disconnect is noticed, and
+        # unregistering unconditionally would strand a healthy node as offline.
         if registry.get(node_id) is conn:
             registry.unregister(node_id)
             _LAST_SEEN_WRITE.pop(node_id, None)
@@ -153,17 +140,14 @@ async def agent_endpoint(ws: WebSocket) -> None:
             conn.fail_all(ConnectionError("agent connection replaced by a newer one"))
 
 
-# last_seen is refreshed from the event stream, which carries one event *per
-# console line*. Writing (and committing) on every one turned a chatty server
-# into hundreds of serialized SQLite fsyncs per second on the event loop, so
-# only the first write in each window actually touches the DB.
+# last_seen is refreshed from the event stream, which carries one event per
+# console line. Committing on every one would put hundreds of serialized SQLite
+# fsyncs per second on the event loop, so only the first write per window lands.
 _LAST_SEEN_THROTTLE_S = 10.0
 _LAST_SEEN_WRITE: dict[str, float] = {}
 
 
 def _touch_last_seen(node_id: str, *, force: bool = False) -> None:
-    from datetime import datetime, timezone
-
     now = time.monotonic()
     if not force and now - _LAST_SEEN_WRITE.get(node_id, 0.0) < _LAST_SEEN_THROTTLE_S:
         return

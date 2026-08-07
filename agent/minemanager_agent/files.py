@@ -2,8 +2,7 @@
 
 Every path from the hub is treated as untrusted and resolved against the
 instance root; anything that escapes the root (via ``..`` or symlinks) is
-rejected. This is the agent-side enforcement of the "files jailed to node root"
-rule from the plan.
+rejected.
 """
 
 from __future__ import annotations
@@ -20,13 +19,12 @@ from pathlib import Path
 HIDDEN_DIR = ".minemanager"
 
 _BINARY_SNIFF_BYTES = 8192
-# Conservative in-memory guard so building a directory zip can't OOM the agent
-# even when a huge directory slips past the transfer cap on uncompressed size.
+# In-memory guard so building a directory zip cannot OOM the agent even when a
+# huge directory slips past the transfer cap on uncompressed size.
 _ZIP_UNCOMPRESSED_GUARD = 256 * 1024 * 1024
 
-# Fallbacks used when the hub does not supply its configured limit. Defined here
-# so the agent and the hub's MM_EDITOR_MAX_BYTES / MM_TRANSFER_CAP_BYTES defaults
-# are not two independent magic numbers that can silently drift apart.
+# Used only when the hub does not supply its configured limit. Must track the
+# hub's MM_EDITOR_MAX_BYTES / MM_TRANSFER_CAP_BYTES defaults.
 DEFAULT_EDITOR_MAX_BYTES = 5_000_000
 DEFAULT_TRANSFER_CAP_BYTES = 8 * 1024 * 1024
 
@@ -53,12 +51,11 @@ def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
     entries: list[dict] = []
     for child in sorted(target.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         if child.name == HIDDEN_DIR:
-            continue  # hide our private scratch dir from the explorer
-        # Broken links  list as 0-byte entries.
+            continue
         try:
-            st = child.lstat()
+            st = child.lstat()      # broken links list as 0-byte entries
         except OSError:
-            continue  # vanished between iterdir() and here — skip it
+            continue                # vanished between iterdir() and here
         entries.append(
             {
                 "name": child.name,
@@ -71,23 +68,9 @@ def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
     return entries
 
 
-def read_file(root: str | Path, rel: str, max_bytes: int = DEFAULT_EDITOR_MAX_BYTES) -> str:
-    target = _resolve_within(root, rel)
-    if not target.is_file():
-        raise FileNotFoundError(rel)
-    if target.stat().st_size > max_bytes:
-        raise ValueError(f"file too large to read inline (> {max_bytes} bytes)")
-    return target.read_text(encoding="utf-8", errors="replace")
-
-
 def read_for_editor(root: str | Path, rel: str, max_bytes: int = DEFAULT_EDITOR_MAX_BYTES) -> dict:
-    """Read a file for the text editor, refusing binary content.
-
-    Binary is detected by a NUL byte in the first chunk (the standard heuristic).
-    Binary files return ``{"binary": True}`` with no content — they must not be
-    shown as text, only downloaded. Oversized text files are refused so the
-    editor never has to load a huge file into the browser.
-    """
+    """Read a file for the text editor. Binary content (detected by a NUL byte in
+    the first chunk) returns ``{"binary": True}`` and is download-only."""
     target = _resolve_within(root, rel)
     if not target.is_file():
         raise FileNotFoundError(rel)
@@ -107,13 +90,8 @@ def read_for_editor(root: str | Path, rel: str, max_bytes: int = DEFAULT_EDITOR_
 
 
 def fetch(root: str | Path, rel: str, cap: int) -> dict:
-    """Return a file's bytes (base64), or a directory zipped (base64).
-
-    Bounded by ``cap`` so a normal-sized download stays within the WS frame /
-    memory budget; larger transfers are the streaming path (separate feature).
-    Symlinks are skipped when zipping a directory (avoids escaping the jail and
-    symlink loops).
-    """
+    """Return a file's bytes as base64, or a directory zipped. Anything over
+    ``cap`` must use the streaming transfer path instead."""
     target = _resolve_within(root, rel)
     if target.is_dir():
         buf = io.BytesIO()
@@ -214,9 +192,3 @@ def delete(root: str | Path, rel: str, recursive: bool = False) -> dict:
     else:
         target.unlink()
     return {"path": rel, "deleted": True}
-
-
-def mkdir(root: str | Path, rel: str) -> dict:
-    target = _resolve_within(root, rel)
-    target.mkdir(parents=True, exist_ok=True)
-    return {"path": rel, "created": True}

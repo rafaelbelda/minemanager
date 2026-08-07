@@ -19,15 +19,8 @@ from minemanager_shared.protocol import Action, InstanceSpec
 
 router = APIRouter(prefix="/api", tags=["versions"])
 
-# Must comfortably exceed the agent's *whole* update budget, 500 - 800 should be in range.
+# Must comfortably exceed the agent's *whole* update budget.
 UPDATE_TIMEOUT_S = 650.0
-
-
-# NOTE: there is deliberately no per-software default jar name any more. Falling
-# back to "paper.jar"/"server.jar" whenever the start command could not be parsed
-# meant the updater installed to a filename nothing ran — the server kept booting
-# its old binary while the hub recorded the new version. Resolution now lives in
-# ``minemanager_hub.serverjar`` and reports its confidence; unknown means refuse.
 
 
 def _provider_or_404(software: str):
@@ -35,8 +28,6 @@ def _provider_or_404(software: str):
     if provider is None:
         raise HTTPException(404, f"no version provider for software {software!r}")
     return provider
-
-
 
 
 # --- Catalog ---------------------------------------------------------------
@@ -82,10 +73,9 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
 
     Guardrails (stopped-check, backup, atomic replace, rollback) live on the
     agent, which owns the process and the files. The hub only resolves the
-    download and records the installed version on success.
-
-    Refuses up front when the server executable cannot be identified, rather than
-    installing to a guessed filename — see :mod:`minemanager_hub.serverjar`.
+    download and records the installed version on success. Refuses up front when
+    the server executable cannot be identified — see
+    :mod:`minemanager_hub.serverjar`.
     """
     with session_scope() as db:
         inst = db.get(Instance, instance_id)
@@ -93,8 +83,6 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
             raise HTTPException(404, "instance not found")
         software, node_id = inst.type, inst.node_id
         executable = serverjar.resolve(inst.start_command, inst.jar_path)
-        # The agent is stateless about instance config, so attach the spec (as
-        # every instance-scoped command does).
         spec = InstanceSpec(
             id=inst.id, type=inst.type, name=inst.name, root_dir=inst.root_dir,
             start_command=inst.start_command, java_home=inst.java_home,
@@ -117,9 +105,8 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
     payload = {
         "instance": spec,
         "jar_name": executable.path,
-        # Only an operator-supplied path may be created when absent; a parsed one
-        # must already exist, so a mis-parse fails loudly instead of installing a
-        # jar that nothing runs.
+        # Only an operator-supplied path may be created when absent, so a
+        # mis-parse fails loudly instead of installing a jar nothing runs.
         "allow_create": executable.allow_create,
         "download": {
             "url": download.url,
@@ -145,7 +132,7 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
     if not resp.ok:
         raise HTTPException(502, resp.error or "agent reported an update error")
 
-    # Success — record what we installed (placeholder until the Version Detector).
+    # Record what we installed; stands in until a real version detector lands.
     with session_scope() as db:
         inst = db.get(Instance, instance_id)
         if inst is not None:

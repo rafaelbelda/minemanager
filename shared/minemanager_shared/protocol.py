@@ -85,8 +85,6 @@ class Action(str, Enum):
 
     # Console ---------------------------------------------------------------
     console_send = "console.send"       # command: send a line to the console
-    console_subscribe = "console.subscribe"
-    console_unsubscribe = "console.unsubscribe"
 
     # Files (all jailed to the instance root on the agent side) -------------
     files_list = "files.list"
@@ -94,7 +92,6 @@ class Action(str, Enum):
     files_write = "files.write"
     files_delete = "files.delete"
     files_upload = "files.upload"
-    files_mkdir = "files.mkdir"
     files_fetch = "files.fetch"      # download a file's bytes, or a dir as a zip
     files_rename = "files.rename"
     files_extract = "files.extract"  # extract an archive into its directory
@@ -115,7 +112,6 @@ class Action(str, Enum):
 
     # ---- Event actions (agent -> hub, unsolicited) ------------------------
     ev_console_output = "console.output"
-    ev_log_line = "log.line"
     ev_state_changed = "state.changed"
     ev_heartbeat = "heartbeat"
 

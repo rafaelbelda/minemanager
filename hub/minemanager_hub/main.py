@@ -26,7 +26,7 @@ from minemanager_hub.api import agent_ws, control, nodes, transfers, versions
 from minemanager_hub.config import get_settings
 from minemanager_hub.db.session import init_db
 from minemanager_hub.providers.http import aclose as close_provider_http
-from minemanager_hub.security import vault, webguard
+from minemanager_hub.security import webguard
 
 log = logging.getLogger("minemanager.hub")
 
@@ -46,14 +46,12 @@ def _configure_logging() -> None:
 async def lifespan(_app: FastAPI):
     _configure_logging()
     settings = get_settings()
-    # State the resolved configuration
     log.info(
         "hub %s starting: data_dir=%s host=%s port=%s cors=%s",
         __version__, settings.data_dir, settings.host, settings.port,
         settings.cors_origins or "same-origin only",
     )
-    # Say exactly which requests will be accepted: a too-narrow MM_ALLOWED_HOSTS
-    # presents as a total outage, and there is no other clue why.
+    # A too-narrow MM_ALLOWED_HOSTS presents as a total outage with no other clue.
     log.info(
         "guards: allowed_hosts=%s docs=%s api_clients_without_origin=%s",
         "any (checks disabled)" if webguard.ANY_HOST in settings.allowed_hosts
@@ -72,7 +70,6 @@ async def lifespan(_app: FastAPI):
         )
 
     init_db()                                # logs the DB path + node count
-    vault.verify_existing_secrets_readable()  # exits if the key can't read them
     log.info("web: %s", _web_dir_status)
     yield
     await close_provider_http()
@@ -84,9 +81,8 @@ app = FastAPI(
     title="MineManager Hub",
     version=__version__,
     lifespan=lifespan,
-    # Interactive docs are opt-in (MM_ENABLE_DOCS=1). With no app-layer auth they
-    # publish a complete, accurate map of the attack surface to anyone who can
-    # reach the hub — including a page that got there via DNS rebinding (S-17).
+    # Opt-in (MM_ENABLE_DOCS=1): with no app-layer auth they publish a complete
+    # map of the attack surface to anyone who can reach the hub.
     docs_url="/docs" if _settings.enable_docs else None,
     redoc_url="/redoc" if _settings.enable_docs else None,
     openapi_url="/openapi.json" if _settings.enable_docs else None,
@@ -102,10 +98,8 @@ if _origins:
         allow_headers=["*"],
     )
 
-# Same-origin enforcement. Added after CORSMiddleware so it runs *outside* it:
-# a rejected cross-site request must not be handed CORS headers on the way out.
-# These are the only controls left once a hostile page is in the operator's
-# browser — CORS covers neither WebSockets nor bodyless POSTs. See webguard.
+# Added after CORSMiddleware so it runs *outside* it: a rejected cross-site
+# request must not be handed CORS headers on the way out.
 app.add_middleware(
     webguard.OriginGuard,
     extra_origins=set(_settings.cors_origins),
@@ -130,11 +124,9 @@ def health() -> dict:
 class _SpaStatic:
     """StaticFiles SPA fallback that refuses WebSocket scopes.
 
-    Mounted at ``/`` it is the catch-all for anything the routers didn't match.
-    Plain ``StaticFiles`` only handles HTTP and ``assert``s on a websocket scope,
-    turning a mistyped/misrouted WS path (e.g. an agent pointed at ``/ws`` instead
-    of ``/ws/agent``) into an opaque 500. Here we reject stray websockets cleanly
-    (close 1008) and serve the SPA for HTTP.
+    Mounted at ``/`` it catches anything the routers did not match. Plain
+    ``StaticFiles`` ``assert``s on a websocket scope, turning a misrouted WS path
+    (an agent pointed at ``/ws`` rather than ``/ws/agent``) into an opaque 500.
     """
 
     def __init__(self, directory) -> None:

@@ -10,15 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    Float,
-    ForeignKey,
-    String,
-    Text,
-    UniqueConstraint,
-)
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -100,45 +92,3 @@ class Instance(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     node: Mapped[Node] = relationship(back_populates="instances")
-
-
-class Secret(Base):
-    """Encrypted-at-rest secret (e.g. the Velocity forwarding secret).
-
-    The ciphertext is opaque; decryption needs the vault key from the
-    environment. Plaintext is never returned to the UI once set.
-    """
-
-    __tablename__ = "secrets"
-    # Both _lookup_secret and set_secret use .one_or_none(), so a duplicate row
-    # raises MultipleResultsFound — and because _lookup_secret runs inside
-    # _agent_and_spec, that breaks *every* command for the instance, permanently.
-    __table_args__ = (
-        UniqueConstraint("scope", "scope_id", "key", name="uq_secret_scope_key"),
-    )
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    # Owning scope: an instance id or node id.
-    scope: Mapped[str] = mapped_column(String(16), nullable=False)  # "instance" | "node"
-    scope_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    key: Mapped[str] = mapped_column(String(64), nullable=False)  # e.g. "forwarding_secret"
-
-    ciphertext: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_now, onupdate=_now
-    )
-
-
-class AuditLog(Base):
-    """Who did what, when — power actions, file writes, deletes."""
-
-    __tablename__ = "audit_log"
-
-    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    actor: Mapped[str] = mapped_column(String(128), default="")  # from Authelia header
-    action: Mapped[str] = mapped_column(String(64), nullable=False)
-    node_id: Mapped[str | None] = mapped_column(String(32), default=None)
-    instance_id: Mapped[str | None] = mapped_column(String(32), default=None)
-    detail: Mapped[str] = mapped_column(Text, default="")

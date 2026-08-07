@@ -22,7 +22,7 @@ def _spec(cmd: Command) -> InstanceSpec:
 
 
 async def _off(fn, *args):
-
+    """Run a blocking file operation off the event loop."""
     return await asyncio.to_thread(fn, *args)
 
 
@@ -81,10 +81,6 @@ async def _dispatch(cmd: Command, sup: Supervisor) -> Response:
             cmd.id,
             await _off(files.delete, root, cmd.data["path"], cmd.data.get("recursive", False)),
         )
-    if action == Action.files_mkdir.value:
-        root = _spec(cmd).root_dir
-        return Response.success(cmd.id, await _off(files.mkdir, root, cmd.data["path"]))
-
     if action == Action.files_fetch.value:
         root = _spec(cmd).root_dir
         cap = int(cmd.data.get("cap") or files.DEFAULT_TRANSFER_CAP_BYTES)

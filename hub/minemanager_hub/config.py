@@ -1,8 +1,8 @@
 """Hub configuration, driven by environment variables.
 
 The hub runs behind Authelia + WireGuard, so it does not configure its own user
-authentication here. What it *does* own is machine-to-machine trust (agent
-credentials) and secret encryption — hence the required ``MM_SECRET_KEY``.
+authentication here. What it *does* own is machine-to-machine trust: agent
+credentials, and the Host/Origin guards.
 """
 
 from __future__ import annotations
@@ -35,9 +35,8 @@ def _default_web_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "web"
 
 
-#: SQLite DB + generated key file. Matches the systemd unit and deploy docs; the
-#: old ``$HOME/.local/share`` default disagreed with both, and a hub pointed at a
-#: different directory silently opens an empty database.
+#: SQLite DB location. Matches the systemd unit; a hub pointed at a different
+#: directory silently opens an empty database.
 DEFAULT_DATA_DIR = Path("/var/lib/minemanager")
 
 
@@ -53,11 +52,6 @@ class Settings:
     web_dir: Path = field(default_factory=_default_web_dir)
     host: str = field(default_factory=lambda: os.environ.get("MM_HOST", "127.0.0.1"))
     port: int = field(default_factory=lambda: _env_int("MM_PORT", 8730))
-
-    # Secret-vault key. In production this comes from the environment (systemd
-    # EnvironmentFile / a secret manager), never from the DB. Dev falls back to
-    # a file under data_dir so local runs work without extra setup.
-    secret_key: str | None = field(default_factory=lambda: os.environ.get("MM_SECRET_KEY"))
 
     # How long an enrollment token is valid once minted (seconds).
     enrollment_ttl_s: int = field(
@@ -125,10 +119,6 @@ class Settings:
     @property
     def db_url(self) -> str:
         return f"sqlite:///{self.db_path}"
-
-    @property
-    def secret_key_file(self) -> Path:
-        return self.data_dir / "secret.key"
 
     def ensure_dirs(self) -> None:
         """Create the data dir, or exit saying exactly what to do about it."""

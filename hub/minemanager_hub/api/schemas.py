@@ -150,11 +150,6 @@ class FileExtract(BaseModel):
     overwrite: bool = False
 
 
-class SecretSet(BaseModel):
-    key: str = Field(..., examples=["forwarding_secret"])
-    value: str
-
-
 class UpdateRequest(BaseModel):
     version: str
     build: Optional[str] = None   # required only for software that has builds

@@ -22,9 +22,7 @@ from minemanager_agent.files import JailError, _resolve_within
 _MAX_CONFLICTS = 200
 
 # Ceiling on total *uncompressed* output. Uploads are capped around 8 MB, and a
-# well-formed archive that size expands to hundreds of GB — filling a node's disk
-# is worse than crashing it, because servers then cannot save chunks and the next
-# write can corrupt a world. Override with MM_MAX_EXTRACT_BYTES.
+# well-formed archive that size expands to hundreds of GB
 MAX_EXTRACT_BYTES = int(os.environ.get("MM_MAX_EXTRACT_BYTES", str(20 * 1024 * 1024 * 1024)))
 
 # Keep some room on the filesystem after extracting, so a large-but-legal archive
@@ -35,17 +33,11 @@ _FREE_SPACE_MARGIN = 512 * 1024 * 1024
 def _is_regular_zip_member(info: zipfile.ZipInfo) -> bool:
     """Reject anything that is not a plain file or directory.
 
-    ZIP stores the unix mode in the top 16 bits of ``external_attr``. Python's
-    ``zipfile`` happens not to materialise symlinks (``zf.open`` + copyfileobj
-    writes the *link target string* as file content), so this was safe by
-    accident. The tar path has always filtered explicitly; make the guarantee
-    explicit here too rather than resting on a library implementation detail.
+    Many writers store permission bits with no file-type field (Python's own
+    ``writestr`` stores 0o600) and DOS entries store nothing, so only reject when
+    a type *is* recorded and is neither file nor dir.
     """
     fmt = stat.S_IFMT(info.external_attr >> 16)
-    # Plenty of writers store permission bits with no file-type field at all
-    # (Python's own ``writestr`` stores 0o600), and DOS-created entries store
-    # nothing. Only reject when a type *is* recorded and it is not a file or dir —
-    # otherwise a legitimate archive would extract to nothing.
     if fmt == 0:
         return True
     return fmt in (stat.S_IFREG, stat.S_IFDIR)
@@ -87,10 +79,6 @@ def detect_format(name: str) -> str | None:
     return None
 
 
-def is_archive(name: str) -> bool:
-    return detect_format(name) is not None
-
-
 def _safe_target(root: str | Path, dest_rel: str, member: str) -> tuple[Path, str]:
     """Resolve an archive member to a jailed target path, rejecting traversal."""
     m = member.replace("\\", "/").lstrip("/")
@@ -102,9 +90,11 @@ def _safe_target(root: str | Path, dest_rel: str, member: str) -> tuple[Path, st
 
 
 def extract(root: str | Path, rel: str, overwrite: bool = False) -> dict:
-    """Extract ``rel`` into its own directory. Returns ``{"extracted": bool,
-    "conflicts": [...], "count": n}``; when conflicts exist and ``overwrite`` is
-    false, nothing is written and the conflicting paths are returned."""
+    """Extract ``rel`` into its own directory.
+
+    When conflicts exist and ``overwrite`` is false nothing is written and the
+    conflicting paths are returned instead.
+    """
     archive = _resolve_within(root, rel)
     if not archive.is_file():
         raise FileNotFoundError(rel)

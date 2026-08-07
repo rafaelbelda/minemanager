@@ -1,10 +1,7 @@
 """Persistent WebSocket connection to the hub, with handshake and reconnect.
 
 The agent dials out (agent -> hub) so only the hub needs a stable address on the
-WireGuard mesh. On connect it performs the :class:`Hello`/:class:`Welcome`
-handshake (enrollment token on first run, persisted credential thereafter),
-then pumps frames: commands go to the dispatcher, and the supervisor's events
-are written back up the socket.
+WireGuard mesh.
 """
 
 from __future__ import annotations
@@ -39,7 +36,7 @@ class Connection:
         self._send_lock = asyncio.Lock()
         self._inflight: set[asyncio.Task] = set()
         # The supervisor emits events through this connection.
-        self.supervisor = Supervisor(config.session_prefix, self._emit_event, config.pty_dir)
+        self.supervisor = Supervisor(self._emit_event, config.pty_dir)
 
     async def _emit_event(self, event: Event) -> None:
         ws = self._ws
@@ -81,11 +78,8 @@ class Connection:
         return resolved_id
 
     async def _heartbeat_loop(self) -> None:
-        """Periodically report liveness + instance states to the hub.
-
-        Keeps the hub's ``last_seen`` fresh even when an agent is idle (no
-        running servers, so no console/state events would otherwise flow).
-        """
+        # Periodically report liveness + instance states to the hub. 
+        # Keeps the hub's ``last_seen`` fresh even when an agent is idle.
         while True:
             await asyncio.sleep(self.config.heartbeat_s)
             try:

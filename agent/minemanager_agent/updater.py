@@ -1,18 +1,17 @@
 """Transactional server-binary updater.
 
-Replaces *only* the server jar, never worlds/plugins/mods/config/player data —
-those all live elsewhere in the instance root and are never touched. The swap is
-transactional:
+Replaces *only* the server jar; worlds, plugins, mods, config and player data
+live elsewhere in the instance root and are never touched. The swap is:
 
-  1. download the new jar to a temp file over https, bounded by time and size,
-     with a mandatory checksum verification (no checksum → no install),
+  1. download to a temp file over https, bounded by time and size, with a
+     mandatory checksum (no checksum → no install),
   2. back up the current jar,
-  3. atomically replace it (``os.replace`` on the same filesystem),
-  4. on any failure, leave the original in place (the atomic replace guarantees
-     it) and, defensively, restore from the backup if the jar went missing.
+  3. atomically replace it (``os.replace``, same filesystem),
+  4. on any failure the original stays in place, guaranteed by the atomic
+     replace.
 
-The download runs in a worker thread so it never blocks the agent's event loop.
-Uses only the stdlib — the agent keeps a minimal dependency surface.
+The download runs in a worker thread so it never blocks the event loop. Stdlib
+only — the agent keeps a minimal dependency surface.
 """
 
 from __future__ import annotations
@@ -28,7 +27,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from minemanager_agent.files import _resolve_within  # jailing helper (reused)
+from minemanager_agent.files import _resolve_within
 
 _UA = "minemanager-agent/0.1 (+https://github.com/rafaelbelda/minemanager)"
 
@@ -47,16 +46,8 @@ def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
               timeout: float, max_bytes: int) -> int:
     """Blocking streamed download with time + size guards and checksum verify.
 
-    Both guards **fail closed**. This file becomes the process the node executes,
-    so an unverifiable download is refused rather than installed:
-
-    * the URL must be ``https`` — ``urlopen`` also honours ``file://`` and
-      ``ftp://``, and providers are pluggable by design ("a new module + one
-      registry line"), so the scheme is pinned here rather than trusted;
-    * a checksum and a known algorithm must both be present. Previously
-      ``if hasher and expected`` silently skipped verification whenever either
-      was missing — a security control that opted itself out exactly when it had
-      nothing to check.
+    Fails closed: this file becomes the process the node executes, so an
+    unverifiable download is refused rather than installed.
     """
     scheme = urllib.parse.urlparse(url).scheme.lower()
     if scheme != "https":
@@ -115,22 +106,17 @@ async def apply_update(
     :class:`UpdateError`.
 
     ``allow_create`` permits installing to a path that does not exist yet, and is
-    set only when the operator named the jar explicitly. When the hub *parsed* the
-    name out of a start command, the file must already be present — a server that
-    is running this jar necessarily has it — so a missing target means the parse
-    was wrong, and installing anyway would leave the server booting its old binary
-    while the update reported success.
+    set only when the operator named the jar explicitly.
     """
     root_p = Path(root)
     if not root_p.is_dir():
         raise UpdateError(f"instance root does not exist: {root}")
 
-    jar_path = _resolve_within(root, jar_name)   # jailed: jar_name cannot escape root
+    jar_path = _resolve_within(root, jar_name)   # jailed to the instance root
     if not jar_path.exists() and not allow_create:
         raise UpdateError(
-            f"{jar_name!r} does not exist in the instance root, so it is not what this "
-            f"server runs. Refusing to create it: the update would look successful while "
-            f"the server kept booting its current binary. Set the instance's jar path to "
+            f"{jar_name!r} does not exist in the instance root, "
+            f"Refusing to create it. Set the instance's jar path to "
             f"the real executable and retry."
         )
     work = root_p / ".minemanager"
