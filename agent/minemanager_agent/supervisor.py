@@ -35,10 +35,24 @@ _STOP_COMMAND = {"paper": "stop", "vanilla": "stop", "velocity": "end"}
 # costs it nothing.
 _DEFAULT_STOP_VERB = "stop"
 
-# Crash-loop policy: if an instance crashes more than N times within WINDOW
-# seconds, stop auto-restarting it and surface a crashed state.
 _CRASH_LIMIT = 5
 _CRASH_WINDOW_S = 60.0
+
+# Failures *before* readiness are counted separately and much more tightly. A
+# window cannot catch them
+_LAUNCH_FAILURE_LIMIT = 3
+
+# A server is RUNNING once it says so. Until then it is STARTING, however long
+# tmux has had a session open. Paper/Vanilla print
+#   Done (4.115s)! For help, type "help"
+# and Velocity prints `Done (0.5s)!`.
+_READY_RE = re.compile(r"Done \(\d+[.,]?\d*s\)!")
+
+# Not every server announces readiness in a form we recognise (modded servers,
+# forks, a relocated log). Rather than leave those STARTING forever, assume a
+# still-alive instance is up after this long. Generous: a large world can take
+# minutes to load, and being late here is harmless.
+_STARTUP_GRACE_S = 300.0
 # Stop budgets, one ordered chain. Keep SHUTDOWN_GRACE_S well under the unit's
 # TimeoutStopSec (300s) — that is systemd's SIGKILL deadline and the backstop if
 # the agent hangs. KillMode=mixed means systemd signals only the agent, so the
@@ -50,6 +64,10 @@ SHUTDOWN_GRACE_S = 120.0
 # whether the command inside it survived. Re-check after this long so an
 # instantly-dying JVM is reported as crashed rather than running.
 _LAUNCH_SETTLE_S = 1.0
+
+# Grace for the log follower to pick up a stopped server's final lines before it
+# is cancelled. Must exceed logtail.follow's poll interval.
+_TAIL_DRAIN_S = 1.5
 
 # Raw pane mirror (see tmux.pipe_pane): how much to replay on a crash, and the
 # ceiling the file is kept under. It duplicates console output for a healthy
@@ -77,6 +95,13 @@ class ManagedInstance:
     # A failed launch is noticed twice (settle check, then monitor); this stops
     # the same error printing twice. Reset by _launch, once per run.
     pty_replayed: bool = False
+    # Whether the *current* run announced readiness, and when it was launched.
+    # Together these decide whether a vanished session was a runtime crash or a
+    # launch that never came up. Reset by _launch.
+    ready: bool = False
+    launched_at: float = 0.0
+    # Consecutive launches that died before readiness. Cleared once one gets up.
+    launch_failures: int = 0
 
     @property
     def log_path(self) -> Path:
@@ -153,8 +178,13 @@ class Supervisor:
             raise RuntimeError("cannot start: a server update is in progress")
         if await tmux.has_session(mi.session):
             # Already up, usually because the agent reconnected to a server it
-            # did not launch. Adopt it and report the real state.
+            # did not launch. Its readiness line is long gone from a log we were
+            # not tailing, but it has demonstrably come up — so treat it as
+            # ready, which also routes a later death down the crash path rather
+            # than the launch-failure one.
             mi.desired_running = True
+            mi.ready = True
+            mi.launch_failures = 0
             await self._attach_pty_mirror(mi)  # no-op if one is already piped
             self._ensure_tail(mi)
             if mi.state is not RunState.running:
@@ -179,11 +209,16 @@ class Supervisor:
         # and counts the same launch as a crash twice.
         mi.desired_running = True
         mi.crash_times.clear()
+        mi.launch_failures = 0
         if not alive:
+            # Not counted here: the monitor counts every run that ends without
+            # reaching readiness, and this session is already gone, so it will
+            # see this one on its next pass. One counting site, no double-count.
             await self._replay_pty(mi)
             await self._set_state(mi, RunState.crashed, detail="exited immediately after launch")
             return {"state": mi.state.value, "launch_failed": True}
-        await self._set_state(mi, RunState.running, detail=f"tmux session {mi.session} up")
+        # Deliberately still STARTING: the session existing says nothing about
+        # whether the server came up. _on_ready promotes it.
         return {"state": mi.state.value}
 
     async def _launch(self, mi: ManagedInstance) -> bool:
@@ -195,6 +230,8 @@ class Supervisor:
         """
         await asyncio.to_thread(self._reset_pty_log, mi)
         mi.pty_replayed = False
+        mi.ready = False
+        mi.launched_at = time.monotonic()
         path = self._pty_path(mi)
         await tmux.new_session(
             mi.session, mi.spec.root_dir, launch_command(mi.spec),
@@ -207,14 +244,18 @@ class Supervisor:
     async def stop(self, spec: InstanceSpec, *, graceful_s: float = _GRACEFUL_STOP_S) -> dict:
         mi = self._managed(spec)
         mi.desired_running = False
-        self._cancel_tail(mi)
         if not await tmux.has_session(mi.session):
+            self._cancel_tail(mi)
             await self._set_state(mi, RunState.stopped)
             return {"state": mi.state.value, "already_stopped": True}
 
         stop_cmd = _STOP_COMMAND.get(spec.type.value, _DEFAULT_STOP_VERB)
         await self._set_state(mi, RunState.stopping, detail=f"sending '{stop_cmd}', waiting for a clean save")
+        # Keep tailing until it is actually down: "Saving worlds" / "Closing
+        # Server" are written during this wait, and they are what tells the
+        # operator the stop was clean.
         graceful = await self._stop_session(mi.session, stop_cmd, graceful_s)
+        await self._drain_tail(mi)
         await self._set_state(
             mi, RunState.stopped,
             detail="stopped gracefully" if graceful else "killed after graceful timeout",
@@ -286,6 +327,12 @@ class Supervisor:
         if mi.tail_task and not mi.tail_task.done():
             mi.tail_task.cancel()
 
+    async def _drain_tail(self, mi: ManagedInstance) -> None:
+        # Let the tail catch the last lines, then stop it.
+
+        await asyncio.sleep(_TAIL_DRAIN_S)
+        self._cancel_tail(mi)
+
     async def _tail(self, mi: ManagedInstance) -> None:
         try:
             async for line in logtail.follow(mi.log_path):
@@ -296,8 +343,20 @@ class Supervisor:
                         data={"line": line, "source": "log"},
                     )
                 )
+                if not mi.ready and _READY_RE.search(line):
+                    await self._on_ready(mi, "reported ready")
         except asyncio.CancelledError:
             pass
+
+    async def _on_ready(self, mi: ManagedInstance, detail: str) -> None:
+        # Promote a starting instance to running, once per run.
+        if mi.ready:
+            return
+        mi.ready = True
+        mi.launch_failures = 0
+        await tmux.stop_pipe_pane(mi.session)
+        if mi.state is not RunState.running:
+            await self._set_state(mi, RunState.running, detail=detail)
 
     # -- raw pane mirror (the "why" behind a failed launch) ------------------
     def _pty_path(self, mi: ManagedInstance) -> Path | None:
@@ -393,27 +452,43 @@ class Supervisor:
             return  # never treat a mid-update instance as crashed
         alive = await tmux.has_session(mi.session)
         if alive:
+            if not mi.ready:
+                await self._check_startup_grace(mi)
             await asyncio.to_thread(self._trim_pty_log, mi)
             return
         if not mi.desired_running:
             return
 
-        # Gone while it was supposed to be running -> a crash. Replay the raw
-        # pane first: for a death before the logger is up, that is the only record.
+        # Gone while it was supposed to be running. Replay the raw pane first:
+        # for a death before the logger is up, that is the only record.
         await self._replay_pty(mi)
+        launched = mi.ready   # did *this* run ever come up?
         now = time.monotonic()
-        mi.crash_times = [t for t in mi.crash_times if now - t < _CRASH_WINDOW_S]
-        mi.crash_times.append(now)
+
+        if launched:
+            mi.crash_times = [t for t in mi.crash_times if now - t < _CRASH_WINDOW_S]
+            mi.crash_times.append(now)
+        else:
+            mi.launch_failures += 1
 
         if not mi.spec.auto_restart:
             mi.desired_running = False
             await self._set_state(mi, RunState.crashed, detail="exited (auto-restart off)")
             return
 
-        if len(mi.crash_times) > _CRASH_LIMIT:
+        if launched and len(mi.crash_times) > _CRASH_LIMIT:
             mi.desired_running = False
             await self._set_state(
                 mi, RunState.crashed, detail=f"crash-loop: >{_CRASH_LIMIT} in {_CRASH_WINDOW_S:.0f}s"
+            )
+            return
+
+        if not launched and mi.launch_failures >= _LAUNCH_FAILURE_LIMIT:
+            mi.desired_running = False
+            await self._set_state(
+                mi, RunState.crashed,
+                detail=f"failed to start {mi.launch_failures}x in a row without coming up — "
+                       f"not retrying. See the console output above for why.",
             )
             return
 
@@ -424,17 +499,33 @@ class Supervisor:
                 await self._set_state(mi, RunState.crashed, detail=problem)
                 return
 
-        await self._set_state(mi, RunState.crashed, detail="crashed; restarting")
+        await self._set_state(
+            mi, RunState.crashed,
+            detail="crashed; restarting" if launched else
+                   f"exited before coming up (attempt {mi.launch_failures}"
+                   f"/{_LAUNCH_FAILURE_LIMIT}); retrying",
+        )
         try:
             relaunched = await self._launch(mi)
         except tmux.TmuxError as exc:
             await self._set_state(mi, RunState.crashed, detail=f"restart failed: {exc}")
             return
         if not relaunched:
-            await self._replay_pty(mi)
+            await self._replay_pty(mi)   # counted on the next pass, as above
             await self._set_state(mi, RunState.crashed, detail="exited immediately after restart")
             return
-        await self._set_state(mi, RunState.running, detail="restarted after crash")
+        await self._set_state(mi, RunState.starting, detail="relaunched; waiting for it to come up")
+
+    async def _check_startup_grace(self, mi: ManagedInstance) -> None:
+        """Assume a still-alive instance is up once the grace period expires.
+
+        Covers software whose readiness line we do not recognise; without this
+        such an instance would sit in STARTING for its whole life.
+        """
+        if mi.launched_at and time.monotonic() - mi.launched_at >= _STARTUP_GRACE_S:
+            await self._on_ready(
+                mi, f"no readiness line in {_STARTUP_GRACE_S:.0f}s; assuming it is up"
+            )
 
     # -- graceful shutdown (agent stop / restart / system reboot) ------------
     async def shutdown_all(self, graceful_s: float = SHUTDOWN_GRACE_S) -> int:
@@ -489,20 +580,27 @@ class Supervisor:
 
     async def states_for(self, ids: list[str]) -> dict[str, str]:
         """Real run-state for a set of instances, checking tmux for anything not
-        actively tracked, so a freshly-connected agent answers truthfully."""
+        actively tracked, so a freshly-connected agent answers truthfully.
+
+        Queried concurrently: one ``has-session`` per instance, run serially,
+        made a page load wait on N subprocess spawns.
+        """
         transient = (RunState.starting, RunState.stopping, RunState.crashed)
-        out: dict[str, str] = {}
-        for iid in ids:
+
+        async def one(iid: str) -> str:
             if iid in self._updating:
-                out[iid] = RunState.updating.value
-                continue
+                return RunState.updating.value
             mi = self._instances.get(iid)
             if mi is not None and mi.state in transient:
-                out[iid] = mi.state.value            # trust tracked transient states
-            else:
-                alive = await tmux.has_session(self.session_name(iid))
-                out[iid] = RunState.running.value if alive else RunState.stopped.value
-        return out
+                return mi.state.value               # trust tracked transient states
+            if not await tmux.has_session(self.session_name(iid)):
+                return RunState.stopped.value
+            # A live session we are not tracking: it predates this agent, so we
+            # have no readiness signal for it and "up" is the honest answer.
+            return RunState.running.value
+
+        results = await asyncio.gather(*(one(iid) for iid in ids))
+        return dict(zip(ids, results))
 
     # -- introspection -------------------------------------------------------
     def states(self) -> dict[str, RunState]:

@@ -100,22 +100,22 @@ async def new_session(name: str, workdir: str, command: str, mirror_path: str | 
 
 
 async def pipe_pane(name: str, path: str) -> bool:
-    """Mirror everything the session's pane prints into ``path``.
+    # Mirror everything the session's pane prints into ``path``.
 
-    The only way to keep output written before (or instead of)
-    ``logs/latest.log`` — an ``UnsupportedClassVersionError``, a port already in
-    use, a bad ``-Xmx``. When the command exits tmux destroys the session and its
-    scrollback, so there is nothing left to ``capture-pane``; the pipe writes as
-    output happens, so the file outlives the session.
-
-    ``-o`` makes this a no-op if a pipe is already open, so it is safe on an
-    adopted session. Never raises: losing diagnostics must not block a launch.
-    """
     try:
         code, _, _ = await _run("pipe-pane", "-o", "-t", name, f"cat >> {shlex.quote(path)}")
     except FileNotFoundError:
         return False
     return code == 0
+
+
+async def stop_pipe_pane(name: str) -> None:
+    # Close the pane mirror opened by :func:`pipe_pane`.
+
+    try:
+        await _run("pipe-pane", "-t", name)
+    except FileNotFoundError:
+        pass
 
 
 async def send_keys(name: str, line: str) -> None:
