@@ -3,9 +3,10 @@
 To run the server, use the launcher that honors MM_HOST/MM_PORT:
     python -m minemanager_hub          # or the installed `minemanager-hub`
 
-The bare ``uvicorn minemanager_hub.main:app`` CLI ignores MM_HOST/MM_PORT (it
-uses uvicorn's own 127.0.0.1:8000 default); if you use it for --reload during
-dev, pass ``--host``/``--port`` explicitly.
+(The bare ``uvicorn minemanager_hub.main:app`` CLI is a separate entry point
+that never sees our settings, so it binds uvicorn's own 127.0.0.1:8000 default.
+Nothing here can change that. Use the launcher above; if you want the uvicorn
+CLI for ``--reload`` during development, pass ``--host``/``--port`` yourself.)
 
 In production this sits behind Auth Service + WireGuard; it does not authenticate
 end users itself.

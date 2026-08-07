@@ -29,7 +29,7 @@ log = logging.getLogger("minemanager.agent")
 
 # Generous but bounded window for worlds to save on shutdown (well under the
 # unit's TimeoutStopSec). Sessions are stopped concurrently.
-_SHUTDOWN_GRACE_S = 120.0
+from minemanager_agent.supervisor import SHUTDOWN_GRACE_S as _SHUTDOWN_GRACE_S
 
 
 def _configure_logging() -> None:

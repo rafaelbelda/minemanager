@@ -142,7 +142,11 @@ bring back rcon later but with a better design and as a global, light weight too
 
 add a proper logger to the software. Crashes, server starts, debug info are currently not being logged
 
+get rid of Vault and Secrets?
+
 nicely format json checkbox in file editor
+
+
 BUGS:
 cleanup shutdown flow + systemd stop?
 

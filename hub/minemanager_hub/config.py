@@ -35,13 +35,16 @@ def _default_web_dir() -> Path:
     return Path(__file__).resolve().parents[2] / "web"
 
 
+#: SQLite DB + generated key file. Matches the systemd unit and deploy docs; the
+#: old ``$HOME/.local/share`` default disagreed with both, and a hub pointed at a
+#: different directory silently opens an empty database.
+DEFAULT_DATA_DIR = Path("/var/lib/minemanager")
+
+
 def _default_data_dir() -> Path:
     """Where the hub keeps its SQLite DB and any local state."""
     env = os.environ.get("MM_DATA_DIR")
-    if env:
-        return Path(env)
-    # Linux target default; overridable for dev on any OS.
-    return Path(os.environ.get("HOME", ".")) / ".local" / "share" / "minemanager"
+    return Path(env) if env else DEFAULT_DATA_DIR
 
 
 @dataclass
@@ -128,7 +131,15 @@ class Settings:
         return self.data_dir / "secret.key"
 
     def ensure_dirs(self) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        """Create the data dir, or exit saying exactly what to do about it."""
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, ValueError) as exc:   # ValueError: malformed path
+            raise SystemExit(
+                f"cannot create the hub data dir {self.data_dir} ({exc}).\n"
+                f"Set MM_DATA_DIR to a writable path: /var/lib/minemanager owned by the "
+                f"hub's user in production, or e.g. ./_devdata for a local run."
+            ) from None
 
 
 _settings: Settings | None = None

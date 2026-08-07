@@ -1,11 +1,15 @@
-# MineManager agent — the ONLY MineManager daemon on a node.
+# MineManager agent — the only MineManager daemon that touches Minecraft servers.
 #
+# Notes:
 # systemd supervises the agent (auto-restart, start-on-boot); the agent in turn
 # supervises the Minecraft servers/proxies in their own tmux sessions.
+# Do NOT create per-server systemd units.
+# 
+# If this machine ALSO runs the hub, install minemanager-hub.service too. See deploy/README.md
 #
 # Install:
 #   sudo cp deploy/minemanager-agent.service /etc/systemd/system/
-#   sudoedit /etc/systemd/system/minemanager-agent.service   # set User + env
+#   sudoedit /etc/systemd/system/minemanager-agent.service   # set User + ReadWritePaths
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now minemanager-agent
 #
@@ -21,32 +25,38 @@ Wants=network-online.target
 [Service]
 Type=simple
 
-# Run as the unprivileged Minecraft user (NOT root). The agent spawns servers
+# Run as the unprivileged minemanager-agent user (NOT root). The agent spawns servers
 # as its own children under this user — no sudo/polkit needed.
-User=minecraft
-Group=minecraft
+User=minemanager-agent
+Group=minemanager-agent
 
-# MM_HUB_URL, MM_ENROLL_TOKEN (first run only), MM_AGENT_DATA_DIR, etc.
+# MM_HUB_URL, MM_AGENT_DATA_DIR, MM_ENROLL_TOKEN (first run only), etc.
 EnvironmentFile=/etc/minemanager/agent.env
 
 ExecStart=/opt/minemanager/venv/bin/minemanager-agent
 Restart=always
 RestartSec=3
 
-KillMode=process
+KillMode=mixed
 TimeoutStopSec=300
 
-# Hardening (the agent needs to write only its data dir + the server dirs).
+# --- Hardening -------------------------------------------------------------
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-# NOTE: PrivateTmp must stay OFF — tmux's socket lives under /tmp, and a private
-# per-invocation /tmp would hide the running servers' tmux server from the agent
-# after a restart, breaking the survive-restart design.
-# Grant write access to the agent's state dir and wherever your servers live.
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
 
-# Adjust ReadWritePaths to your server root(s), e.g. /srv/minecraft.
-# ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft
+# PrivateTmp MUST stay off. tmux's socket lives under /tmp.
+PrivateTmp=false
+
+# The hardening above makes the whole filesystem read-only, so
+# without this the agent cannot write its own data dir, let alone a world.
+# List the agent's state dir plus every directory your servers live in.
+#
+# NOTE: this is also the boundary that limits the damage from an over-broad
+# instance root_dir. Keep it as narrow as your layout allows.
+ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft
 
 [Install]
 WantedBy=multi-user.target

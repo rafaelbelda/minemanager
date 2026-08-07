@@ -1,0 +1,52 @@
+# MineManager hub — the web control plane.
+#
+# Install:
+#   sudo cp deploy/minemanager-hub.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now minemanager-hub
+#
+
+# WARNING: If you are running an agent in the same machine as the hub note that:
+# a machine may run:
+#   - the hub only            (minemanager-hub.service (this) unit alone)
+#   - the agent only          (minemanager-agent.service alone)
+#   - both                    (BOTH units, as two separate services and two separate users)
+
+[Unit]
+Description=MineManager hub (web control plane)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+# Dedicated hub user, not the agent user, even when both run here.
+# This is a additional security layer. Running as a separate user is what
+# stops a compromised plugin (which executes as the agent user) from potentially
+# executing arbitrary code on across the whole fleet.
+#   sudo useradd --system --home /var/lib/minemanager --shell /usr/sbin/nologin minemanager
+User=minemanager-hub
+Group=minemanager-hub
+
+# Holds MM_SECRET_KEY. Keep it 0640 root:minemanager so the mc user cannot read it.
+EnvironmentFile=/etc/minemanager/hub.env
+
+ExecStart=/opt/minemanager/venv/bin/minemanager-hub
+Restart=always
+RestartSec=3
+
+TimeoutStopSec=3
+
+# Hardening. The hub needs to write only its data directory.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Only the SQLite DB + generated key file. Must match MM_DATA_DIR in hub.env.
+ReadWritePaths=/var/lib/minemanager
+
+[Install]
+WantedBy=multi-user.target

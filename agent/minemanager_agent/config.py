@@ -40,11 +40,16 @@ def _write_private(path: Path, text: str) -> None:
     os.replace(tmp, path)          # atomic; keeps the 0600 mode
 
 
+#: Where a packaged agent keeps identity.json and runtime.json. Matches the
+#: systemd unit and the deploy docs — the old ``$HOME/.local/share`` default
+#: disagreed with both, so an agent started without MM_AGENT_DATA_DIR silently
+#: wrote its identity somewhere nobody was looking, and later runs "lost" it.
+DEFAULT_DATA_DIR = Path("/var/lib/minemanager-agent")
+
+
 def _default_data_dir() -> Path:
     env = os.environ.get("MM_AGENT_DATA_DIR")
-    if env:
-        return Path(env)
-    return Path(os.environ.get("HOME", ".")) / ".local" / "share" / "minemanager-agent"
+    return Path(env) if env else DEFAULT_DATA_DIR
 
 
 @dataclass
@@ -103,7 +108,16 @@ class AgentConfig:
         return self.data_dir / "runtime.json"
 
     def ensure_dirs(self) -> None:
-        self.data_dir.mkdir(parents=True, exist_ok=True)
+        # Create the data dir, or exit saying exactly what to do about it.
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, ValueError) as exc:   # ValueError: malformed path
+            raise SystemExit(
+                f"cannot create the agent data dir {self.data_dir} ({exc}).\n"
+                f"Set MM_AGENT_DATA_DIR to a writable path: /var/lib/minemanager-agent "
+                f"owned by the agent's user in production, or e.g. ./_agentdata for a "
+                f"local run."
+            ) from None
 
     # -- transport security --------------------------------------------------
     @property
@@ -116,16 +130,8 @@ class AgentConfig:
         return urlparse(self.hub_url).scheme == "wss"
 
     def check_transport_security(self) -> None:
-        """Refuse a plaintext hub URL unless the operator opted in.
-
-        Loopback is exempt: ``ws://127.0.0.1`` never leaves the machine, so
-        requiring a flag for every dev run would be noise that teaches people to
-        set the flag permanently — the opposite of the point.
-
-        Everything else is a real network hop carrying the node credential in
-        clear. `PLAN.md §5` calls TLS the v1 baseline; nothing enforced it, and a
-        WireGuard-less deployment would have been silently insecure.
-        """
+        # Refuse a plaintext hub URL unless the operator opted in.
+        # Loopback is exempt: ws://127.0.0.1 or localhost
         if self.hub_is_encrypted:
             if self.allow_insecure:
                 log.warning(

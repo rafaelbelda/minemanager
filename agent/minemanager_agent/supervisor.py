@@ -32,11 +32,30 @@ EmitFn = Callable[[Event], Awaitable[None]]
 # Console command that asks each software to shut down gracefully.
 _STOP_COMMAND = {"paper": "stop", "vanilla": "stop", "velocity": "end"}
 
+# Verb for a session whose instance type we no longer know (a session that
+# outlived the agent's map). "stop" is the right guess: the only supported
+# software it is wrong for is Velocity, and a proxy holds no world — falling
+# back to the kill path costs it nothing. The alternative, typing *both* verbs
+# at every console, put an unknown-command error in every Paper server's log.
+_DEFAULT_STOP_VERB = "stop"
+
 # Crash-loop policy: if an instance crashes more than N times within WINDOW
 # seconds, stop auto-restarting it and surface a crashed state.
 _CRASH_LIMIT = 5
 _CRASH_WINDOW_S = 60.0
+# Stop budgets. These are one chain and must stay ordered:
+#
+#   _GRACEFUL_STOP_S   (45s)  one instance, stopped on request
+#   SHUTDOWN_GRACE_S  (120s)  one instance during agent shutdown; sessions are
+#                             stopped concurrently, so this is the whole budget
+#   TimeoutStopSec    (300s)  systemd's SIGKILL deadline (deploy unit)
+#
+# The unit uses KillMode=mixed: systemd signals only the agent, so the sequence
+# below is what actually stops worlds — but anything still alive at
+# TimeoutStopSec is SIGKILLed, which is what makes orphans impossible if the
+# agent hangs or dies. Keep SHUTDOWN_GRACE_S comfortably under TimeoutStopSec.
 _GRACEFUL_STOP_S = 45.0
+SHUTDOWN_GRACE_S = 120.0
 
 # tmux reports success as soon as the *session* exists, which says nothing about
 # whether the command inside it survived. Re-check after this long before
@@ -208,28 +227,19 @@ class Supervisor:
     async def stop(self, spec: InstanceSpec, *, graceful_s: float = _GRACEFUL_STOP_S) -> dict:
         mi = self._managed(spec)
         mi.desired_running = False
+        self._cancel_tail(mi)
         if not await tmux.has_session(mi.session):
             await self._set_state(mi, RunState.stopped)
             return {"state": mi.state.value, "already_stopped": True}
 
-        stop_cmd = _STOP_COMMAND.get(spec.type.value, "stop")
+        stop_cmd = _STOP_COMMAND.get(spec.type.value, _DEFAULT_STOP_VERB)
         await self._set_state(mi, RunState.stopping, detail=f"sending '{stop_cmd}', waiting for a clean save")
-        try:
-            await tmux.send_keys(mi.session, stop_cmd)
-        except tmux.TmuxError as exc:
-            await self._set_state(mi, RunState.stopping, detail=f"tmux send failed: {exc}")
-
-        deadline = time.monotonic() + graceful_s
-        while time.monotonic() < deadline:
-            if not await tmux.has_session(mi.session):
-                await self._set_state(mi, RunState.stopped, detail="stopped gracefully")
-                return {"state": mi.state.value, "graceful": True}
-            await asyncio.sleep(0.5)
-
-        # Graceful window elapsed — force it.
-        await tmux.kill_session(mi.session)
-        await self._set_state(mi, RunState.stopped, detail="killed after graceful timeout")
-        return {"state": mi.state.value, "graceful": False}
+        graceful = await self._stop_session(mi.session, stop_cmd, graceful_s)
+        await self._set_state(
+            mi, RunState.stopped,
+            detail="stopped gracefully" if graceful else "killed after graceful timeout",
+        )
+        return {"state": mi.state.value, "graceful": graceful}
 
     async def restart(self, spec: InstanceSpec) -> dict:
         await self.stop(spec)
@@ -238,6 +248,7 @@ class Supervisor:
     async def kill(self, spec: InstanceSpec) -> dict:
         mi = self._managed(spec)
         mi.desired_running = False
+        self._cancel_tail(mi)
         await tmux.kill_session(mi.session)
         await self._set_state(mi, RunState.stopped, detail="killed")
         return {"state": mi.state.value}
@@ -288,6 +299,16 @@ class Supervisor:
         if mi.tail_task and not mi.tail_task.done():
             return
         mi.tail_task = asyncio.create_task(self._tail(mi))
+
+    def _cancel_tail(self, mi: ManagedInstance) -> None:
+        """Stop following a log we no longer expect to grow.
+
+        Called from every path that ends a server (stop, kill, shutdown), so a
+        stopped instance does not leave a polling task behind for the life of
+        the agent.
+        """
+        if mi.tail_task and not mi.tail_task.done():
+            mi.tail_task.cancel()
 
     async def _tail(self, mi: ManagedInstance) -> None:
         try:
@@ -446,11 +467,13 @@ class Supervisor:
         await self._set_state(mi, RunState.running, detail="restarted after crash")
 
     # -- graceful shutdown (agent stop / restart / system reboot) ------------
-    async def shutdown_all(self, graceful_s: float = _GRACEFUL_STOP_S) -> int:
-        """Gracefully stop every live managed server so worlds save cleanly,
-        then tear down our tmux server so nothing is left behind. Stops all
-        ``<prefix>-*`` sessions (including any this agent didn't start itself).
-        Returns the number stopped."""
+    async def shutdown_all(self, graceful_s: float = SHUTDOWN_GRACE_S) -> int:
+        """Stop every live managed server cleanly, then tear down our tmux server.
+
+        Covers all ``<prefix>-*`` sessions, including any this agent did not
+        start itself. Sessions are stopped concurrently, so ``graceful_s`` is the
+        budget for the whole operation, not per server. Returns the number found.
+        """
         # Freeze the restart policy *before* anything stops. The monitor task is
         # still running at this point (the connection owns it and is cancelled
         # only after we return), and a session exiting cleanly is indistinguishable
@@ -459,31 +482,42 @@ class Supervisor:
         self._shutting_down = True
         for mi in self._instances.values():
             mi.desired_running = False
-            if mi.tail_task and not mi.tail_task.done():
-                mi.tail_task.cancel()
+            self._cancel_tail(mi)
 
         names = await tmux.list_sessions(self._prefix)
         await asyncio.gather(
-            *(self._graceful_stop_session(n, graceful_s) for n in names),
+            *(self._stop_session(n, self._verb_for_session(n), graceful_s) for n in names),
             return_exceptions=True,
         )
-        await tmux.kill_server()   # clean up the now-empty tmux server
+        await tmux.kill_server()   # leave no tmux server behind
         return len(names)
 
-    async def _graceful_stop_session(self, name: str, graceful_s: float) -> None:
-        # Send both console stop verbs — Paper/Vanilla use "stop", Velocity "end"
-        # — so we don't need to know the type; the wrong one is a harmless no-op.
-        for verb in ("stop", "end"):
-            try:
-                await tmux.send_keys(name, verb)
-            except tmux.TmuxError:
-                pass
+    def _verb_for_session(self, name: str) -> str:
+        """Console stop verb for a session, by its instance type when we know it."""
+        for mi in self._instances.values():
+            if mi.session == name:
+                return _STOP_COMMAND.get(mi.spec.type.value, _DEFAULT_STOP_VERB)
+        return _DEFAULT_STOP_VERB
+
+    async def _stop_session(self, name: str, verb: str, graceful_s: float) -> bool:
+        """Type ``verb`` at the console, wait for the session to end, else kill it.
+
+        The single stop primitive: both the per-instance ``stop`` and the
+        shutdown path go through here, so there is one wait loop and one
+        kill-on-timeout rule rather than two that could drift apart.
+        Returns True if the server exited on its own.
+        """
+        try:
+            await tmux.send_keys(name, verb)
+        except tmux.TmuxError:
+            pass          # session already gone, or tmux unavailable — fall through
         deadline = time.monotonic() + graceful_s
         while time.monotonic() < deadline:
             if not await tmux.has_session(name):
-                return
+                return True
             await asyncio.sleep(0.5)
-        await tmux.kill_session(name)   # last resort so shutdown isn't blocked
+        await tmux.kill_session(name)   # last resort so shutdown is never blocked
+        return False
 
     async def states_for(self, ids: list[str]) -> dict[str, str]:
         """Report the real run-state for a set of instances, checking tmux for

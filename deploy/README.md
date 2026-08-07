@@ -1,71 +1,87 @@
 # Deploying MineManager
 
-MineManager is a **hub + agents** system (see [`../PLAN.md`](../PLAN.md)). One
-machine runs the **hub** (web control plane); **every** managed machine — including
-the hub's own box, if it hosts servers — runs an **agent**.
+Two independent services. Install whichever a machine needs.
 
-## Hub
+- **hub**: the web control plane.
+- **agent**: runs on every machine that hosts servers or proxies. Owns the processes (one
+  `tmux` session per instance) and the files.
 
-The hub sits behind Authelia + WireGuard and does not authenticate end users
-itself. It needs a secret-vault key from the environment.
+| Machine | Install |
+|---|---|
+| Hub only | `sudo ./deploy/install.sh --hub` |
+| Agent only | `sudo ./deploy/install.sh --agent` |
+| Both on one box | `sudo ./deploy/install.sh --hub --agent` |
+
+Add `--dry-run` to see what it would do. Re-run it to upgrade the code; it never
+overwrites config you have edited.
+
+## Install
 
 ```bash
-# Generate a vault key ONCE and keep it safe (systemd EnvironmentFile / secret mgr):
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-
-MM_SECRET_KEY=<that-key> \
-MM_DATA_DIR=/var/lib/minemanager \
-MM_HOST=127.0.0.1 MM_PORT=8730 \
-  python -m minemanager_hub        # or the installed `minemanager-hub`
+git clone https://github.com/rafaelbelda/minemanager.git && cd minemanager
+sudo ./deploy/install.sh --hub --agent --dry-run   # preview
+sudo ./deploy/install.sh --hub --agent
 ```
 
-> Use the `minemanager-hub` launcher (above), **not** bare
-> `uvicorn minemanager_hub.main:app` — the raw uvicorn CLI ignores
-> `MM_HOST`/`MM_PORT` and binds to its own default `127.0.0.1:8000`.
+It creates the users and directories, installs a venv, generates the vault key,
+writes `/etc/minemanager/*.env` and the systemd units while printing every step.
 
-Put it behind your reverse proxy (Authelia) and expose it only on the WireGuard
-interface. Never expose it to the public internet.
+## Configure
 
-## Agent (per node)
+**Hub** - `sudoedit /etc/minemanager/hub.env`
 
-The agent is the **only** MineManager daemon on a node. systemd supervises the
-agent; the agent supervises the Minecraft servers in tmux sessions. **Do not
-create per-server systemd units.**
-
-Requirements on the node: Python 3.11+, `tmux`, and a non-root user that owns the
-server directories (e.g. `minecraft`).
+Set `MM_ALLOWED_HOSTS` to the hostname clients actually use. It defaults to
+loopback only; anything else gets HTTP 400.
 
 ```bash
-# 1. install the agent into a venv
-sudo mkdir -p /opt/minemanager && cd /opt/minemanager
-sudo python3 -m venv venv
-sudo ./venv/bin/pip install ./shared ./agent   # from a checkout of this repo
+sudo systemctl enable --now minemanager-hub
+```
 
-# 2. config
-sudo mkdir -p /etc/minemanager /var/lib/minemanager-agent
-sudo cp deploy/agent.env.example /etc/minemanager/agent.env
-sudoedit /etc/minemanager/agent.env             # set MM_HUB_URL
+Then put your reverse proxy and authentication in front. The hub does not
+authenticate end users itself. Expose it only over WireGuard!
 
-# 3. enrollment: create the node in the hub UI, copy the one-time token into
-#    agent.env as MM_ENROLL_TOKEN, then:
-sudo cp deploy/minemanager-agent.service /etc/systemd/system/
-sudoedit /etc/systemd/system/minemanager-agent.service   # set User + ReadWritePaths
-sudo systemctl daemon-reload
+**Agent** - `sudoedit /etc/minemanager/agent.env`
+
+Set `MM_HUB_URL` (use `wss://`; a plaintext `ws://` to a remote host is refused
+unless you set `MM_ALLOW_INSECURE=1`). Create the node in the hub UI, paste its
+one-time token in as `MM_ENROLL_TOKEN`, then:
+
+```bash
 sudo systemctl enable --now minemanager-agent
-
-# 4. once "online" in the hub, remove MM_ENROLL_TOKEN from agent.env.
-#    The agent has persisted its long-lived credential to identity.json.
 ```
 
-## Recommended server layout
+Once the node shows online, delete the `MM_ENROLL_TOKEN` line.
 
-Each instance is a directory the agent user can read/write, containing the jar
-and (for consoles) writing to `logs/latest.log`. You declare its `root_dir` and
-`start_command` in the hub when adding the instance; the agent launches that
-command inside a tmux session named `mm-<instance_id>`.
+If your servers do not live under `/srv/minecraft`, add their directory to
+`ReadWritePaths=` in `/etc/systemd/system/minemanager-agent.service`. The unit
+runs with `ProtectSystem=strict`, so anything not listed is read-only.
 
-You can always attach to a running server's console directly for debugging:
+## Check
 
 ```bash
-sudo -u minecraft tmux attach -t mm-<instance_id>
+journalctl -u 'minemanager-*' -n 40 --no-pager
 ```
+
+Both services print their resolved configuration on startup.
+Most misconfiguration is visible in those lines alone.
+
+## Two users, and when you need them
+
+The installer creates `minemanager-hub` and `minemanager-agent`.
+On a multi-node setup this matters: every Minecraft server runs as the agent's user,
+so any plugin already has code execution as that user. If the hub ran as the same user, a compromised plugin could get code execution across the whole fleet.
+
+On a single machine whose hub manages only itself there is nothing to escalate
+to, so one user is mostly fine; You **could** set `User=`/`Group=` in both units
+to the same account and give it both data directories.
+
+## Notes
+
+- **Do not create per-server systemd units.** The agent supervises the servers.
+- **Back up `/var/lib/minemanager/minemanager.db`** before upgrading. Schema
+  migrations run at startup and are not reversible.
+- Attach to a server console directly:
+  `sudo -u minemanager-agent tmux -L minemanager attach -t mm-<instance_id>`
+
+Every option is documented in [`hub.env.example`](hub.env.example) and
+[`agent.env.example`](agent.env.example).
