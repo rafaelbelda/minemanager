@@ -40,6 +40,21 @@ export function fill(node, ...children) {
   return node;
 }
 
+/**
+ * Rebuild `node`'s children only when `sig` changes; `build()` returns them.
+ *
+ * The app renders wholesale — a heartbeat or the slow poll repaints the active
+ * view — so an unchanged list would be torn down and rebuilt every few seconds.
+ * For a scroll container that resets the scroll position mid-read, and for a
+ * <select> it closes an open dropdown. Returns true when it actually rebuilt.
+ */
+export function repaint(node, sig, build) {
+  if (node.dataset.sig === sig) return false;
+  node.dataset.sig = sig;
+  fill(node, build());
+  return true;
+}
+
 export function show(node, visible) {
   node.classList.toggle('hidden', !visible);
 }

@@ -7,7 +7,7 @@
  */
 
 import { api, ApiError, describe, originLabel, wsOrigin } from './api.js';
-import { $, clear, confirmDialog, copyText, dialog, el, fill, show, toast } from './dom.js';
+import { $, clear, confirmDialog, copyText, dialog, el, fill, repaint, show, toast } from './dom.js';
 import { NodeEvents } from './events.js';
 
 /* --- constants ----------------------------------------------------------- */
@@ -293,6 +293,7 @@ function pushConsole(instId, raw, kind) {
     const body = $('term-body');
     body.append(lineNode(line));
     while (body.childElementCount > CONSOLE_CAP) body.firstElementChild.remove();
+    body.dataset.sig = consoleSig(instId, buf.length);
     $('term-count').textContent = `${buf.length} line${buf.length === 1 ? '' : 's'}`;
     show($('console-hint'), false);
     if (state.autoscroll) body.scrollTop = body.scrollHeight;
@@ -322,8 +323,7 @@ async function loadConsoleHistory(inst) {
     state.console.set(inst.id, buf);
     state.consoleLoaded.add(inst.id);
     state.consoleFailed.delete(inst.id);
-    const body = $('term-body');
-    body.dataset.inst = ''; // force renderConsole to repaint from the new buffer
+    $('term-body').dataset.sig = '';   // force a repaint from the new buffer
     if (state.tab === 'console' && state.sel.instId === inst.id) render();
   } catch {
     // Never break the console over history — just flag it.
@@ -340,6 +340,8 @@ function maybeLoadConsole(instId) {
   const inst = instById(instId);
   if (inst && runStateOf(inst) === 'running') loadConsoleHistory(inst);
 }
+
+const consoleSig = (instId, lines) => `${instId}:${lines}`;
 
 function lineNode(line) {
   return el(`div.term-line${line.cls ? '.' + line.cls : ''}`, {},
@@ -389,6 +391,17 @@ function matchesFilter(node) {
   return { node: insts.length > 0, instances: insts };
 }
 
+/** Everything the sidebar tree draws from, flattened. */
+function sidebarSig() {
+  const parts = [state.filter, state.sel.type, state.sel.nodeId || '', state.sel.instId || '',
+                 state.loaded ? '1' : '0'];
+  for (const node of state.nodes) {
+    parts.push(node.id, node.name, node.hostname || '', node.online ? '1' : '0');
+    for (const inst of instancesOf(node.id)) parts.push(inst.id, inst.name, runStateOf(inst));
+  }
+  return parts.join('');
+}
+
 function renderSidebar() {
   const online = state.nodes.filter((n) => n.online).length;
   const instCount = state.nodes.reduce((sum, n) => sum + instancesOf(n.id).length, 0);
@@ -396,13 +409,15 @@ function renderSidebar() {
   $('row-hub-count').textContent = `${instCount} inst`;
   $('row-hub').classList.toggle('sel', state.sel.type === 'hub');
 
-  const tree = clear($('tree'));
-  let shown = 0;
+  repaint($('tree'), sidebarSig(), buildTree);
+}
+
+function buildTree() {
+  const out = [];
 
   for (const node of state.nodes) {
     const hit = matchesFilter(node);
     if (!hit.node) continue;
-    shown++;
 
     const nodeSelected = state.sel.nodeId === node.id;
     const group = el('div.tree-group');
@@ -439,16 +454,17 @@ function renderSidebar() {
         el('span.row-state', { style: 'color:var(--dim-2)', text: 'no instances' })));
     }
     group.append(kids);
-    tree.append(group);
+    out.push(group);
   }
 
-  if (!shown) {
-    tree.append(el('div.empty', {
+  if (!out.length) {
+    out.push(el('div.empty', {
       text: !state.loaded ? 'Loading…'
         : state.filter ? 'Nothing matches that filter.'
         : 'No nodes yet — add one to get started.',
     }));
   }
+  return out;
 }
 
 /* --- render: hub view ---------------------------------------------------- */
@@ -472,16 +488,23 @@ function renderHub() {
   $('st-running').textContent = running;
   $('st-attention').textContent = attention;
 
-  const grid = clear($('node-grid'));
+  repaint($('node-grid'), sidebarSig(), buildNodeCards);
+
+  fill($('enroll-section'), enrollSection());
+}
+
+function buildNodeCards() {
+  const nodes = state.nodes;
   if (!nodes.length) {
-    grid.append(el('div.empty', {
+    return el('div.empty', {
       style: 'grid-column:1/-1;border:1px dashed var(--line);border-radius:6px',
       text: state.loaded ? 'No nodes registered yet.' : 'Loading nodes…',
-    }));
+    });
   }
+  const out = [];
   for (const node of nodes) {
     const insts = instancesOf(node.id);
-    grid.append(el('div.node-card', { onclick: () => selectNode(node.id) },
+    out.push(el('div.node-card', { onclick: () => selectNode(node.id) },
       el('div.node-card-head', {},
         el('span.dot', {
           style: `width:9px;height:9px;background:${node.online ? '#47d18a' : '#6b6b67'};box-shadow:${node.online ? '0 0 8px #47d18a88' : 'none'}`,
@@ -501,8 +524,7 @@ function renderHub() {
               inst.name))
           : el('span.inst-chip', { style: 'color:var(--dim-2)' }, 'no instances'))));
   }
-
-  fill($('enroll-section'), enrollSection());
+  return out;
 }
 
 function nodeBadge(node) {
@@ -589,15 +611,20 @@ function renderNode() {
   const insts = instancesOf(node.id);
   $('node-inst-label').textContent = `INSTANCES · ${insts.length}`;
 
-  const rows = clear($('node-inst-rows'));
-  if (!insts.length) {
-    rows.append(el('div.empty', { text: 'No instances on this node yet.' }));
-  }
+  repaint($('node-inst-rows'), sidebarSig(), () => buildInstanceRows(node, insts));
+
+  fill($('node-enroll-section'),
+    state.enrollment && state.enrollment.nodeId === node.id ? enrollSection() : null);
+}
+
+function buildInstanceRows(node, insts) {
+  if (!insts.length) return el('div.empty', { text: 'No instances on this node yet.' });
+  const out = [];
   for (const inst of insts) {
     const run = runStateOf(inst);
     const m = metaOf(run);
     const live = node.online;
-    rows.append(el('div.table-row', { onclick: () => selectInstance(node.id, inst.id) },
+    out.push(el('div.table-row', { onclick: () => selectInstance(node.id, inst.id) },
       el('span.cell-name', { text: inst.name }),
       el('span.cell-type', { text: inst.type }),
       el('span.cell-state', { style: `color:${m.color}` },
@@ -609,9 +636,7 @@ function renderNode() {
         powerButton(inst, 'stop', '■', 'Stop', !live || run === 'stopped'),
         powerButton(inst, 'restart', '⟳', 'Restart', !live))));
   }
-
-  fill($('node-enroll-section'),
-    state.enrollment && state.enrollment.nodeId === node.id ? enrollSection() : null);
+  return out;
 }
 
 function powerButton(inst, op, glyph, title, disabled, extra = '') {
@@ -699,9 +724,7 @@ function renderConsole(inst, m, live) {
   show($('console-hint'), state.consoleFailed.has(inst.id));
 
   const body = $('term-body');
-  if (body.dataset.inst !== inst.id || body.childElementCount !== buf.length) {
-    body.dataset.inst = inst.id;
-    fill(body, buf.map(lineNode));
+  if (repaint(body, consoleSig(inst.id, buf.length), () => buf.map(lineNode))) {
     if (state.autoscroll) body.scrollTop = body.scrollHeight;
   }
 }
@@ -761,7 +784,7 @@ function resetInstancePanes() {
   $('editor-area').value = '';
   paintEditor();          // clear the gutter + highlight overlay (close the open file)
   const body = $('term-body');
-  body.dataset.inst = '';
+  body.dataset.sig = '';
   clear(body);
 }
 
@@ -795,6 +818,61 @@ async function loadFiles(path) {
   render();
 }
 
+/** Everything the file list draws from, flattened. */
+function filesSig(inst, live) {
+  const f = state.files;
+  const parts = [inst.id, f.path, live ? '1' : '0', f.loading ? '1' : '0', f.error || '',
+                 state.editor.path || ''];
+  for (const e of f.entries) parts.push(e.path, e.is_dir ? 'd' : 'f', String(e.size));
+  return parts.join('');
+}
+
+function buildFileRows(path, segs, live) {
+  if (state.files.loading) return el('div.empty', {}, 'Loading…');
+  if (state.files.error) {
+    return el('div.empty', { style: 'color:var(--err-fg)', text: state.files.error });
+  }
+
+  const out = [];
+  if (path !== '.') {
+    const parent = segs.slice(0, -1).join('/') || '.';
+    out.push(el('div.file-row.dir', { onclick: () => loadFiles(parent) },
+      el('span.file-icon', {}, '↰'),
+      el('span.file-name', {}, '..')));
+  }
+  const entries = [...state.files.entries].sort(
+    (a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
+  if (!entries.length && path === '.') out.push(el('div.empty', {}, 'Empty directory.'));
+
+  for (const f of entries) {
+    const selected = !f.is_dir && state.editor.path === f.path;
+    const attrs = {
+      title: f.path,
+      onclick: () => (f.is_dir ? loadFiles(f.path) : openFile(f)),
+      oncontextmenu: (ev) => showContextMenu(ev, f),
+    };
+    if (f.is_dir) {   // drop files onto a folder to upload into it
+      attrs.ondragover = (ev) => { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.add('drop-hi'); };
+      attrs.ondragleave = (ev) => ev.currentTarget.classList.remove('drop-hi');
+      attrs.ondrop = (ev) => { ev.stopPropagation(); ev.currentTarget.classList.remove('drop-hi'); handleDrop(ev, f.path); };
+    }
+    out.push(el(`div.file-row${f.is_dir ? '.dir' : ''}${selected ? '.sel' : ''}`, attrs,
+      el('span.file-icon', {}, f.is_dir ? '▸' : '·'),
+      el('span.file-name', { text: f.name }),
+      el('span.spacer'),
+      el('span.file-size', { text: f.is_dir ? '—' : formatSize(f.size) }),
+      el('button.file-act', {
+        title: f.is_dir ? 'Download as zip' : 'Download', disabled: !live,
+        onclick: (ev) => { ev.stopPropagation(); downloadEntry(f); },
+      }, '⇩'),
+      el('button.file-del', {
+        title: 'Delete', disabled: !live,
+        onclick: (ev) => { ev.stopPropagation(); deleteEntry(f); },
+      }, '×')));
+  }
+  return out;
+}
+
 function renderFiles(inst, live) {
   // breadcrumb
   const path = state.files.path;
@@ -818,49 +896,7 @@ function renderFiles(inst, live) {
   document.querySelector('.files-wrap')?.classList.toggle('editor-fullscreen', state.editorFullscreen);
   $('editor-fullscreen').title = state.editorFullscreen ? 'Exit fullscreen' : 'Toggle fullscreen editor';
 
-  const list = clear($('files-list'));
-  if (state.files.loading) {
-    list.append(el('div.empty', {}, 'Loading…'));
-  } else if (state.files.error) {
-    list.append(el('div.empty', { style: 'color:var(--err-fg)', text: state.files.error }));
-  } else {
-    if (path !== '.') {
-      const parent = segs.slice(0, -1).join('/') || '.';
-      list.append(el('div.file-row.dir', { onclick: () => loadFiles(parent) },
-        el('span.file-icon', {}, '↰'),
-        el('span.file-name', {}, '..')));
-    }
-    const entries = [...state.files.entries].sort(
-      (a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
-    if (!entries.length && path === '.') list.append(el('div.empty', {}, 'Empty directory.'));
-
-    for (const f of entries) {
-      const selected = !f.is_dir && state.editor.path === f.path;
-      const attrs = {
-        title: f.path,
-        onclick: () => (f.is_dir ? loadFiles(f.path) : openFile(f)),
-        oncontextmenu: (ev) => showContextMenu(ev, f),
-      };
-      if (f.is_dir) {   // drop files onto a folder to upload into it
-        attrs.ondragover = (ev) => { ev.preventDefault(); ev.stopPropagation(); ev.currentTarget.classList.add('drop-hi'); };
-        attrs.ondragleave = (ev) => ev.currentTarget.classList.remove('drop-hi');
-        attrs.ondrop = (ev) => { ev.stopPropagation(); ev.currentTarget.classList.remove('drop-hi'); handleDrop(ev, f.path); };
-      }
-      list.append(el(`div.file-row${f.is_dir ? '.dir' : ''}${selected ? '.sel' : ''}`, attrs,
-        el('span.file-icon', {}, f.is_dir ? '▸' : '·'),
-        el('span.file-name', { text: f.name }),
-        el('span.spacer'),
-        el('span.file-size', { text: f.is_dir ? '—' : formatSize(f.size) }),
-        el('button.file-act', {
-          title: f.is_dir ? 'Download as zip' : 'Download', disabled: !live,
-          onclick: (ev) => { ev.stopPropagation(); downloadEntry(f); },
-        }, '⇩'),
-        el('button.file-del', {
-          title: 'Delete', disabled: !live,
-          onclick: (ev) => { ev.stopPropagation(); deleteEntry(f); },
-        }, '×')));
-    }
-  }
+  repaint($('files-list'), filesSig(inst, live), () => buildFileRows(path, segs, live));
 
   // editor header
   $('editor-name').textContent = state.editor.path || '—';
@@ -1526,15 +1562,6 @@ async function loadBuilds(inst, version, preferBuild = null) {
   }
 }
 
-/** Fill a <select> only when its option set actually changed (so heartbeat
- *  re-renders don't disrupt an open dropdown). */
-function syncSelect(sel, sig, build) {
-  if (sel.dataset.sig !== sig) {
-    build();
-    sel.dataset.sig = sig;
-  }
-}
-
 function renderVersion(inst, live) {
   const v = state.version;
   const run = runStateOf(inst);
@@ -1556,14 +1583,14 @@ function renderVersion(inst, live) {
   // Version select
   const vsel = $('ver-version');
   if (v.loading) {
-    syncSelect(vsel, '__loading__', () => fill(vsel, el('option', {}, 'Loading…')));
+    repaint(vsel, '__loading__', () => el('option', {}, 'Loading…'));
     vsel.disabled = true;
   } else if (v.error && !v.versions.length) {
-    syncSelect(vsel, '__error__', () => fill(vsel, el('option', {}, 'Failed to load')));
+    repaint(vsel, '__error__', () => el('option', {}, 'Failed to load'));
     vsel.disabled = true;
   } else {
-    syncSelect(vsel, v.versions.map((x) => x.id).join('|'), () =>
-      fill(vsel, v.versions.map((x) => el('option', { value: x.id }, x.label))));
+    repaint(vsel, v.versions.map((x) => x.id).join('|'),
+      () => v.versions.map((x) => el('option', { value: x.id }, x.label)));
     if (v.selVersion) vsel.value = v.selVersion;
     vsel.disabled = updating;
   }
@@ -1573,15 +1600,15 @@ function renderVersion(inst, live) {
   if (v.hasBuilds) {
     const bsel = $('ver-build');
     if (v.buildsLoading) {
-      syncSelect(bsel, '__loading__', () => fill(bsel, el('option', {}, 'Loading…')));
+      repaint(bsel, '__loading__', () => el('option', {}, 'Loading…'));
       bsel.disabled = true;
     } else if (!v.builds.length) {
-      syncSelect(bsel, '__empty__', () => fill(bsel, el('option', {}, '—')));
+      repaint(bsel, '__empty__', () => el('option', {}, '—'));
       bsel.disabled = true;
     } else {
-      syncSelect(bsel, v.builds.map((b) => b.id).join('|'), () =>
-        fill(bsel, v.builds.map((b) => el('option', { value: b.id },
-          b.channel && b.channel !== 'STABLE' ? `${b.label} · ${b.channel.toLowerCase()}` : b.label))));
+      repaint(bsel, v.builds.map((b) => b.id).join('|'),
+        () => v.builds.map((b) => el('option', { value: b.id },
+          b.channel && b.channel !== 'STABLE' ? `${b.label} · ${b.channel.toLowerCase()}` : b.label)));
       if (v.selBuild) bsel.value = v.selBuild;
       bsel.disabled = updating;
     }
@@ -1864,7 +1891,7 @@ function bind() {
     const inst = curInst();
     if (!inst) return;
     state.console.set(inst.id, []);
-    $('term-body').dataset.inst = '';
+    $('term-body').dataset.sig = '';
     render();
   };
   // Turning autoscroll off implicitly when the user scrolls up keeps the log
