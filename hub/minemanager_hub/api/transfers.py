@@ -25,13 +25,20 @@ from minemanager_hub.api.control import _agent_and_spec
 from minemanager_hub.db.models import Node
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import tokens
-from minemanager_hub.transfers import transfers
+from minemanager_hub.transfers import TransferIdInUse, transfers
 from minemanager_shared.protocol import Action
 
 router = APIRouter(prefix="/api", tags=["transfers"])
 
 _HEADER_TIMEOUT = 300.0          # wait for the agent to connect + send headers
 _CMD_TIMEOUT = 12 * 3600.0       # the control command lives for the whole transfer
+
+
+def _new_transfer(tid: str, *, node_id: str, direction: str, path: str):
+    try:
+        return transfers.create(tid, node_id=node_id, direction=direction, path=path)
+    except TransferIdInUse as exc:
+        raise HTTPException(409, f"transfer id {tid!r} is already in use") from exc
 
 
 def _auth_agent(request: Request, expected_node: str) -> None:
@@ -49,7 +56,7 @@ def _auth_agent(request: Request, expected_node: str) -> None:
 @router.get("/instances/{instance_id}/files/download-stream")
 async def download_stream(instance_id: str, path: str, tid: str) -> StreamingResponse:
     conn, spec = _agent_and_spec(instance_id)
-    ctx = transfers.create(tid, node_id=conn.node_id, direction="download", path=path)
+    ctx = _new_transfer(tid, node_id=conn.node_id, direction="download", path=path)
 
     # Ask the agent to push; the command resolves only when the push completes.
     fut = asyncio.ensure_future(conn.call(
@@ -100,7 +107,7 @@ async def download_stream(instance_id: str, path: str, tid: str) -> StreamingRes
 @router.post("/instances/{instance_id}/files/upload-stream")
 async def upload_stream(instance_id: str, path: str, tid: str, request: Request) -> dict:
     conn, spec = _agent_and_spec(instance_id)
-    ctx = transfers.create(tid, node_id=conn.node_id, direction="upload", path=path)
+    ctx = _new_transfer(tid, node_id=conn.node_id, direction="upload", path=path)
     ctx.filename = path.rsplit("/", 1)[-1]
     try:
         ctx.total = int(request.headers.get("content-length") or 0)

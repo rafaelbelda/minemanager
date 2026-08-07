@@ -1218,6 +1218,8 @@ function startDownloadStream(inst, entry) {
   triggerDownload(api.downloadStreamUrl(inst.id, entry.path, tid));  // native save
   pollDownload(tid);                                                 // pill progress
 }
+const POLL_MISS_LIMIT = 40;   // ~20s at 500ms
+
 async function pollDownload(tid) {
   let sawActive = false, misses = 0;
   for (;;) {
@@ -1231,21 +1233,28 @@ async function pollDownload(tid) {
     } else if (st && st.state === 'done') { finishTransfer(tid, 'done'); return; }
     else if (st && st.state === 'cancelled') { finishTransfer(tid, 'cancelled'); return; }
     else if (st && st.state === 'error') { finishTransfer(tid, 'error', st.error); return; }
-    else if (sawActive || ++misses > 40) { finishTransfer(tid, 'done'); return; }  // gone after active, or never appeared (~20s)
+    else if (sawActive) {
+      finishTransfer(tid, 'done'); return;
+    } else if (++misses > POLL_MISS_LIMIT) {
+      finishTransfer(tid, 'error', 'the transfer never started');
+      return;
+    }
     await _sleep(500);
   }
 }
 
+let uploadTarget = null;
+
 function pickUpload(destPath) {
-  state.files.uploadTarget = destPath || state.files.path;
+  uploadTarget = destPath || state.files.path;
   const input = $('files-file-input');
   input.value = '';
   input.click();
 }
 function onFilePicked(ev) {
   const files = [...ev.target.files];
-  const dest = state.files.uploadTarget || state.files.path;
-  state.files.uploadTarget = null;
+  const dest = uploadTarget || state.files.path;
+  uploadTarget = null;
   ev.target.value = '';
   if (files.length) uploadFiles(files.map((f) => ({ file: f, relPath: f.name })), dest);
 }

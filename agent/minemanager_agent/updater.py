@@ -154,9 +154,9 @@ async def apply_update(
             "installed": {"version": download.get("version"), "build": download.get("build")},
             "backup": str(backup_path.relative_to(root_p)) if backup_path else None,
         }
-    except Exception as exc:
-        if isinstance(exc, UpdateError):
-            raise
+    except UpdateError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - IO/OS failures become one error type
         raise UpdateError(str(exc)) from exc
     finally:
         try:

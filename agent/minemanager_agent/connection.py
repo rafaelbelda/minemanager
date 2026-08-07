@@ -106,6 +106,12 @@ class Connection:
             await self._pump(ws)
         finally:
             heartbeat.cancel()
+            # Commands still running belong to a socket nobody will read again.
+            # Left alone they outlive the connection and can overlap a duplicate
+            # arriving on the replacement one.
+            for task in list(self._inflight):
+                task.cancel()
+            self._inflight.clear()
 
     async def _pump(self, ws: websockets.WebSocketClientProtocol) -> None:
         async for raw in ws:

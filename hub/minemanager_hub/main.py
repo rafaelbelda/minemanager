@@ -77,6 +77,15 @@ async def lifespan(_app: FastAPI):
 
 _settings = get_settings()
 
+# Resolved before the app exists so `lifespan` can log it: the mount itself has
+# to happen after every router is registered, but the *decision* does not.
+_web_dir = _settings.web_dir
+_web_dir_mounted = _web_dir.is_dir()
+_web_dir_status = (
+    f"serving UI from {_web_dir}" if _web_dir_mounted
+    else f"UI NOT mounted - {_web_dir} is not a directory (API-only)"
+)
+
 app = FastAPI(
     title="MineManager Hub",
     version=__version__,
@@ -144,9 +153,5 @@ class _SpaStatic:
 # proxy authenticates UI and API together. Mounted last so every /api, /ws and
 # /docs route is matched first; skipped entirely when the directory is absent
 # (e.g. an API-only deployment).
-_web_dir = get_settings().web_dir
-if _web_dir.is_dir():
+if _web_dir_mounted:
     app.mount("/", _SpaStatic(_web_dir), name="web")
-    _web_dir_status = f"serving UI from {_web_dir}"
-else:
-    _web_dir_status = f"UI NOT mounted - {_web_dir} is not a directory (API-only)"

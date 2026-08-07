@@ -61,6 +61,17 @@ _JAVA_HOME = Field(
 _JAVA_HOME_FORBIDDEN = set(";&|$`<>\n\r\t\"'\\")
 
 
+# Fields backed by NOT NULL columns. A PATCH carrying an explicit null for one
+# of these used to reach the ORM and surface as a 500 on the flush; rejecting it
+# here makes it the 422 it always was.
+def _require_value(value):
+    if value is None:
+        raise ValueError("may not be null")
+    if isinstance(value, str) and not value.strip():
+        raise ValueError("may not be empty")
+    return value.strip() if isinstance(value, str) else value
+
+
 def _clean_java_home(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
@@ -87,6 +98,11 @@ class InstanceCreate(BaseModel):
     java_home: Optional[str] = _JAVA_HOME
     auto_restart: bool = True
 
+    @field_validator("name", "root_dir", "start_command")
+    @classmethod
+    def _check_required(cls, value: str) -> str:
+        return _require_value(value)
+
     @field_validator("java_home")
     @classmethod
     def _check_java_home(cls, value: Optional[str]) -> Optional[str]:
@@ -94,7 +110,12 @@ class InstanceCreate(BaseModel):
 
 
 class InstanceUpdate(BaseModel):
-    """Partial update — only the fields present are changed (PATCH semantics)."""
+    """Partial update — only the fields present are changed (PATCH semantics).
+
+    Every field is Optional so it may be omitted, but the ones backed by NOT NULL
+    columns still reject an explicit null. Defaults are not validated in pydantic
+    v2, so these validators fire only when the field was actually sent.
+    """
 
     name: Optional[str] = None
     type: Optional[InstanceType] = None
@@ -103,6 +124,11 @@ class InstanceUpdate(BaseModel):
     jar_path: Optional[str] = _JAR_PATH
     java_home: Optional[str] = _JAVA_HOME
     auto_restart: Optional[bool] = None
+
+    @field_validator("name", "type", "root_dir", "start_command", "auto_restart")
+    @classmethod
+    def _check_required(cls, value):
+        return _require_value(value)
 
     @field_validator("java_home")
     @classmethod

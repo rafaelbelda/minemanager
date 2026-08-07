@@ -38,10 +38,12 @@ def _header(scope, name: bytes) -> str:
 
 
 def _hostname(value: str) -> str:
-    """Bare lowercase hostname from a ``Host`` header or an origin's netloc."""
+    # Bare lowercase hostname from a ``Host`` header or an origin's netloc.
     value = (value or "").strip().lower()
     if value.startswith("["):                      # [::1]:8730 — IPv6 literal
         return value.partition("]")[0].lstrip("[")
+    if value.count(":") > 1:                       # ::1 — bare IPv6, no port
+        return value
     return value.partition(":")[0]
 
 
@@ -79,13 +81,19 @@ class HostGuard:
 
     def __init__(self, app, allowed: set[str]) -> None:
         self.app = app
-        self.allowed = {_hostname(h) for h in allowed} if ANY_HOST not in allowed else None
+        # Falsy entries are dropped: one that survived normalisation would match
+        # a request with no Host header at all, which is the one case this guard
+        # must never allow.
+        self.allowed = (
+            None if ANY_HOST in allowed
+            else {h for h in (_hostname(a) for a in allowed) if h}
+        )
         self._warned: set[str] = set()
 
     async def __call__(self, scope, receive, send):
         if self.allowed is not None and scope["type"] in ("http", "websocket"):
             host = _hostname(_header(scope, b"host"))
-            if host not in self.allowed:
+            if not host or host not in self.allowed:
                 # Log once per distinct host: a misconfigured MM_ALLOWED_HOSTS
                 # otherwise looks like a total outage with no explanation.
                 if host not in self._warned:

@@ -75,12 +75,18 @@ class TransferContext:
         }
 
 
+class TransferIdInUse(Exception):
+    """A live transfer already holds the requested id."""
+
+
 class TransferRegistry:
     def __init__(self) -> None:
         self._t: dict[str, TransferContext] = {}
 
     def create(self, tid: str, node_id: str, direction: str, path: str) -> TransferContext:
         self._sweep()
+        if tid in self._t:
+            raise TransferIdInUse(tid)
         ctx = TransferContext(id=tid, node_id=node_id, direction=direction, path=path)
         self._t[tid] = ctx
         return ctx
