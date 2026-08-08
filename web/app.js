@@ -58,7 +58,7 @@ const state = {
     selVersion: null, selBuild: null, updating: false,
   },
   autoscroll: true,
-  scanlines: true,
+  scanlines: false,
   loaded: false,
 };
 
@@ -707,7 +707,7 @@ function renderInstance() {
 
 function renderConsole(inst, m, live) {
   $('term-dot').style.cssText = `width:8px;height:8px;background:${m.color};animation:${m.anim}`;
-  $('term-title').textContent = `pty · ${inst.name}`;
+  $('term-title').textContent = `pty: ${inst.name}`;
   $('console-prompt').textContent = `${inst.name} ›`;
 
   const buf = state.console.get(inst.id) || [];

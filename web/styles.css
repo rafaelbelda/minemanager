@@ -62,11 +62,21 @@
   --term-bg: #080a08;
   --term-head: #0a0f0b;
   --term-line: #1a2a1e;
-  --term-fg: #9adcb6;
-  --term-dim: #4f7d61;
-  --term-dim-2: #3f6b4f;
-  --term-dim-3: #375c44;
-  --term-lvl: #4f8f68;
+  --term-fg: #e8e4d8;
+  --term-dim: #aaa79d;
+  --term-dim-2: #918f87;
+  --term-dim-3: #797871;
+  --term-lvl: #c9c5b9;
+
+/* --term-bg: #080a08;
+--term-head: #0a0f0b;
+--term-line: #1a2a1e;
+--term-fg: #f2f2f2;
+--term-dim: #b0b0b0;
+--term-dim-2: #969696;
+--term-dim-3: #808080;
+--term-lvl: #d0d0d0;
+*/
 
   --mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: 'Space Grotesk', system-ui, -apple-system, sans-serif;
@@ -505,7 +515,7 @@ select.input option { background: var(--panel); color: var(--fg); }
 .scanlines {
   position: absolute; inset: 0; pointer-events: none; opacity: .5;
   background: repeating-linear-gradient(0deg,
-    rgba(0, 0, 0, 0) 0px, rgba(0, 0, 0, 0) 2px, rgba(0, 0, 0, .16) 3px);
+    rgba(255, 255, 255, 0) 0px, rgba(255, 255, 255, 0) 2px, rgba(255, 255, 255, .06) 3px);
 }
 .console-input {
   flex: none; margin-top: 10px;
