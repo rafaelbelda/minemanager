@@ -6,7 +6,7 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event, func, inspect, select, text
+from sqlalchemy import DateTime, create_engine, event, func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -58,12 +58,55 @@ def _init() -> None:
 SCHEMA_VERSION = 1
 
 
+def _drop_columns(conn, table: str, drop: set[str]) -> None:
+    """Remove columns by rebuilding the table.
+
+    ``ALTER TABLE ... DROP COLUMN`` needs SQLite 3.35 (2021), and Ubuntu 20.04
+    ships 3.31 — there the statement is a syntax error, so the hub would fail to
+    start rather than migrate. Rebuilding from the ORM's own definition works on
+    every version, and a migration runs once per database.
+    """
+    existing = {c["name"] for c in inspect(conn).get_columns(table)}
+    if not (drop & existing):
+        return
+    model = Base.metadata.tables[table]
+    keep = [c for c in model.columns if c.name in existing and c.name not in drop]
+    names = ", ".join(c.name for c in keep)
+    sources = ", ".join(_carry_over(c) for c in keep)
+    conn.execute(text(f"ALTER TABLE {table} RENAME TO {table}_old"))
+    model.create(conn)
+    conn.execute(text(f"INSERT INTO {table} ({names}) SELECT {sources} FROM {table}_old"))
+    conn.execute(text(f"DROP TABLE {table}_old"))
+
+
+def _carry_over(col) -> str:
+    """How to read a column out of the old table.
+
+    A rebuild copies into the *current* schema, which may declare NOT NULL where
+    the old one did not. Rather than let one stale NULL abort the migration —
+    and with it the hub's startup — fill from the model's own default.
+    """
+    if col.nullable:
+        return col.name
+    default = getattr(col.default, "arg", None) if col.default is not None else None
+    if isinstance(default, bool):
+        return f"COALESCE({col.name}, {int(default)})"
+    if isinstance(default, (int, float)):
+        return f"COALESCE({col.name}, {default})"
+    if isinstance(default, str):
+        escaped = default.replace("'", "''")
+        return f"COALESCE({col.name}, '{escaped}')"
+    if isinstance(col.type, DateTime):          # created_at and friends
+        return f"COALESCE({col.name}, CURRENT_TIMESTAMP)"
+    return col.name
+
+
 def _migrate_v1(conn) -> None:
     """Columns added, and RCON removed, before schema versioning existed.
 
     ``instances.rcon_host`` was ``NOT NULL`` with no DDL default (SQLAlchemy's
     ``default=`` is applied in Python), so once the ORM stopped sending it every
-    INSERT on an existing database failed the constraint — dropping it is what
+    INSERT on an existing database failed the constraint — removing it is what
     keeps older databases working.
 
     Must stay idempotent: databases that predate ``schema_meta`` already had
@@ -80,9 +123,7 @@ def _migrate_v1(conn) -> None:
     for name, ddl in added.items():
         if name not in existing:
             conn.execute(text(f"ALTER TABLE instances ADD COLUMN {name} {ddl}"))
-    for name in ("rcon_host", "rcon_port"):
-        if name in existing:
-            conn.execute(text(f"ALTER TABLE instances DROP COLUMN {name}"))
+    _drop_columns(conn, "instances", {"rcon_host", "rcon_port"})
 
 
 #: (version, step). Appended to, never edited — an applied migration is history.
@@ -121,6 +162,9 @@ def _apply_schema(engine: Engine) -> None:
     current = _read_version(engine)
     pending = [(v, step) for v, step in _MIGRATIONS if v > current]
     for version, step in pending:
+        # One transaction per step, so a failure leaves the database as it was.
+        # Foreign keys stay enforced: no table references `instances`, and its
+        # rows already satisfied the same constraint before the rebuild.
         with engine.begin() as conn:
             step(conn)
         log.info("applied schema migration v%d", version)

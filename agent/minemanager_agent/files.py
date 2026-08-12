@@ -133,6 +133,10 @@ def rename(root: str | Path, rel: str, new_name: str) -> dict:
     if not new_name or new_name in (".", "..") or "/" in new_name or "\\" in new_name:
         raise ValueError("invalid name")
     root_path = Path(root).resolve()
+    if src == root_path:
+        # Guarding only the destination let this through: renaming the root into
+        # itself reached os.rename and surfaced as a bare EINVAL.
+        raise JailError("refusing to rename the instance root")
     dst = resolve_within(root, str(Path(rel).parent / new_name))
     if dst == root_path:
         raise JailError("refusing to rename the instance root")

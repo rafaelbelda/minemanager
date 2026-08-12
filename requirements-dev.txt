@@ -1,0 +1,4 @@
+# Test-only dependencies. The packages themselves are installed editable:
+#   python -m pip install -e shared -e hub -e agent -r requirements-dev.txt
+pytest>=8.0
+pytest-asyncio>=0.23
