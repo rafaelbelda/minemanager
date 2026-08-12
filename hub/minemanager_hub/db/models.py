@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -24,6 +24,19 @@ def _now() -> datetime:
 
 class Base(DeclarativeBase):
     pass
+
+
+class SchemaMeta(Base):
+    """Single row recording which schema migrations have been applied.
+
+    Without it every startup has to re-inspect the database to work out what is
+    missing, so each removed feature leaves inspection code that runs forever.
+    """
+
+    __tablename__ = "schema_meta"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class Node(Base):

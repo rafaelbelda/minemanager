@@ -58,7 +58,7 @@ const state = {
     selVersion: null, selBuild: null, updating: false,
   },
   autoscroll: true,
-  scanlines: false,
+  scanlines: true,
   loaded: false,
 };
 

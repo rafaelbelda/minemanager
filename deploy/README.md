@@ -37,8 +37,7 @@ loopback only; anything else gets HTTP 400.
 sudo systemctl enable --now minemanager-hub
 ```
 
-Then put your reverse proxy and authentication in front. The hub does not
-authenticate end users itself. Expose it only over WireGuard!
+Then, put your reverse proxy and authentication in front. **MineManager's Hub does not authenticate end users itself.** For extra security, expose it only through WireGuard.
 
 **Agent** - `sudoedit /etc/minemanager/agent.env`
 

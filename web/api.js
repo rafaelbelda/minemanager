@@ -1,6 +1,6 @@
 /* REST client for the MineManager hub.
  *
- * The hub sits behind Authelia + WireGuard, so there is no app-layer auth here:
+ * The hub sits behind Auth Service + WireGuard, so there is no app-layer auth here:
  * requests are same-origin and the reverse proxy has already authenticated the
  * user. For local dev against a hub on another port, override the base with
  * `?hub=http://localhost:8730` (remembered in localStorage) and start the hub

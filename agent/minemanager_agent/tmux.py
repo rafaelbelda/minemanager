@@ -18,10 +18,7 @@ from __future__ import annotations
 import asyncio
 import shlex
 
-# Dedicated tmux server socket, so our sessions live in the agent's own tmux
-# server (and thus its systemd cgroup) — this is what lets the shutdown handler
-# stop servers before systemd force-kills the group, and avoids clobbering a
-# user's tmux.
+
 SOCKET = "minemanager"
 SESSION_PREFIX = "mm"
 

@@ -1,116 +1,76 @@
 """Hub configuration, driven by environment variables.
 
-The hub runs behind Authelia + WireGuard, so it does not configure its own user
+The hub runs behind Auth Service + WireGuard, so it does not configure its own user
 authentication here. What it *does* own is machine-to-machine trust: agent
 credentials, and the Host/Origin guards.
+
+Parsing lives in :mod:`minemanager_shared.env`; this module only names the
+variables, their defaults, and why each one exists.
 """
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
-def _env_int(name: str, default: int) -> int:
-    # Read an integer env var, failing with a readable message.
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        raise SystemExit(f"{name} must be an integer, got {raw!r}") from None
-
-
-def _default_web_dir() -> Path:
-    """Where the static web UI lives (served same-origin by the hub).
-
-    Defaults to ``<repo>/web`` so a source checkout or editable install just
-    works; set ``MM_WEB_DIR`` when the UI is deployed elsewhere.
-    """
-    env = os.environ.get("MM_WEB_DIR")
-    if env:
-        return Path(env)
-    return Path(__file__).resolve().parents[2] / "web"
-
+from minemanager_shared.env import env_bool, env_csv, env_int, env_path, env_str
 
 #: SQLite DB location. Matches the systemd unit; a hub pointed at a different
 #: directory silently opens an empty database.
 DEFAULT_DATA_DIR = Path("/var/lib/minemanager")
 
+#: Served same-origin by the hub. Defaults to ``<repo>/web`` so a source checkout
+#: or editable install just works; set ``MM_WEB_DIR`` when deployed elsewhere.
+DEFAULT_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 
-def _default_data_dir() -> Path:
-    """Where the hub keeps its SQLite DB and any local state."""
-    env = os.environ.get("MM_DATA_DIR")
-    return Path(env) if env else DEFAULT_DATA_DIR
+#: Loopback only, which is correct for the default MM_HOST bind. Any real
+#: deployment must list the name clients use.
+DEFAULT_ALLOWED_HOSTS = "localhost,127.0.0.1,::1,[::1]"
 
 
 @dataclass
 class Settings:
-    data_dir: Path = field(default_factory=_default_data_dir)
-    web_dir: Path = field(default_factory=_default_web_dir)
-    host: str = field(default_factory=lambda: os.environ.get("MM_HOST", "127.0.0.1"))
-    port: int = field(default_factory=lambda: _env_int("MM_PORT", 8730))
+    data_dir: Path = field(default_factory=lambda: env_path("MM_DATA_DIR", DEFAULT_DATA_DIR))
+    web_dir: Path = field(default_factory=lambda: env_path("MM_WEB_DIR", DEFAULT_WEB_DIR))
+    host: str = field(default_factory=lambda: env_str("MM_HOST", "127.0.0.1"))
+    port: int = field(default_factory=lambda: env_int("MM_PORT", 8730))
 
     # How long an enrollment token is valid once minted (seconds).
-    enrollment_ttl_s: int = field(
-        default_factory=lambda: _env_int("MM_ENROLLMENT_TTL", 900)
-    )
+    enrollment_ttl_s: int = field(default_factory=lambda: env_int("MM_ENROLLMENT_TTL", 900))
 
-    # Comma-separated allowed CORS origins for the web UI during development
-    # (e.g. a Vite dev server on another port). In production the UI is served
-    # same-origin behind the reverse proxy, so this can stay empty.
-    cors_origins: list[str] = field(
-        default_factory=lambda: [
-            o.strip() for o in os.environ.get("MM_CORS_ORIGINS", "").split(",") if o.strip()
-        ]
-    )
+    # Allowed CORS origins for the web UI during development (e.g. a dev server
+    # on another port). In production the UI is same-origin, so this stays empty.
+    cors_origins: list[str] = field(default_factory=lambda: env_csv("MM_CORS_ORIGINS"))
 
-    # File-explorer thresholds (served to the UI via /api/config).
-    # Above the *warn* size the editor asks before opening; above the *max* size
-    # it won't open a file as text at all. The *transfer cap* bounds the simple
-    # (non-streaming) upload/download path — larger transfers use the streaming
-    # feature. All in bytes.
+    # File-explorer thresholds (served to the UI via /api/config), in bytes.
+    # Above *warn* the editor asks before opening; above *max* it will not open
+    # the file as text at all. The *transfer cap* bounds the simple base64
+    # upload/download path — larger transfers use the streaming one.
     editor_warn_bytes: int = field(
-        default_factory=lambda: _env_int("MM_EDITOR_WARN_BYTES", 2_000_000)
+        default_factory=lambda: env_int("MM_EDITOR_WARN_BYTES", 2_000_000)
     )
     editor_max_bytes: int = field(
-        default_factory=lambda: _env_int("MM_EDITOR_MAX_BYTES", 5_000_000)
+        default_factory=lambda: env_int("MM_EDITOR_MAX_BYTES", 5_000_000)
     )
     transfer_cap_bytes: int = field(
-        default_factory=lambda: _env_int("MM_TRANSFER_CAP_BYTES", 8 * 1024 * 1024)
+        default_factory=lambda: env_int("MM_TRANSFER_CAP_BYTES", 8 * 1024 * 1024)
     )
 
-    # Hostnames this hub answers to. With no app-layer auth, an unexpected Host
+    # Hostnames this hub answers to. With no app-layer auth an unexpected Host
     # means a DNS-rebinding attempt, which reaches the hub's port directly and so
-    # bypasses the reverse proxy (and Authelia). Defaults to loopback only, which
-    # is correct for the default MM_HOST=127.0.0.1 bind; any real deployment must
-    # list its own name, e.g. MM_ALLOWED_HOSTS=mm.example.com. "*" disables.
+    # bypasses the reverse proxy. "*" disables the check.
     allowed_hosts: set[str] = field(
-        default_factory=lambda: {
-            h.strip() for h in os.environ.get(
-                "MM_ALLOWED_HOSTS", "localhost,127.0.0.1,::1,[::1]"
-            ).split(",") if h.strip()
-        }
+        default_factory=lambda: set(env_csv("MM_ALLOWED_HOSTS", DEFAULT_ALLOWED_HOSTS))
     )
 
     # Let clients that send no Origin header (curl, scripts, CI) make
     # state-changing requests. Off by default: a missing Origin means "not a
-    # browser", and allowing it unconditionally would reopen the CSRF hole that
-    # checking Origin closes.
-    allow_api_clients: bool = field(
-        default_factory=lambda: os.environ.get("MM_ALLOW_API_CLIENTS", "").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
+    # browser", and allowing it would reopen the CSRF hole that checking closes.
+    allow_api_clients: bool = field(default_factory=lambda: env_bool("MM_ALLOW_API_CLIENTS"))
 
-    # Serve /docs, /redoc and /openapi.json. Off by default: there is no
-    # app-layer auth, so they hand anyone who reaches the hub a complete map of
-    # the attack surface, parameter names included. Set MM_ENABLE_DOCS=1 in dev.
-    enable_docs: bool = field(
-        default_factory=lambda: os.environ.get("MM_ENABLE_DOCS", "").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
+    # Serve /docs, /redoc and /openapi.json. Off by default: with no app-layer
+    # auth they hand anyone who reaches the hub a map of the attack surface.
+    enable_docs: bool = field(default_factory=lambda: env_bool("MM_ENABLE_DOCS"))
 
     @property
     def db_path(self) -> Path:

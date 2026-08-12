@@ -10,7 +10,6 @@ GZ, and RAR when the node has the ``rarfile`` lib + ``unrar`` tool.
 from __future__ import annotations
 
 import gzip
-import os
 import shutil
 import stat
 import tarfile
@@ -18,12 +17,13 @@ import zipfile
 from pathlib import Path
 
 from minemanager_agent.files import JailError, resolve_within
+from minemanager_shared.env import env_int
 
 _MAX_CONFLICTS = 200
 
 # Ceiling on total *uncompressed* output. Uploads are capped around 8 MB, and a
-# well-formed archive that size expands to hundreds of GB
-MAX_EXTRACT_BYTES = int(os.environ.get("MM_MAX_EXTRACT_BYTES", str(20 * 1024 * 1024 * 1024)))
+# well-formed archive that size can expand to hundreds of GB.
+MAX_EXTRACT_BYTES = env_int("MM_MAX_EXTRACT_BYTES", 20 * 1024 * 1024 * 1024)
 
 # Keep some room on the filesystem after extracting, so a large-but-legal archive
 # still cannot be the thing that leaves a world with nowhere to save.

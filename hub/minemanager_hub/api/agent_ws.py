@@ -72,9 +72,8 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
                 return node.id, None, None
             detail = f" ({enroll_error})" if enroll_error else ""
             return None, None, (
-                f"stored credential for node {hello.node_id} was rejected{detail} - that node "
-                "may have been deleted or re-enrolled. Mint a fresh enrollment token and set "
-                "MM_ENROLL_TOKEN, or delete the agent's identity.json"
+                f"stored credential for node {hello.node_id} was rejected{detail}. "
+                "Mint a fresh enrollment token and set MM_ENROLL_TOKEN, or delete the agent's identity.json"
             )
 
     if enroll_error:

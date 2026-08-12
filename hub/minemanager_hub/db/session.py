@@ -6,12 +6,12 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import create_engine, event, func, select
+from sqlalchemy import create_engine, event, func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from minemanager_hub.config import get_settings
-from minemanager_hub.db.models import Base, Node
+from minemanager_hub.db.models import Base, Node, SchemaMeta
 
 log = logging.getLogger("minemanager.hub")
 
@@ -40,9 +40,7 @@ def _init() -> None:
         cur.execute("PRAGMA busy_timeout=5000")
         cur.close()
 
-    Base.metadata.create_all(_engine)
-    _ensure_columns(_engine)
-    _drop_removed_columns(_engine)
+    _apply_schema(_engine)
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
 
     with _engine.connect() as conn:
@@ -56,49 +54,78 @@ def _init() -> None:
         )
 
 
-def _ensure_columns(engine: Engine) -> None:
-    from sqlalchemy import inspect, text
-
-    wanted = {
-        "instances": {
-            "version": "VARCHAR(64)",
-            "build": "VARCHAR(32)",
-            "jar_path": "VARCHAR(1024)",
-            "java_home": "VARCHAR(1024)",
-        },
-    }
-    inspector = inspect(engine)
-    with engine.begin() as conn:
-        for table, cols in wanted.items():
-            if not inspector.has_table(table):
-                continue
-            existing = {c["name"] for c in inspector.get_columns(table)}
-            for name, ddl in cols.items():
-                if name not in existing:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}"))
+# Bump when a new migration is appended below.
+SCHEMA_VERSION = 1
 
 
-def _drop_removed_columns(engine: Engine) -> None:
-    """Drop columns whose feature has been removed.
+def _migrate_v1(conn) -> None:
+    """Columns added, and RCON removed, before schema versioning existed.
 
     ``instances.rcon_host`` was ``NOT NULL`` with no DDL default (SQLAlchemy's
-    ``default=`` is applied in Python), so once the ORM stops sending it every
-    INSERT on an existing database fails the constraint. Dropping it is what
+    ``default=`` is applied in Python), so once the ORM stopped sending it every
+    INSERT on an existing database failed the constraint — dropping it is what
     keeps older databases working.
-    """
-    from sqlalchemy import inspect, text
 
-    removed = {"instances": ["rcon_host", "rcon_port"]}
-    inspector = inspect(engine)
+    Must stay idempotent: databases that predate ``schema_meta`` already had
+    these applied by the old inspect-on-every-boot code, and will run it once
+    more to get stamped.
+    """
+    added = {
+        "version": "VARCHAR(64)",
+        "build": "VARCHAR(32)",
+        "jar_path": "VARCHAR(1024)",
+        "java_home": "VARCHAR(1024)",
+    }
+    existing = {c["name"] for c in inspect(conn).get_columns("instances")}
+    for name, ddl in added.items():
+        if name not in existing:
+            conn.execute(text(f"ALTER TABLE instances ADD COLUMN {name} {ddl}"))
+    for name in ("rcon_host", "rcon_port"):
+        if name in existing:
+            conn.execute(text(f"ALTER TABLE instances DROP COLUMN {name}"))
+
+
+#: (version, step). Appended to, never edited — an applied migration is history.
+_MIGRATIONS = [(1, _migrate_v1)]
+
+
+def _read_version(engine: Engine) -> int:
+    with engine.connect() as conn:
+        if not inspect(conn).has_table(SchemaMeta.__tablename__):
+            return 0
+        row = conn.execute(text("SELECT version FROM schema_meta WHERE id = 1")).scalar()
+    return int(row or 0)
+
+
+def _stamp_version(engine: Engine, version: int) -> None:
     with engine.begin() as conn:
-        for table, cols in removed.items():
-            if not inspector.has_table(table):
-                continue
-            existing = {c["name"] for c in inspector.get_columns(table)}
-            for name in cols:
-                if name in existing:
-                    conn.execute(text(f"ALTER TABLE {table} DROP COLUMN {name}"))
-                    log.info("dropped removed column %s.%s", table, name)
+        conn.execute(text("DELETE FROM schema_meta"))
+        conn.execute(text("INSERT INTO schema_meta (id, version) VALUES (1, :v)"), {"v": version})
+
+
+def _apply_schema(engine: Engine) -> None:
+    """Create missing tables, then run only the migrations this database lacks.
+
+    A database with no ``nodes`` table is brand new: ``create_all`` has just
+    produced the current schema, so it is stamped as current rather than being
+    walked through migrations that describe changes it never needed.
+    """
+    fresh = not inspect(engine).has_table("nodes")
+    Base.metadata.create_all(engine)
+
+    if fresh:
+        _stamp_version(engine, SCHEMA_VERSION)
+        log.info("database initialised at schema v%d", SCHEMA_VERSION)
+        return
+
+    current = _read_version(engine)
+    pending = [(v, step) for v, step in _MIGRATIONS if v > current]
+    for version, step in pending:
+        with engine.begin() as conn:
+            step(conn)
+        log.info("applied schema migration v%d", version)
+    if current < SCHEMA_VERSION:
+        _stamp_version(engine, SCHEMA_VERSION)
 
 
 def init_db() -> None:

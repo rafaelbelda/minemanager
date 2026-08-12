@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from minemanager_shared.env import env_bool, env_opt, env_path, env_str
+
 log = logging.getLogger("minemanager.agent")
 
 
@@ -25,27 +27,21 @@ def _write_private(path: Path, text: str) -> None:
     os.replace(tmp, path)          # atomic; keeps the 0600 mode
 
 
-#: Where a packaged agent keeps identity.json and runtime.json.
+#: Where a packaged agent keeps identity.json.
 DEFAULT_DATA_DIR = Path("/var/lib/minemanager-agent")
-
-
-def _default_data_dir() -> Path:
-    env = os.environ.get("MM_AGENT_DATA_DIR")
-    return Path(env) if env else DEFAULT_DATA_DIR
 
 
 @dataclass
 class AgentConfig:
     hub_url: str = field(
-        default_factory=lambda: os.environ.get("MM_HUB_URL", "ws://127.0.0.1:8730/ws/agent")
+        default_factory=lambda: env_str("MM_HUB_URL", "ws://127.0.0.1:8730/ws/agent")
     )
-    data_dir: Path = field(default_factory=_default_data_dir)
-    enroll_token: str | None = field(default_factory=lambda: os.environ.get("MM_ENROLL_TOKEN"))
+    data_dir: Path = field(
+        default_factory=lambda: env_path("MM_AGENT_DATA_DIR", DEFAULT_DATA_DIR)
+    )
+    enroll_token: str | None = field(default_factory=lambda: env_opt("MM_ENROLL_TOKEN"))
     # Permit a plaintext ws:// hub URL to a non-loopback host. Off by default.
-    allow_insecure: bool = field(
-        default_factory=lambda: os.environ.get("MM_ALLOW_INSECURE", "").strip().lower()
-        in {"1", "true", "yes", "on"}
-    )
+    allow_insecure: bool = field(default_factory=lambda: env_bool("MM_ALLOW_INSECURE"))
 
     reconnect_min_s: float = 1.0
     reconnect_max_s: float = 30.0
