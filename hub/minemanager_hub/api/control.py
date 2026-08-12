@@ -43,6 +43,12 @@ from minemanager_shared.protocol import (
 
 router = APIRouter(prefix="/api", tags=["control"])
 
+# A graceful stop waits for the world to save — up to 45s on the agent, and a
+# restart is a stop followed by a start. The default 30s command timeout expired
+# first, so a slow but *successful* stop reported 504 while the agent went on to
+# complete it. Must stay above the agent's own budget.
+_STOP_TIMEOUT_S = 120.0
+
 
 @router.get("/config", tags=["config"])
 def ui_config() -> dict:
@@ -91,7 +97,11 @@ async def power(instance_id: str, op: str) -> dict:
     if action is None:
         raise HTTPException(400, f"unknown power op: {op}")
 
-    result = await proxy(instance_id, action.value, PowerData)
+    slow = op in ("stop", "restart")
+    result = await proxy(
+        instance_id, action.value, PowerData,
+        timeout=_STOP_TIMEOUT_S if slow else 30.0,
+    )
 
     # Recorded only after the agent accepts, so a failed command cannot leave the
     # DB claiming "should be running". Not yet pushed back on reconnect, so this

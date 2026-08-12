@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
@@ -65,11 +66,16 @@ _JAVA_HOME_FORBIDDEN = set(";&|$`<>\n\r\t\"'\\")
 # of these used to reach the ORM and surface as a 500 on the flush; rejecting it
 # here makes it the 422 it always was.
 def _require_value(value):
+
     if value is None:
         raise ValueError("may not be null")
-    if isinstance(value, str) and not value.strip():
-        raise ValueError("may not be empty")
-    return value.strip() if isinstance(value, str) else value
+    if isinstance(value, Enum):
+        return value
+    if isinstance(value, str):
+        if not value.strip():
+            raise ValueError("may not be empty")
+        return value.strip()
+    return value
 
 
 def _clean_java_home(value: Optional[str]) -> Optional[str]:

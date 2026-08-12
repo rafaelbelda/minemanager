@@ -40,6 +40,7 @@ def _header(scope, name: bytes) -> str:
 def _hostname(value: str) -> str:
     # Bare lowercase hostname from a ``Host`` header or an origin's netloc.
     value = (value or "").strip().lower()
+    value = value.rpartition("@")[2]               # drop any userinfo
     if value.startswith("["):                      # [::1]:8730 — IPv6 literal
         return value.partition("]")[0].lstrip("[")
     if value.count(":") > 1:                       # ::1 — bare IPv6, no port

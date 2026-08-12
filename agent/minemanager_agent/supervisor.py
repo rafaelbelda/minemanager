@@ -115,6 +115,17 @@ class ManagedInstance:
         return Path(self.spec.root_dir) / "logs" / "latest.log"
 
 
+def root_dir_problem(root_dir: str) -> str | None:
+    # Why ``root_dir`` is unusable as a working directory, or None if it is fine.
+
+    path = Path(root_dir)
+    if not path.is_dir():
+        return f"root directory does not exist on this node: {root_dir}"
+    if not os.access(path, os.R_OK | os.X_OK):
+        return f"root directory is not readable by the agent: {root_dir}"
+    return None
+
+
 def java_home_problem(java_home: str) -> str | None:
     """Why ``java_home`` is unusable, or None if it looks fine.
 
@@ -198,11 +209,12 @@ class Supervisor:
                 await self._set_state(mi, RunState.running, detail="already running; adopted")
             return {"state": mi.state.value, "already_running": True}
 
-        if spec.java_home:
+        problem = root_dir_problem(spec.root_dir)
+        if problem is None and spec.java_home:
             problem = java_home_problem(spec.java_home)
-            if problem is not None:
-                await self._set_state(mi, RunState.stopped, detail=problem)
-                raise RuntimeError(problem)
+        if problem is not None:
+            await self._set_state(mi, RunState.stopped, detail=problem)
+            raise RuntimeError(problem)
 
         command = launch_command(spec)
         await self._set_state(mi, RunState.starting, detail=f"launching: {command}")
@@ -499,12 +511,13 @@ class Supervisor:
             )
             return
 
-        if mi.spec.java_home:
+        problem = root_dir_problem(mi.spec.root_dir)
+        if problem is None and mi.spec.java_home:
             problem = java_home_problem(mi.spec.java_home)
-            if problem is not None:
-                mi.desired_running = False
-                await self._set_state(mi, RunState.crashed, detail=problem)
-                return
+        if problem is not None:
+            mi.desired_running = False
+            await self._set_state(mi, RunState.crashed, detail=problem)
+            return
 
         await self._set_state(
             mi, RunState.crashed,

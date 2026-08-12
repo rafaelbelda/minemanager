@@ -143,13 +143,11 @@ def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
 def update_instance(instance_id: str, body: InstanceUpdate) -> InstanceOut:
     # Partial update of an instance's declared spec.
 
-    changes = body.model_dump(exclude_unset=True)
+    changes = body.model_dump(mode="json", exclude_unset=True)
     with session_scope() as db:
         inst = db.get(Instance, instance_id)
         if inst is None:
             raise HTTPException(404, "instance not found")
-        if "type" in changes and changes["type"] is not None:
-            changes["type"] = changes["type"].value  # enum -> stored string
         for field, value in changes.items():
             setattr(inst, field, value)
         db.flush()
