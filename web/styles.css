@@ -240,10 +240,11 @@ select.input option { background: var(--panel); color: var(--fg); }
   border-bottom: 1px solid var(--line); background: var(--panel);
 }
 .brand { display: flex; align-items: center; gap: 10px; }
+/* The logo carries its own colour and transparency, so it needs sizing only —
+   the accent square and glyph centring here were for the ◆ character. */
 .brand-mark {
-  width: 22px; height: 22px; display: grid; place-items: center;
-  background: var(--mm-accent); color: #0e0e10;
-  font-weight: 700; font-size: 13px; border-radius: 3px;
+  width: 22px; height: 22px; flex: none;
+  object-fit: contain;
 }
 .brand-name { font-weight: 700; font-size: 14px; letter-spacing: .14em; }
 .brand-ver {
@@ -266,11 +267,7 @@ select.input option { background: var(--panel); color: var(--fg); }
   display: flex; flex-direction: column; min-height: 0;
 }
 .sidebar-head { flex: none; padding: 14px 14px 10px; }
-.sidebar-head-row {
-  display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 10px;
-}
-.sidebar-count { font-family: var(--mono); font-size: 10px; color: var(--dim-2); }
+
 .filter {
   display: flex; align-items: center; gap: 8px;
   height: 32px; padding: 0 10px;
@@ -308,12 +305,6 @@ select.input option { background: var(--panel); color: var(--fg); }
 .row-badge { font-family: var(--mono); font-size: 9.5px; letter-spacing: .06em; }
 .row-state { font-family: var(--mono); font-size: 9px; letter-spacing: .05em; opacity: .85; }
 .row-mark { color: var(--mm-accent); font-size: 12px; }
-
-.sidebar-foot {
-  flex: none; padding: 10px 12px; border-top: 1px solid var(--line-4);
-  display: flex; align-items: center; gap: 8px;
-  font-family: var(--mono); font-size: 10px; color: var(--dim-2);
-}
 
 /* --- main ---------------------------------------------------------------- */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg); }

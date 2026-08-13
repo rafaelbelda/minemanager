@@ -12,11 +12,9 @@ const BACKOFF_MIN = 1000;
 const BACKOFF_MAX = 20000;
 
 export class NodeEvents {
-  /** @param {(ev: object, nodeId: string) => void} onEvent
-   *  @param {() => void} onStatus called whenever any socket's liveness changes */
-  constructor(onEvent, onStatus) {
+  /** @param {(ev: object, nodeId: string) => void} onEvent */
+  constructor(onEvent) {
     this.onEvent = onEvent;
-    this.onStatus = onStatus;
     this.conns = new Map(); // nodeId -> { ws, timer, backoff, open, closed }
   }
 
@@ -44,9 +42,13 @@ export class NodeEvents {
     conn.closed = true;
     clearTimeout(conn.timer);
     // Drop handlers first so the close doesn't schedule a reconnect.
-    if (conn.ws) { conn.ws.onclose = null; conn.ws.onerror = null; conn.ws.onmessage = null; conn.ws.close(); }
+    if (conn.ws) {
+      conn.ws.onclose = null;
+      conn.ws.onerror = null;
+      conn.ws.onmessage = null;
+      conn.ws.close();
+    }
     this.conns.delete(nodeId);
-    this.onStatus?.();
   }
 
   stopAll() {
@@ -77,18 +79,18 @@ export class NodeEvents {
     ws.onopen = () => {
       conn.open = true;
       conn.backoff = BACKOFF_MIN;
-      this.onStatus?.();
     };
+
     ws.onmessage = (msg) => {
       let frame;
       try { frame = JSON.parse(msg.data); } catch { return; }
       if (frame && frame.kind === 'event') this.onEvent(frame, nodeId);
     };
+
     ws.onerror = () => { /* onclose follows and drives the retry */ };
+
     ws.onclose = () => {
-      const wasOpen = conn.open;
       conn.open = false;
-      if (wasOpen) this.onStatus?.();
       this.#retry(nodeId, conn);
     };
   }

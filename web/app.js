@@ -62,7 +62,7 @@ const state = {
   loaded: false,
 };
 
-const events = new NodeEvents(onNodeEvent, () => renderWsStatus());
+const events = new NodeEvents(onNodeEvent);
 
 /* --- lookups ------------------------------------------------------------- */
 
@@ -208,7 +208,7 @@ async function refreshHealth() {
     dot.style.background = '#47d18a';
     dot.style.boxShadow = '0 0 8px #47d18a88';
     text.textContent = 'hub healthy';
-    $('brand-ver').textContent = `v${h.version} · BETA`;
+    $('brand-ver').textContent = `v${h.version}`;
   } catch {
     dot.style.background = '#ff5c54';
     dot.style.boxShadow = '0 0 8px #ff5c5488';
@@ -403,10 +403,10 @@ function sidebarSig() {
 }
 
 function renderSidebar() {
-  const online = state.nodes.filter((n) => n.online).length;
-  const instCount = state.nodes.reduce((sum, n) => sum + instancesOf(n.id).length, 0);
-  $('side-count').textContent = `${online}/${state.nodes.length} online`;
-  $('row-hub-count').textContent = `${instCount} inst`;
+  /**const online = state.nodes.filter((n) => n.online).length; */
+  /**const instCount = state.nodes.reduce((sum, n) => sum + instancesOf(n.id).length, 0); */
+  /**$('side-count').textContent = `${online}/${state.nodes.length} online`; REMOVED */
+  /**$('row-hub-count').textContent = `${instCount} inst`; REMOVED */
   $('row-hub').classList.toggle('sel', state.sel.type === 'hub');
 
   repaint($('tree'), sidebarSig(), buildTree);
@@ -857,10 +857,10 @@ function buildFileRows(path, segs, live) {
       attrs.ondrop = (ev) => { ev.stopPropagation(); ev.currentTarget.classList.remove('drop-hi'); handleDrop(ev, f.path); };
     }
     out.push(el(`div.file-row${f.is_dir ? '.dir' : ''}${selected ? '.sel' : ''}`, attrs,
-      el('span.file-icon', {}, f.is_dir ? '▸' : '·'),
+      el('span.file-icon', {}, f.is_dir ? '📂' : '-'),
       el('span.file-name', { text: f.name }),
       el('span.spacer'),
-      el('span.file-size', { text: f.is_dir ? '—' : formatSize(f.size) }),
+      el('span.file-size', { text: f.is_dir ? '' : formatSize(f.size) }),
       el('button.file-act', {
         title: f.is_dir ? 'Download as zip' : 'Download', disabled: !live,
         onclick: (ev) => { ev.stopPropagation(); downloadEntry(f); },
