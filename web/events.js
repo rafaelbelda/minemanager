@@ -55,18 +55,9 @@ export class NodeEvents {
     for (const id of [...this.conns.keys()]) this.stop(id);
   }
 
-  /** True when at least one socket is connected. */
-  get anyOpen() {
-    for (const c of this.conns.values()) if (c.open) return true;
-    return false;
-  }
-
-  isOpen(nodeId) {
-    return this.conns.get(nodeId)?.open === true;
-  }
-
   #connect(nodeId, conn) {
     if (conn.closed) return;
+  
     let ws;
     try {
       ws = new WebSocket(`${wsOrigin()}/api/nodes/${nodeId}/events`);
@@ -74,30 +65,33 @@ export class NodeEvents {
       this.#retry(nodeId, conn);
       return;
     }
+  
     conn.ws = ws;
-
+  
     ws.onopen = () => {
-      conn.open = true;
       conn.backoff = BACKOFF_MIN;
     };
-
+  
     ws.onmessage = (msg) => {
       let frame;
       try { frame = JSON.parse(msg.data); } catch { return; }
       if (frame && frame.kind === 'event') this.onEvent(frame, nodeId);
     };
-
-    ws.onerror = () => { /* onclose follows and drives the retry */ };
-
+  
+    ws.onerror = () => {
+      /* onclose follows and drives the retry */
+    };
+  
     ws.onclose = () => {
-      conn.open = false;
       this.#retry(nodeId, conn);
     };
   }
-
+  
   #retry(nodeId, conn) {
     if (conn.closed) return;
+  
     clearTimeout(conn.timer);
+  
     const wait = conn.backoff;
     conn.backoff = Math.min(conn.backoff * 2, BACKOFF_MAX);
     conn.timer = setTimeout(() => this.#connect(nodeId, conn), wait);

@@ -356,7 +356,6 @@ function lineNode(line) {
 
 function render() {
   renderSidebar();
-  renderWsStatus();
 
   show($('view-hub'), state.sel.type === 'hub');
   show($('view-node'), state.sel.type === 'node');
@@ -365,21 +364,6 @@ function render() {
   if (state.sel.type === 'hub') renderHub();
   else if (state.sel.type === 'node') renderNode();
   else renderInstance();
-}
-
-function renderWsStatus() {
-  const dot = $('ws-dot');
-  const text = $('ws-text');
-  const total = state.nodes.length;
-  if (!total) {
-    dot.style.background = '#6b6b67';
-    text.textContent = 'events ws · no nodes';
-    return;
-  }
-  const open = state.nodes.filter((n) => events.isOpen(n.id)).length;
-  const ok = open > 0;
-  dot.style.background = ok ? '#47d18a' : '#6b6b67';
-  text.textContent = `events ws · ${open}/${total} connected`;
 }
 
 function matchesFilter(node) {
