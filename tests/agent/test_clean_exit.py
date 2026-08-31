@@ -270,3 +270,90 @@ class TestRestartPolicy:
 
         assert sup.relaunched is False
         assert sup.events == []
+
+
+class TestSupervisedSignal:
+    """Every state event says whether the agent is still keeping the instance up.
+
+    It is what lets the UI distinguish "crashed, retrying" from "crashed, and
+    nothing further will happen" without parsing the detail prose.
+    """
+
+    def _supervised(self, sup) -> list[bool]:
+        return [
+            e.data["supervised"] for e in sup.events
+            if e.action == Action.ev_state_changed.value
+        ]
+
+    async def test_true_while_the_agent_is_still_trying(self, sup):
+        mi = _managed(sup)
+        _write_status(sup, mi, "1")
+
+        await sup._check_one(mi)
+
+        assert self._supervised(sup) == [True, True]
+
+    async def test_false_once_the_policy_says_never(self, sup):
+        mi = _managed(sup, restart_policy=RestartPolicy.never)
+        _write_status(sup, mi, "1")
+
+        await sup._check_one(mi)
+
+        assert self._supervised(sup) == [False]
+
+    async def test_false_once_the_crash_loop_breaker_trips(self, sup):
+        mi = _managed(sup)
+        _write_status(sup, mi, "1")
+        mi.crash_times = [time.monotonic()] * (sup_mod._CRASH_LIMIT + 1)
+
+        await sup._check_one(mi)
+
+        assert self._supervised(sup) == [False]
+
+    async def test_false_once_launches_keep_failing(self, sup):
+        mi = _managed(sup, ready=False)
+        _write_status(sup, mi, "1")
+        mi.launch_failures = sup_mod._LAUNCH_FAILURE_LIMIT - 1
+
+        await sup._check_one(mi)
+
+        assert self._supervised(sup) == [False]
+
+    async def test_false_when_the_root_dir_is_unusable(self, sup):
+        mi = _managed(sup)
+        mi.spec.root_dir = "/nope/does/not/exist"
+        _write_status(sup, mi, "1")
+
+        await sup._check_one(mi)
+
+        assert self._supervised(sup) == [False]
+
+    async def test_false_after_an_operator_shutdown(self, sup):
+        mi = _managed(sup)
+        _write_status(sup, mi, "0")
+
+        await sup._check_one(mi)
+
+        assert self._supervised(sup) == [False]
+
+
+class TestOverruledStopIsNotReportedAsACrash:
+    async def test_always_goes_straight_to_starting(self, sup):
+        # Nothing crashed, so the pill must not flash "crashed" on the way back.
+        mi = _managed(sup, restart_policy=RestartPolicy.always)
+        _write_status(sup, mi, "0")
+
+        await sup._check_one(mi)
+
+        assert RunState.crashed.value not in [s for s, _ in _states(sup)]
+        assert [s for s, _ in _states(sup)] == [RunState.starting.value] * 2
+
+    async def test_a_real_crash_still_reports_crashed(self, sup):
+        mi = _managed(sup, restart_policy=RestartPolicy.always)
+        _write_status(sup, mi, "1")
+
+        await sup._check_one(mi)
+
+        assert [s for s, _ in _states(sup)] == [
+            RunState.crashed.value, RunState.starting.value
+        ]

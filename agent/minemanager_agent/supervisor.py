@@ -201,7 +201,8 @@ class Supervisor:
                 action=Action.ev_state_changed.value,
                 instance_id=mi.spec.id,
                 data=StateChangedData(
-                    state=state, detail=detail, clean_exit=clean_exit
+                    state=state, detail=detail, clean_exit=clean_exit,
+                    supervised=mi.should_be_up,
                 ).model_dump(mode="json"),
             )
         )
@@ -613,14 +614,19 @@ class Supervisor:
             await self._set_state(mi, RunState.crashed, detail=problem)
             return
 
-        await self._set_state(
-            mi, RunState.crashed,
-            detail="shut down from the console; restarting anyway (policy: always)"
-                   if clean_exit else
-                   "crashed; restarting" if launched else
-                   f"exited before coming up (attempt {mi.launch_failures}"
-                   f"/{_LAUNCH_FAILURE_LIMIT}); retrying",
-        )
+        if clean_exit:
+            # Nothing crashed: the operator stopped it and the policy overruled.
+            await self._set_state(
+                mi, RunState.starting,
+                detail="shut down from the console; restarting anyway (policy: always)",
+            )
+        else:
+            await self._set_state(
+                mi, RunState.crashed,
+                detail="crashed; restarting" if launched else
+                       f"exited before coming up (attempt {mi.launch_failures}"
+                       f"/{_LAUNCH_FAILURE_LIMIT}); retrying",
+            )
         try:
             relaunched = await self._launch(mi)
         except tmux.TmuxError as exc:

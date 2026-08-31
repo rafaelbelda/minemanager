@@ -133,6 +133,7 @@
             <h1 class="inst-title" id="inst-name"></h1>
             <span class="inst-type" id="inst-type"></span>
             <span class="inst-state" id="inst-state"></span>
+            <span class="inst-state hidden" id="inst-armed"></span>
             <span class="inst-meta" id="inst-meta"></span>
             <span class="spacer"></span>
             <div class="inst-actions">
@@ -153,6 +154,7 @@
         <div class="banner hidden" id="inst-offline">
           <span style="font-size:14px">&#9888;</span>
           Node offline &mdash; can't reach the agent. Live actions are disabled until it reconnects.
+          You can still change whether instances start with the node in Settings.
         </div>
 
         <!-- CONSOLE TAB -->
@@ -169,11 +171,9 @@
                 <span class="spacer"></span>
                 <span class="terminal-note" id="term-count">0 lines</span>
                 <span class="terminal-note toggle-link" id="term-autoscroll">&middot; autoscroll</span>
-                <span class="terminal-note toggle-link" id="term-scanlines">&middot; scanlines</span>
                 <span class="terminal-note toggle-link" id="term-clear">&middot; clear</span>
               </div>
               <div class="terminal-body" id="term-body"></div>
-              <div class="scanlines" id="term-scan"></div>
             </div>
             <div class="console-input">
               <span class="console-prompt" id="console-prompt">&rsaquo;</span>

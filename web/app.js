@@ -37,6 +37,7 @@ const state = {
   nodes: [],
   instances: new Map(),   // nodeId -> InstanceOut[]
   runState: new Map(),    // instanceId -> RunState
+  supervised: new Map(),  // instanceId -> is the agent still keeping it up?
   console: new Map(),     // instanceId -> line[]
   consoleLoaded: new Set(), // instanceIds we've backfilled history for
   consoleFailed: new Set(), // instanceIds whose history backfill failed
@@ -58,7 +59,6 @@ const state = {
     selVersion: null, selBuild: null, updating: false,
   },
   autoscroll: true,
-  scanlines: true,
   loaded: false,
 };
 
@@ -232,6 +232,8 @@ function onNodeEvent(frame, nodeId) {
       const st = frame.data?.state || 'unknown';
       const prev = state.runState.get(id);
       state.runState.set(id, st);
+      // Live-only: absent after a reload, so the pill never depends on it.
+      state.supervised.set(id, frame.data?.supervised !== false);
       // Visually separate each server run in the console.
       if (st === 'starting' && prev !== 'starting') {
         pushConsole(id, '', 'sys');
@@ -445,7 +447,7 @@ function buildTree() {
     out.push(el('div.empty', {
       text: !state.loaded ? 'Loading…'
         : state.filter ? 'Nothing matches that filter.'
-        : 'No nodes yet — add one to get started.',
+        : 'No nodes yet. Add one to get started.',
     }));
   }
   return out;
@@ -535,7 +537,7 @@ function enrollSection() {
           el('span.enroll-once', { text: 'SHOWN ONCE' })),
         el('div.enroll-note', {},
           `Run the agent on the new machine with this token. It expires in ${Math.round(e.expiresIn / 60)} minutes `,
-          'and cannot be retrieved again — only re-minted.')),
+          'and cannot be retrieved again, only re-minted.')),
       el('div.enroll-body', {},
         el('div.enroll-token-row', {},
           el('code.enroll-token', { text: e.token, title: e.token }),
@@ -555,7 +557,7 @@ function enrollSection() {
           el('span.dot', {
             style: `width:7px;height:7px;background:${connected ? '#47d18a' : '#f0b429'};${connected ? '' : 'animation:mm-pulse 1.4s infinite'}`,
           }),
-          connected ? 'agent connected — node is online' : 'waiting for agent to connect…',
+          connected ? 'agent connected.' : 'waiting for agent to connect…',
           el('span.spacer'),
           el('button.btn.btn-sm', { onclick: () => { state.enrollment = null; render(); } },
             connected ? 'Dismiss' : 'Hide')))));
@@ -662,6 +664,8 @@ function renderInstance() {
   st.style.cssText = `color:${m.color};border:1px solid ${m.color}55;background:${m.color}14`;
   fill(st, el('span.dot', { style: `width:7px;height:7px;background:${m.color};animation:${m.anim}` }), m.label);
 
+  renderArmed(inst, run);
+
   // Used to show the RCON endpoint; RCON is gone, so surface the installed
   // build instead — the one other piece of per-instance metadata worth a glance.
   $('inst-meta').textContent = inst.version
@@ -689,6 +693,32 @@ function renderInstance() {
   if (state.tab === 'version') renderVersion(inst, live);
 }
 
+/**
+ * The declared "start with node" flag, and where it disagrees with reality.
+ *
+ * Driven by `start_with_node` rather than the run state, so it still says
+ * something while the node is offline — `runStateOf` is 'unknown' then, which is
+ * exactly when "will this come back?" is the question being asked.
+ */
+function renderArmed(inst, run) {
+  const pill = $('inst-armed');
+  show(pill, !!inst.start_with_node);
+  if (!inst.start_with_node) return;
+
+  // Armed but not up: it returns on the next agent start, which nothing else
+  // on this screen tells you.
+  const down = ['stopped', 'crashed', 'unknown'].includes(run);
+  const color = down ? 'var(--warn)' : 'var(--dim-2)';
+  pill.style.cssText = `color:${color};border:1px solid ${color}55;background:${color}14;cursor:pointer`;
+  pill.textContent = down ? 'RETURNS ON NODE START' : 'STARTS WITH NODE';
+  pill.title = state.supervised.get(inst.id) === false
+    ? `The agent has stopped trying to keep this up, but it is still armed and will `
+      + `be started again when the node's agent next starts. `
+      + `Turn off "Start with node" in Settings to keep it down.`
+    : `Started whenever the node's agent starts. `
+      + `Change it under "Start with node" in Settings.`;
+}
+
 function renderConsole(inst, m, live) {
   $('term-dot').style.cssText = `width:8px;height:8px;background:${m.color};animation:${m.anim}`;
   $('term-title').textContent = `pty: ${inst.name}`;
@@ -697,8 +727,6 @@ function renderConsole(inst, m, live) {
   const buf = state.console.get(inst.id) || [];
   $('term-count').textContent = `${buf.length} line${buf.length === 1 ? '' : 's'}`;
   $('term-autoscroll').classList.toggle('off', !state.autoscroll);
-  $('term-scanlines').classList.toggle('off', !state.scanlines);
-  show($('term-scan'), state.scanlines);
 
   const input = $('console-line');
   input.disabled = !live;
@@ -719,7 +747,7 @@ async function doPower(inst, op, button) {
   if (op === 'kill') {
     const ok = await confirmDialog({
       title: `Kill ${inst.name}?`,
-      description: 'This terminates the process immediately — the world may not be saved. Prefer Stop for a graceful shutdown.',
+      description: 'This terminates the process immediately! The world may not be saved. Prefer Stop for a graceful shutdown.',
       confirmText: 'Kill it',
     });
     if (!ok) return;
@@ -792,7 +820,7 @@ async function loadFiles(path) {
   const inst = curInst();
   if (!inst) return;
   if (!isOnline(inst)) {
-    state.files = { path, entries: [], loading: false, error: "Node offline — can't list files." };
+    state.files = { path, entries: [], loading: false, error: "Node offline. Can't list files." };
     render();
     return;
   }
@@ -1324,7 +1352,7 @@ async function itemsFromDataTransfer(dt) {
 }
 async function handleDrop(ev, destPath) {
   ev.preventDefault();
-  if (!isOnline(curInst())) { toast("Node offline — can't upload.", 'error'); return; }
+  if (!isOnline(curInst())) { toast("Node offline. Can't upload.", 'error'); return; }
   const items = await itemsFromDataTransfer(ev.dataTransfer);
   if (items.length) uploadFiles(items, destPath);
 }
@@ -1387,7 +1415,7 @@ function showContextMenu(ev, entry) {
   const live = isOnline(curInst());
   const gated = (fn) => () => {
     closeContextMenu();
-    if (!live) { toast("Node offline — can't reach the agent.", 'error'); return; }
+    if (!live) { toast("Node offline. Can't reach the agent.", 'error'); return; }
     fn();
   };
   const items = [];
@@ -1610,7 +1638,7 @@ function renderVersion(inst, live) {
   // Update button + reason
   const canPick = !!v.selVersion && (!v.hasBuilds || !!v.selBuild);
   let reason = '';
-  if (!live) reason = "Node offline — can't reach the agent.";
+  if (!live) reason = "Node offline. Can't reach the agent.";
   else if (updating) reason = 'Update in progress…';
   else if (['running', 'starting', 'stopping'].includes(run)) reason = 'Stop the server before updating.';
   else if (v.error && !v.versions.length) reason = v.error;
@@ -1744,7 +1772,7 @@ async function addInstance(node) {
   // those and can be fine-tuned later in Settings.
   const values = await dialog({
     title: `Add instance on ${node.name}`,
-    description: 'Declares a server the agent should manage. The directory must already exist on the node. The launch command is built from the type and memory — fine-tune it later in the instance’s Settings.',
+    description: 'Declares a server the agent should manage. The directory must already exist on the node.',
     fields: [
       { name: 'name', label: 'Name', placeholder: 'survival' },
       { name: 'type', label: 'Type', type: 'select', options: ['paper', 'vanilla', 'velocity'], value: 'paper' },
@@ -1752,9 +1780,9 @@ async function addInstance(node) {
       { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'Drag the slider or type an exact value (e.g. 4G or 6144M).' },
       { name: 'restart_policy', label: 'Restart policy', type: 'select', value: 'on_crash',
         options: [
-          { value: 'never', label: 'Never — leave it down, however it ended' },
-          { value: 'on_crash', label: 'On crash — put it back if it fails, honour a deliberate stop' },
-          { value: 'always', label: 'Always — put it back even after a console stop' },
+          { value: 'never', label: 'Never: leave it down, however it ended' },
+          { value: 'on_crash', label: 'On crash: put it back if it fails, honour a deliberate stop' },
+          { value: 'always', label: 'Always: put it back even after a console stop' },
         ],
         hint: 'Stop and Kill always work; this only decides what happens when the server exits without being asked.' },
     ],
@@ -1868,6 +1896,13 @@ function bind() {
   $('act-restart').onclick = () => { const i = curInst(); if (i) doPower(i, 'restart'); };
   $('act-kill').onclick = () => { const i = curInst(); if (i) doPower(i, 'kill'); };
 
+  $('inst-armed').onclick = () => {
+    if (state.tab === 'settings') return;
+    state.tab = 'settings';
+    render();
+    loadTab();
+  };
+
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.onclick = async () => {
       if (state.tab === tab.dataset.tab) return;
@@ -1885,7 +1920,6 @@ function bind() {
     if (state.autoscroll) $('term-body').scrollTop = $('term-body').scrollHeight;
     render();
   };
-  $('term-scanlines').onclick = () => { state.scanlines = !state.scanlines; render(); };
   $('term-clear').onclick = () => {
     const inst = curInst();
     if (!inst) return;

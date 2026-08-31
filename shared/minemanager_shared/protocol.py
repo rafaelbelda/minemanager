@@ -372,6 +372,12 @@ class StateChangedData(BaseModel):
     # the same thing as the UI's Stop button instead of lasting only until the
     # next reboot. Declared state still changes only on the hub.
     clean_exit: bool = False
+    # Is the agent still keeping this instance up after the transition? False
+    # once it has stopped trying (policy never, crash-loop, launch failures, a
+    # bad path), so the UI can say "abandoned" rather than "restarting". The
+    # hub's start_with_node is untouched by it: a reboot is a fair retry, and
+    # disarming here would turn a transient failure into a silent "never again".
+    supervised: bool = True
 
 
 class HeartbeatData(BaseModel):

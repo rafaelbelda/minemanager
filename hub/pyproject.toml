@@ -1,6 +1,6 @@
 [project]
 name = "minemanager-hub"
-version = "0.1.0"
+version = "0.1.1"
 description = "MineManager hub — web control plane for a Minecraft network"
 requires-python = ">=3.11"
 dependencies = [

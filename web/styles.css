@@ -503,11 +503,6 @@ select.input option { background: var(--panel); color: var(--fg); }
 .term-line .l { color: var(--term-lvl); }
 .term-line.warn .l { color: var(--warn); }
 .term-line.err .l { color: var(--err); }
-.scanlines {
-  position: absolute; inset: 0; pointer-events: none; opacity: .5;
-  background: repeating-linear-gradient(0deg,
-    rgba(255, 255, 255, 0) 0px, rgba(255, 255, 255, 0) 2px, rgba(255, 255, 255, .06) 3px);
-}
 .console-input {
   flex: none; margin-top: 10px;
   display: flex; align-items: center; gap: 10px;

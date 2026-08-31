@@ -5,4 +5,4 @@ supervises Minecraft servers/proxies in their own tmux sessions. It is the only
 systemd-managed daemon on a node; it supervises the servers itself.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
