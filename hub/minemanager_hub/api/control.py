@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 from urllib.parse import quote
 
 from fastapi import APIRouter, HTTPException, Response, WebSocket, WebSocketDisconnect
@@ -222,20 +223,20 @@ async def node_events(ws: WebSocket, node_id: str) -> None:
         except WebSocketDisconnect:
             return
 
-    watcher = asyncio.ensure_future(_watch_disconnect())
-    try:
-        while True:
-            nxt = asyncio.ensure_future(stream.__anext__())
-            done, _ = await asyncio.wait(
-                {nxt, watcher}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if watcher in done:
-                nxt.cancel()
-                break
-            event = nxt.result()
+    async def _forward() -> None:
+        async for event in stream:
             await ws.send_json(event.model_dump(mode="json"))
-    except (WebSocketDisconnect, StopAsyncIteration):
-        pass
+
+    tasks = {asyncio.ensure_future(_forward()), asyncio.ensure_future(_watch_disconnect())}
+    try:
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+
+        for task in done | pending:
+            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect):
+                await task
     finally:
-        watcher.cancel()
+        # The cancellation above already unwound the generator's `with`, so this
+        # is a no-op then; it still matters on the paths that leave it suspended.
         await stream.aclose()
