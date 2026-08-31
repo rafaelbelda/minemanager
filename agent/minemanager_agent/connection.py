@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from types import SimpleNamespace
 
 import websockets
@@ -27,6 +28,13 @@ from minemanager_shared.protocol import (
 )
 
 log = logging.getLogger("minemanager.agent")
+
+# This agent process's identity, minted at import and constant for its lifetime.
+# Module level on purpose: it must survive a Connection being rebuilt, because
+# what it identifies is the *process*, not the socket. The hub restores declared
+# run state only when this changes, so a reconnect cannot restart a server that
+# was deliberately left down — only an actual agent restart can.
+SESSION_ID = uuid.uuid4().hex
 
 
 class Connection:
@@ -58,6 +66,7 @@ class Connection:
             node_id=node_id,
             credential=credential,
             enrollment_token=self.config.enroll_token,
+            session_id=SESSION_ID,
             capabilities=["power", "console", "files", "logs"],
         )
         await ws.send(hello.model_dump_json())

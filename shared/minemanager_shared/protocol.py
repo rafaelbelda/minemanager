@@ -67,6 +67,24 @@ class InstanceType(str, Enum):
     velocity = "velocity"
 
 
+class RestartPolicy(str, Enum):
+    """What the agent does when an instance's session ends by itself.
+
+    Ordered, and one field rather than two booleans: "restart on crash" and
+    "restart on anything" are three states between them, not four, and the
+    fourth ("leave crashes dead but overrule a deliberate stop") is incoherent.
+
+    None of these can make a server unstoppable. They only decide what to do
+    about an exit the agent did not ask for — Stop, Kill and agent shutdown all
+    clear the instance's supervision flag before the monitor ever sees the
+    session vanish.
+    """
+
+    never = "never"          # it ended; leave it down whatever the reason
+    on_crash = "on_crash"    # relaunch a failure, honour a deliberate stop
+    always = "always"        # relaunch even a clean shutdown from the console
+
+
 class RunState(str, Enum):
     """Observed runtime state of an instance, reported by the agent."""
 
@@ -137,6 +155,7 @@ class Hello(BaseModel):
     enrollment_token: Optional[str] = None  # one-time token, first enroll only
     credential: Optional[str] = None        # long-lived per-agent token on reconnect
     hostname: str
+    session_id: Optional[str] = None
     capabilities: list[str] = Field(default_factory=list)
 
 
@@ -214,7 +233,7 @@ class InstanceSpec(BaseModel):
     # it, so this instance runs a specific Java version without the start
     # command having to name an interpreter. Empty = the node's default java.
     java_home: Optional[str] = None
-    auto_restart: bool = True
+    restart_policy: RestartPolicy = RestartPolicy.on_crash
 
 
 class UpdateDownload(BaseModel):
@@ -346,6 +365,13 @@ class ConsoleOutputData(BaseModel):
 class StateChangedData(BaseModel):
     state: RunState
     detail: Optional[str] = None
+    # The instance exited on its own with a success status *after* having come
+    # up — i.e. somebody shut it down from the console rather than it dying.
+    # Reported as an observation, not a decision: the hub reads it and clears
+    # the instance's start-with-node flag, so "stop" typed at a console means
+    # the same thing as the UI's Stop button instead of lasting only until the
+    # next reboot. Declared state still changes only on the hub.
+    clean_exit: bool = False
 
 
 class HeartbeatData(BaseModel):

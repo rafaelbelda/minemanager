@@ -38,14 +38,14 @@ class Settings:
     # How long an enrollment token is valid once minted (seconds).
     enrollment_ttl_s: int = field(default_factory=lambda: env_int("MM_ENROLLMENT_TTL", 900))
 
+    autostart: bool = field(default_factory=lambda: env_bool("MM_AUTOSTART", True))
+
+    autostart_stagger_s: int = field(default_factory=lambda: env_int("MM_AUTOSTART_STAGGER", 5))
+
     # Allowed CORS origins for the web UI during development (e.g. a dev server
     # on another port). In production the UI is same-origin, so this stays empty.
     cors_origins: list[str] = field(default_factory=lambda: env_csv("MM_CORS_ORIGINS"))
 
-    # File-explorer thresholds (served to the UI via /api/config), in bytes.
-    # Above *warn* the editor asks before opening; above *max* it will not open
-    # the file as text at all. The *transfer cap* bounds the simple base64
-    # upload/download path — larger transfers use the streaming one.
     editor_warn_bytes: int = field(
         default_factory=lambda: env_int("MM_EDITOR_WARN_BYTES", 2_000_000)
     )

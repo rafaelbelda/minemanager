@@ -17,7 +17,7 @@ FIELDS = {
     "type": ("velocity", True),
     "root_dir": ("/srv/other", True),
     "start_command": ("java -Xmx2G -jar velocity.jar", True),
-    "auto_restart": (False, True),
+    "restart_policy": ("always", True),
     "jar_path": ("velocity.jar", False),
     "java_home": ("/opt/jdk-21", False),
 }
@@ -76,11 +76,11 @@ def test_patch_all_fields_at_once(client, instance_id):
 
 
 def test_patch_survives_a_reread(client, node_id, instance_id):
-    client.patch(f"/api/instances/{instance_id}", json={"type": "vanilla", "auto_restart": False})
+    client.patch(f"/api/instances/{instance_id}", json={"type": "vanilla", "restart_policy": "never"})
     rows = client.get(f"/api/nodes/{node_id}/instances").json()
     row = next(i for i in rows if i["id"] == instance_id)
     assert row["type"] == "vanilla"
-    assert row["auto_restart"] is False
+    assert row["restart_policy"] == "never"
 
 
 def test_patch_trims_whitespace(client, instance_id):

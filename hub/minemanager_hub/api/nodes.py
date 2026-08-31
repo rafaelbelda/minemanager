@@ -49,8 +49,8 @@ def _instance_out(inst: Instance) -> InstanceOut:
         start_command=inst.start_command,
         jar_path=inst.jar_path,
         java_home=inst.java_home,
-        desired_running=inst.desired_running,
-        auto_restart=inst.auto_restart,
+        start_with_node=inst.start_with_node,
+        restart_policy=inst.restart_policy,
         version=inst.version,
         build=inst.build,
     )
@@ -132,7 +132,7 @@ def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
             start_command=body.start_command,
             jar_path=body.jar_path or None,
             java_home=body.java_home or None,
-            auto_restart=body.auto_restart,
+            restart_policy=body.restart_policy.value,
         )
         db.add(inst)
         db.flush()

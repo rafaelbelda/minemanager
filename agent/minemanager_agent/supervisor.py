@@ -28,6 +28,7 @@ from minemanager_shared.protocol import (
     ConsoleOutputData,
     Event,
     InstanceSpec,
+    RestartPolicy,
     RunState,
     StateChangedData,
 )
@@ -96,7 +97,13 @@ class ManagedInstance:
     spec: InstanceSpec
     session: str
     state: RunState = RunState.stopped
-    desired_running: bool = False
+    # Is this agent currently responsible for keeping the instance alive? Set by
+    # start, cleared by stop/kill and by the restart policy giving up. Purely
+    # runtime and process-local — it is *not* the hub's ``start_with_node``,
+    # which is declared state about the next agent start. The two were once both
+    # called ``desired_running``, which hid the difference: this one answers
+    # "should I relaunch it right now?", that one "should it come up at boot?".
+    should_be_up: bool = False
     crash_times: list[float] = field(default_factory=list)
     tail_task: asyncio.Task | None = None
     # A failed launch is noticed twice (settle check, then monitor); this stops
@@ -180,13 +187,22 @@ class Supervisor:
             mi.spec = spec  # always use the hub's latest declared spec
         return mi
 
-    async def _set_state(self, mi: ManagedInstance, state: RunState, detail: str | None = None):
+    async def _set_state(
+        self,
+        mi: ManagedInstance,
+        state: RunState,
+        detail: str | None = None,
+        *,
+        clean_exit: bool = False,
+    ):
         mi.state = state
         await self._emit(
             Event(
                 action=Action.ev_state_changed.value,
                 instance_id=mi.spec.id,
-                data=StateChangedData(state=state, detail=detail).model_dump(mode="json"),
+                data=StateChangedData(
+                    state=state, detail=detail, clean_exit=clean_exit
+                ).model_dump(mode="json"),
             )
         )
 
@@ -200,7 +216,7 @@ class Supervisor:
             # not tailing, but it has demonstrably come up — so treat it as
             # ready, which also routes a later death down the crash path rather
             # than the launch-failure one.
-            mi.desired_running = True
+            mi.should_be_up = True
             mi.ready = True
             mi.launch_failures = 0
             await self._attach_pty_mirror(mi)  # no-op if one is already piped
@@ -226,7 +242,7 @@ class Supervisor:
 
         # Set only now: any earlier and the monitor races the settle window below
         # and counts the same launch as a crash twice.
-        mi.desired_running = True
+        mi.should_be_up = True
         mi.crash_times.clear()
         mi.launch_failures = 0
         if not alive:
@@ -248,13 +264,16 @@ class Supervisor:
         at all; a command that starts and then dies returns ``False``.
         """
         await asyncio.to_thread(self._reset_pty_log, mi)
+        await asyncio.to_thread(self._clear_exit_status, mi)
         mi.pty_replayed = False
         mi.ready = False
         mi.launched_at = time.monotonic()
         path = self._pty_path(mi)
+        status = self._status_path(mi)
         await tmux.new_session(
             mi.session, mi.spec.root_dir, launch_command(mi.spec),
             mirror_path=None if path is None else str(path),
+            status_path=None if status is None else str(status),
         )
         self._ensure_tail(mi)
         await asyncio.sleep(_LAUNCH_SETTLE_S)
@@ -262,7 +281,7 @@ class Supervisor:
 
     async def stop(self, spec: InstanceSpec, *, graceful_s: float = _GRACEFUL_STOP_S) -> dict:
         mi = self._managed(spec)
-        mi.desired_running = False
+        mi.should_be_up = False
         if not await tmux.has_session(mi.session):
             self._cancel_tail(mi)
             await self._set_state(mi, RunState.stopped)
@@ -287,7 +306,7 @@ class Supervisor:
 
     async def kill(self, spec: InstanceSpec) -> dict:
         mi = self._managed(spec)
-        mi.desired_running = False
+        mi.should_be_up = False
         self._cancel_tail(mi)
         await tmux.kill_session(mi.session)
         await self._set_state(mi, RunState.stopped, detail="killed")
@@ -383,6 +402,47 @@ class Supervisor:
             return None
         return self._pty_dir / f"{mi.spec.id}.log"
 
+    def _status_path(self, mi: ManagedInstance) -> Path | None:
+        if self._pty_dir is None:
+            return None
+        return self._pty_dir / f"{mi.spec.id}.exit"
+
+    def _clear_exit_status(self, mi: ManagedInstance) -> None:
+        """Drop the previous run's status before launching.
+
+        Load-bearing: a session we *kill* never records one, so a stale file
+        left in place would make the next kill read as the previous run's clean
+        shutdown and silently disarm the instance.
+        """
+        path = self._status_path(mi)
+        if path is None:
+            return
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    def _read_exit_status(self, mi: ManagedInstance) -> int | None:
+        """The status the last run ended with, or None when we cannot know.
+
+        None is not "unknown, assume the best": every case it covers — no pty
+        dir configured, a session killed before its shell could write, a garbled
+        file — means "this was not an orderly shutdown", which is what the
+        caller does with it.
+        """
+        path = self._status_path(mi)
+        if path is None:
+            return None
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace").strip()
+        except OSError:
+            return None
+        try:
+            return int(raw)
+        except ValueError:
+            return None
+
     def _reset_pty_log(self, mi: ManagedInstance) -> None:
         """Begin each run with an empty mirror, so a replay is never the previous
         run's output. Truncates *in place*: the pipe's ``cat`` holds the inode
@@ -475,12 +535,44 @@ class Supervisor:
                 await self._check_startup_grace(mi)
             await asyncio.to_thread(self._trim_pty_log, mi)
             return
-        if not mi.desired_running:
+        if not mi.should_be_up:
             return
 
-        # Gone while it was supposed to be running. Replay the raw pane first:
-        # for a death before the logger is up, that is the only record.
-        await self._replay_pty(mi)
+        # Gone while it was supposed to be running — but was that a failure or a
+        # person? "stop" at the console exits 0 through the same shell that
+        # records the status; a crash does not, and a session we killed records
+        # nothing. Without this the two are indistinguishable, because both do
+        # nothing but make the session disappear.
+        #
+        # Only once it had come up. A clean exit *before* readiness is a server
+        # refusing to run (an unaccepted EULA exits 0), not somebody shutting it
+        # down — and the launch-failure path below explains that far better,
+        # with the pane output that says why.
+        clean_exit = mi.ready and await asyncio.to_thread(self._read_exit_status, mi) == 0
+
+        # ALWAYS is the one policy that overrules a person: the operator has
+        # asked for uptime over intent, so a console stop is put back like any
+        # other exit. It still cannot make the server unstoppable — Stop, Kill
+        # and agent shutdown never reach here, having cleared should_be_up
+        # first — and the crash-loop breaker below still caps the retrying.
+        if clean_exit and mi.spec.restart_policy is not RestartPolicy.always:
+            mi.should_be_up = False
+            mi.crash_times.clear()
+            mi.launch_failures = 0
+            await self._drain_tail(mi)
+            await self._set_state(
+                mi, RunState.stopped,
+                detail="shut down from the console",
+                clean_exit=True,      # the hub disarms it, so it stays down
+            )
+            return
+
+        # A failure, then — or a shutdown this instance is configured to
+        # overrule. Replay the raw pane for a failure: when something dies
+        # before the logger is up, that is the only record. A deliberate stop
+        # needs no explaining, so it is not dumped back at the operator.
+        if not clean_exit:
+            await self._replay_pty(mi)
         launched = mi.ready   # did *this* run ever come up?
         now = time.monotonic()
 
@@ -490,20 +582,22 @@ class Supervisor:
         else:
             mi.launch_failures += 1
 
-        if not mi.spec.auto_restart:
-            mi.desired_running = False
-            await self._set_state(mi, RunState.crashed, detail="exited (auto-restart off)")
+        if mi.spec.restart_policy is RestartPolicy.never:
+            mi.should_be_up = False
+            await self._set_state(
+                mi, RunState.crashed, detail="exited (restart policy: never)"
+            )
             return
 
         if launched and len(mi.crash_times) > _CRASH_LIMIT:
-            mi.desired_running = False
+            mi.should_be_up = False
             await self._set_state(
                 mi, RunState.crashed, detail=f"crash-loop: >{_CRASH_LIMIT} in {_CRASH_WINDOW_S:.0f}s"
             )
             return
 
         if not launched and mi.launch_failures >= _LAUNCH_FAILURE_LIMIT:
-            mi.desired_running = False
+            mi.should_be_up = False
             await self._set_state(
                 mi, RunState.crashed,
                 detail=f"failed to start {mi.launch_failures}x in a row without coming up — "
@@ -515,13 +609,15 @@ class Supervisor:
         if problem is None and mi.spec.java_home:
             problem = java_home_problem(mi.spec.java_home)
         if problem is not None:
-            mi.desired_running = False
+            mi.should_be_up = False
             await self._set_state(mi, RunState.crashed, detail=problem)
             return
 
         await self._set_state(
             mi, RunState.crashed,
-            detail="crashed; restarting" if launched else
+            detail="shut down from the console; restarting anyway (policy: always)"
+                   if clean_exit else
+                   "crashed; restarting" if launched else
                    f"exited before coming up (attempt {mi.launch_failures}"
                    f"/{_LAUNCH_FAILURE_LIMIT}); retrying",
         )
@@ -561,7 +657,7 @@ class Supervisor:
         # fresh ones down ungracefully.
         self._shutting_down = True
         for mi in self._instances.values():
-            mi.desired_running = False
+            mi.should_be_up = False
             self._cancel_tail(mi)
 
         names = await tmux.list_sessions()

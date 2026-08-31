@@ -302,12 +302,27 @@
                   <input class="input mono" id="set-java" type="text" autocomplete="off" spellcheck="false"
                          placeholder="empty = node's default java">
                 </div>
+                <div>
+                  <label class="field-label" for="set-restart">Restart policy
+                    <span class="hint-inline">&middot; what to do when the server exits on its own</span></label>
+                  <select class="input" id="set-restart">
+                    <option value="never">Never &mdash; leave it down, however it ended</option>
+                    <option value="on_crash">On crash &mdash; put it back if it fails, honour a deliberate stop</option>
+                    <option value="always">Always &mdash; put it back even after a console stop</option>
+                  </select>
+                  <div style="font-size:11px;color:var(--dim-2);margin-top:6px">Stop and Kill always
+                    work, whatever this is set to &mdash; the policy only decides what happens when the
+                    server exits without being asked.</div>
+                </div>
                 <div class="switch-row">
                   <div>
-                    <div class="t">Auto-restart</div>
-                    <div class="d">Restart the server automatically after a crash</div>
+                    <div class="t">Start with node</div>
+                    <div class="d">Start this instance whenever the node's agent starts, so a
+                      reboot needs no intervention. Set for you by Start and Stop &mdash; change it
+                      here to keep a server down across a reboot, or to arm one that is stopped
+                      right now.</div>
                   </div>
-                  <div class="toggle" id="set-auto"><div class="knob"></div></div>
+                  <div class="toggle" id="set-startwith"><div class="knob"></div></div>
                 </div>
                 <div style="display:flex;gap:10px;margin-top:4px">
                   <button class="btn btn-primary btn-lg" id="set-save">Save changes</button>

@@ -731,6 +731,13 @@ async function doPower(inst, op, button) {
   try {
     const res = await api.power(inst.id, op);
     if (res && res.state) state.runState.set(inst.id, res.state);
+    // The hub writes start_with_node on every accepted power op. Mirror it
+    // rather than refetching — and sync the toggle itself, since the settings
+    // form is only filled on tab open: left stale, the next Save would write
+    // the old value straight back. Just this control, so a field being edited
+    // beside it is not clobbered.
+    inst.start_with_node = op === 'start' || op === 'restart';
+    $('set-startwith').classList.toggle('on', inst.start_with_node);
     toast(`${inst.name}: ${op} → ${res?.state || 'ok'}`, 'ok');
   } catch (err) {
     toast(`${inst.name}: ${describe(err)}`, 'error');
@@ -1454,7 +1461,8 @@ function fillSettings(inst) {
   $('set-cmd').value = inst.start_command;
   $('set-jar').value = inst.jar_path || '';
   $('set-java').value = inst.java_home || '';
-  $('set-auto').classList.toggle('on', !!inst.auto_restart);
+  $('set-restart').value = inst.restart_policy || 'on_crash';
+  $('set-startwith').classList.toggle('on', !!inst.start_with_node);
 }
 
 async function saveInstance() {
@@ -1469,7 +1477,8 @@ async function saveInstance() {
     jar_path: $('set-jar').value.trim() || null,
     // Empty means "use whatever java the node's PATH resolves to".
     java_home: $('set-java').value.trim() || null,
-    auto_restart: $('set-auto').classList.contains('on'),
+    restart_policy: $('set-restart').value,
+    start_with_node: $('set-startwith').classList.contains('on'),
   };
   if (!changes.name || !changes.root_dir || !changes.start_command) {
     toast('Name, root directory and start command are all required.', 'error');
@@ -1741,7 +1750,13 @@ async function addInstance(node) {
       { name: 'type', label: 'Type', type: 'select', options: ['paper', 'vanilla', 'velocity'], value: 'paper' },
       { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival', mono: true },
       { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'Drag the slider or type an exact value (e.g. 4G or 6144M).' },
-      { name: 'auto_restart', label: 'Auto-restart', type: 'toggle', value: true, hint: 'Restart the server automatically after a crash' },
+      { name: 'restart_policy', label: 'Restart policy', type: 'select', value: 'on_crash',
+        options: [
+          { value: 'never', label: 'Never — leave it down, however it ended' },
+          { value: 'on_crash', label: 'On crash — put it back if it fails, honour a deliberate stop' },
+          { value: 'always', label: 'Always — put it back even after a console stop' },
+        ],
+        hint: 'Stop and Kill always work; this only decides what happens when the server exits without being asked.' },
     ],
     confirmText: 'Create instance',
     onMount: ({ set, input }) => {
@@ -1774,7 +1789,7 @@ async function addInstance(node) {
       type: values.type,
       root_dir: values.root_dir.trim(),
       start_command: buildStartCommand(values.type, values.ram),
-      auto_restart: values.auto_restart,
+      restart_policy: values.restart_policy,
     });
     await refreshNodes({ quiet: true });
     selectInstance(node.id, created.id);
@@ -1940,7 +1955,7 @@ function bind() {
   $('ver-update').onclick = doUpdateVersion;
 
   // Settings
-  $('set-auto').onclick = () => $('set-auto').classList.toggle('on');
+  $('set-startwith').onclick = () => $('set-startwith').classList.toggle('on');
   $('set-save').onclick = saveInstance;
   $('set-delete').onclick = () => { const i = curInst(); if (i) deleteInstance(i); };
 

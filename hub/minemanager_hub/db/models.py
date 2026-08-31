@@ -56,6 +56,13 @@ class Node(Base):
     enroll_expires_at: Mapped[float | None] = mapped_column(Float, default=None)
 
     agent_version: Mapped[str] = mapped_column(String(32), default="")
+
+    # The agent process we last completed a handshake with. Persisted, not held
+    # in memory, so it survives a *hub* restart too: without that, restarting
+    # the hub makes every agent redial and would look exactly like every node
+    # having rebooted. Declared run state is re-enacted only when this changes.
+    agent_session_id: Mapped[str | None] = mapped_column(String(32), default=None)
+
     last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -93,8 +100,12 @@ class Instance(Base):
     java_home: Mapped[str | None] = mapped_column(String(1024), default=None)
 
     # Desired lifecycle: should the agent keep this running?
-    desired_running: Mapped[bool] = mapped_column(Boolean, default=False)
-    auto_restart: Mapped[bool] = mapped_column(Boolean, default=True)
+    start_with_node: Mapped[bool] = mapped_column(Boolean, default=False)
+    # "never" | "on_crash" | "always" — see protocol.RestartPolicy. A three-
+    # valued policy rather than a boolean beside start_with_node: the two are
+    # one intent at two triggers (while the agent watches / when it starts), and
+    # what to do about an exit has three answers, not two.
+    restart_policy: Mapped[str] = mapped_column(String(16), default="on_crash")
 
     # Installed server-binary version/build. Set by the updater; until a proper
     # Version Detector lands (v2) this reflects what we last installed, or NULL

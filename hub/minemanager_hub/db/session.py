@@ -55,7 +55,7 @@ def _init() -> None:
 
 
 # Bump when a new migration is appended below.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 3
 
 
 def _drop_columns(conn, table: str, drop: set[str]) -> None:
@@ -126,8 +126,65 @@ def _migrate_v1(conn) -> None:
     _drop_columns(conn, "instances", {"rcon_host", "rcon_port"})
 
 
+def _migrate_v2(conn) -> None:
+    """``nodes.agent_session_id`` — which agent process we last shook hands with.
+
+    Nullable, and null on every existing row, which reads as "unknown". The
+    first handshake after this migration therefore counts as a new agent process
+    and restores that node's declared run state once; every reconnect after it
+    is recognised as the same process and does not.
+    """
+    existing = {c["name"] for c in inspect(conn).get_columns("nodes")}
+    if "agent_session_id" not in existing:
+        conn.execute(text("ALTER TABLE nodes ADD COLUMN agent_session_id VARCHAR(32)"))
+
+
+def _migrate_v3(conn) -> None:
+    """Name both lifecycle flags for their trigger, and make the restart one a policy.
+
+    ``desired_running`` -> ``start_with_node``, and ``auto_restart`` -> a
+    three-valued ``restart_policy``. The old names described a wish; the new
+    ones say *when* they apply, which is what an operator (and the next person
+    to read ``api/reconcile.py``) needs. ``desired_running`` in particular read
+    like a state a controller continuously converges to, which is exactly what
+    it must never become.
+
+    Deliberately tolerant about what it finds. This migration was reshaped
+    during development, so a database may already carry the intermediate
+    ``restart_on_crash`` column; accepting either source costs one lookup and
+    removes a foot-gun that would otherwise only fire on someone's dev box.
+
+    ``RENAME COLUMN`` needs SQLite 3.25 (2018) and the oldest target here,
+    Ubuntu 20.04, ships 3.31. A rename preserves every row, so an instance stays
+    armed across the upgrade — an unarmed one would silently stop coming back
+    after a reboot, which is the whole point of the flag.
+    """
+    columns = {c["name"] for c in inspect(conn).get_columns("instances")}
+
+    if "desired_running" in columns and "start_with_node" not in columns:
+        conn.execute(text(
+            "ALTER TABLE instances RENAME COLUMN desired_running TO start_with_node"
+        ))
+
+    if "restart_policy" in columns:
+        return
+    # True kept its meaning ("put it back when it dies"); False becomes the
+    # explicit "never", so no instance changes behaviour across the upgrade.
+    source = next((c for c in ("auto_restart", "restart_on_crash") if c in columns), None)
+    conn.execute(text(
+        "ALTER TABLE instances ADD COLUMN restart_policy VARCHAR(16) "
+        "NOT NULL DEFAULT 'on_crash'"
+    ))
+    if source is not None:
+        conn.execute(text(
+            f"UPDATE instances SET restart_policy = "
+            f"CASE WHEN {source} THEN 'on_crash' ELSE 'never' END"
+        ))
+        _drop_columns(conn, "instances", {"auto_restart", "restart_on_crash"})
+
+
 #: (version, step). Appended to, never edited — an applied migration is history.
-_MIGRATIONS = [(1, _migrate_v1)]
+_MIGRATIONS = [(1, _migrate_v1), (2, _migrate_v2), (3, _migrate_v3)]
 
 
 def _read_version(engine: Engine) -> int:

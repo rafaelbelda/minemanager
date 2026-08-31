@@ -104,13 +104,14 @@ async def power(instance_id: str, op: str) -> dict:
     )
 
     # Recorded only after the agent accepts, so a failed command cannot leave the
-    # DB claiming "should be running". Not yet pushed back on reconnect, so this
-    # is bookkeeping for the UI rather than reconciliation.
-    if op in ("start", "stop"):
-        with session_scope() as db:
-            inst = db.get(Instance, instance_id)
-            if inst is not None:
-                inst.desired_running = op == "start"
+    # DB claiming "should be running". This is what the node is restored from
+    # when its agent reconnects (see api/reconcile.py), which is why *kill*
+    # clears it too: a killed server staying down is the point of Kill, and
+    # leaving it armed would resurrect it on the next handshake.
+    with session_scope() as db:
+        inst = db.get(Instance, instance_id)
+        if inst is not None:
+            inst.start_with_node = op in ("start", "restart")
 
     return result
 

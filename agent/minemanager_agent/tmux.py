@@ -69,12 +69,25 @@ async def has_session(name: str) -> bool:
     return code == 0
 
 
-async def new_session(name: str, workdir: str, command: str, mirror_path: str | None = None) -> None:
+async def new_session(
+    name: str,
+    workdir: str,
+    command: str,
+    mirror_path: str | None = None,
+    status_path: str | None = None,
+) -> None:
     """Start ``command`` in a fresh detached session rooted at ``workdir``,
     optionally mirroring everything its pane prints to ``mirror_path``.
 
     When ``command`` exits, the session ends — that transition is how the
     supervisor detects a stop/crash.
+
+    With ``status_path``, the command's exit status is appended to the shell
+    line so it is written there as the command finishes. Nothing else can
+    recover it: a session is *gone* by the time we notice, so the status has to
+    be recorded from inside, before the pane closes. That ordering is what makes
+    the file trustworthy — it exists before the session disappears, and a
+    session we had to kill leaves none, which is itself the right answer.
     """
     if await has_session(name):
         raise TmuxError(f"session already exists: {name}")
@@ -88,7 +101,13 @@ async def new_session(name: str, workdir: str, command: str, mirror_path: str | 
     if mirror_path is not None:
         await pipe_pane(name, mirror_path)
 
-    code, _, err = await _run("respawn-pane", "-k", "-t", name, "-c", workdir, command)
+    # Appended rather than wrapped so the operator's command is still what the
+    # shell sees first, and a shell-dependent start line (``$PATH``, an argfile,
+    # a wrapper script) keeps working exactly as it did.
+    launched = command if status_path is None else (
+        f'{command}; printf %s "$?" > {shlex.quote(status_path)}'
+    )
+    code, _, err = await _run("respawn-pane", "-k", "-t", name, "-c", workdir, launched)
     if code != 0:
         # Leave nothing behind: the idle shell would otherwise keep the session
         # alive, and every liveness check we have would call it a running server.

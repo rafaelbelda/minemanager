@@ -20,6 +20,18 @@ from minemanager_hub.db.session import session_scope
 from minemanager_shared.protocol import InstanceCommand, InstanceSpec
 
 
+def spec_of(inst: Instance) -> InstanceSpec:
+    return InstanceSpec(
+        id=inst.id,
+        type=inst.type,
+        name=inst.name,
+        root_dir=inst.root_dir,
+        start_command=inst.start_command,
+        java_home=inst.java_home,
+        restart_policy=inst.restart_policy,
+    )
+
+
 def agent_and_spec(instance_id: str) -> tuple[AgentConnection, InstanceSpec]:
     """Resolve an instance to its live agent connection + declared spec.
 
@@ -29,15 +41,7 @@ def agent_and_spec(instance_id: str) -> tuple[AgentConnection, InstanceSpec]:
         inst = db.get(Instance, instance_id)
         if inst is None:
             raise HTTPException(404, "instance not found")
-        spec = InstanceSpec(
-            id=inst.id,
-            type=inst.type,
-            name=inst.name,
-            root_dir=inst.root_dir,
-            start_command=inst.start_command,
-            java_home=inst.java_home,
-            auto_restart=inst.auto_restart,
-        )
+        spec = spec_of(inst)
         node_id = inst.node_id
     conn = registry.get(node_id)
     if conn is None:

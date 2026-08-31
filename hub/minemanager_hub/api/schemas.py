@@ -8,7 +8,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-from minemanager_shared.protocol import InstanceType
+from minemanager_shared.protocol import InstanceType, RestartPolicy
 
 
 # --- Nodes -----------------------------------------------------------------
@@ -102,7 +102,7 @@ class InstanceCreate(BaseModel):
     start_command: str
     jar_path: Optional[str] = _JAR_PATH
     java_home: Optional[str] = _JAVA_HOME
-    auto_restart: bool = True
+    restart_policy: RestartPolicy = RestartPolicy.on_crash
 
     @field_validator("name", "root_dir", "start_command")
     @classmethod
@@ -129,9 +129,12 @@ class InstanceUpdate(BaseModel):
     start_command: Optional[str] = None
     jar_path: Optional[str] = _JAR_PATH
     java_home: Optional[str] = _JAVA_HOME
-    auto_restart: Optional[bool] = None
+    start_with_node: Optional[bool] = None
+    restart_policy: Optional[RestartPolicy] = None
 
-    @field_validator("name", "type", "root_dir", "start_command", "auto_restart")
+    @field_validator(
+        "name", "type", "root_dir", "start_command", "start_with_node", "restart_policy"
+    )
     @classmethod
     def _check_required(cls, value):
         return _require_value(value)
@@ -151,8 +154,8 @@ class InstanceOut(BaseModel):
     start_command: str
     jar_path: Optional[str] = None
     java_home: Optional[str] = None
-    desired_running: bool
-    auto_restart: bool
+    start_with_node: bool
+    restart_policy: str
     version: Optional[str] = None    # installed server version (updater / detector)
     build: Optional[str] = None      # installed build, when applicable
 

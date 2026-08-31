@@ -37,7 +37,7 @@ class TestInstances:
     def test_create_and_list(self, client, node_id, instance_id):
         rows = client.get(f"/api/nodes/{node_id}/instances").json()
         assert [r["id"] for r in rows] == [instance_id]
-        assert rows[0]["desired_running"] is False
+        assert rows[0]["start_with_node"] is False
 
     def test_create_on_unknown_node_404s(self, client, instance_base):
         assert client.post("/api/nodes/nope/instances", json=instance_base).status_code == 404

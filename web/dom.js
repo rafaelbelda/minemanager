@@ -93,8 +93,14 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
     for (const f of fields) {
       let input;
       if (f.type === 'select') {
+        // An option is either a bare string (value doubles as its label) or
+        // { value, label } — needed once a field's stored values are wire
+        // constants that should not be what the operator reads.
         input = el('select.input', { id: `dlg-${f.name}` },
-          f.options.map((o) => el('option', { value: o, selected: o === f.value }, o)));
+          f.options.map((o) => {
+            const value = o.value ?? o;
+            return el('option', { value, selected: value === f.value }, o.label ?? o);
+          }));
       } else if (f.type === 'toggle') {
         input = el('div.toggle' + (f.value ? '.on' : ''), {
           onclick: () => input.classList.toggle('on'),

@@ -8,16 +8,23 @@ Flow per connection:
    enrollment succeeds, and replies :class:`Welcome`.
 3. Hub registers an :class:`AgentConnection` and pumps frames: responses resolve
    waiting command futures; events are published to UI subscribers.
+4. If this handshake is a *new agent process* (see :func:`_claim_agent_session`),
+   the node's declared run state is restored in parallel — servers marked
+   ``start_with_node`` are started again, which is what makes a rebooted box come
+   back by itself. A reconnect of an agent that never died restores nothing, so a
+   dropped link or a hub restart cannot resurrect a server left down on purpose.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from minemanager_hub.agents.registry import AgentConnection, registry
+from minemanager_hub.api import reconcile
 from minemanager_hub.db.models import Node
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import tokens
@@ -81,6 +88,29 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
     return None, None, "no enrollment token and no stored identity - set MM_ENROLL_TOKEN"
 
 
+def _claim_agent_session(node_id: str, session_id: str | None) -> bool:
+    """Record the connecting agent process; report whether it is a new one.
+
+    True means "this agent restarted", which is the only thing that should
+    trigger a restore: while an agent stays up it supervises its own servers,
+    so a redial after a network drop has nothing for the hub to re-enact.
+
+    A missing ``session_id`` is an agent predating the field. It is treated as a
+    new process — the old, unconditional behaviour — because restoring twice is
+    recoverable and never restoring leaves a rebooted node down.
+    """
+    with session_scope() as db:
+        node = db.get(Node, node_id)
+        if node is None:                       # deleted between auth and here
+            return False
+        if session_id is None:
+            node.agent_session_id = None
+            return True
+        restarted = node.agent_session_id != session_id
+        node.agent_session_id = session_id
+        return restarted
+
+
 @router.websocket("/agent")
 async def agent_endpoint(ws: WebSocket) -> None:
     await ws.accept()
@@ -108,9 +138,18 @@ async def agent_endpoint(ws: WebSocket) -> None:
         Welcome(ok=True, node_id=node_id, credential=credential).model_dump(mode="json")
     )
 
+    restarted = _claim_agent_session(node_id, frame.session_id)
+
     conn = AgentConnection(node_id=node_id, send=ws.send_json)
     registry.register(conn)
     _touch_last_seen(node_id, force=True)
+
+    # Restore declared run state alongside the pump, never before it: every
+    # ``power.start`` it sends is answered by a response frame *this loop* has
+    # to read, so awaiting the restore here would deadlock it until timeout.
+    restore = asyncio.create_task(
+        reconcile.restore(node_id, conn, agent_restarted=restarted)
+    )
 
     # --- frame pump ---
     try:
@@ -123,11 +162,18 @@ async def agent_endpoint(ws: WebSocket) -> None:
             if isinstance(frame, Response):
                 conn.resolve(frame)
             elif isinstance(frame, Event):
+                # Read before it is fanned out: one event can carry a declared-
+                # state consequence (a console shutdown disarms the instance),
+                # and subscribers are UI sockets that cannot apply it.
+                reconcile.note_clean_exit(frame)
                 registry.publish(node_id, frame)
                 _touch_last_seen(node_id)
     except WebSocketDisconnect:
         pass
     finally:
+        # Nothing will read this socket again, so a restore still working
+        # through its stagger is now sending starts nobody can answer.
+        restore.cancel()
         # Only tear down the registry entry if it is still *ours*. Half-open TCP
         # is normal here (WireGuard, sleeping laptops, NAT): a reconnect can
         # register a replacement before this socket's disconnect is noticed, and
