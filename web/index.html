@@ -153,7 +153,7 @@
 
         <div class="banner hidden" id="inst-offline">
           <span style="font-size:14px">&#9888;</span>
-          Node offline &mdash; can't reach the agent. Live actions are disabled until it reconnects.
+          Node offline. Can't reach the agent. Live actions are disabled until it reconnects.
           You can still change whether instances start with the node in Settings.
         </div>
 
@@ -224,7 +224,7 @@
             <div class="version-wrap">
               <div class="banner warn hidden" id="ver-updating">
                 <span class="spin"></span>
-                Updating the server binary &mdash; the server is locked until this finishes.
+                Updating the server binary... The server is locked until this finishes.
               </div>
 
               <div class="label" style="margin-bottom:12px">CURRENT</div>
@@ -306,21 +306,19 @@
                   <label class="field-label" for="set-restart">Restart policy
                     <span class="hint-inline">&middot; what to do when the server exits on its own</span></label>
                   <select class="input" id="set-restart">
-                    <option value="never">Never &mdash; leave it down, however it ended</option>
-                    <option value="on_crash">On crash &mdash; put it back if it fails, honour a deliberate stop</option>
-                    <option value="always">Always &mdash; put it back even after a console stop</option>
+                    <option value="never">Never: leave it down, however it ended</option>
+                    <option value="on_crash">On crash: put it back if it fails, honour a deliberate stop</option>
+                    <option value="always">Always: put it back even after a console stop</option>
                   </select>
                   <div style="font-size:11px;color:var(--dim-2);margin-top:6px">Stop and Kill always
-                    work, whatever this is set to &mdash; the policy only decides what happens when the
+                    work, whatever this is set to. The policy only decides what happens when the
                     server exits without being asked.</div>
                 </div>
                 <div class="switch-row">
                   <div>
                     <div class="t">Start with node</div>
                     <div class="d">Start this instance whenever the node's agent starts, so a
-                      reboot needs no intervention. Set for you by Start and Stop &mdash; change it
-                      here to keep a server down across a reboot, or to arm one that is stopped
-                      right now.</div>
+                      reboot needs no intervention.</div>
                   </div>
                   <div class="toggle" id="set-startwith"><div class="knob"></div></div>
                 </div>
