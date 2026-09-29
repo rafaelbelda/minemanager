@@ -23,7 +23,9 @@ import httpx
 from minemanager_agent import files
 from minemanager_shared.protocol import TransferStartData
 
-CHUNK = 256 * 1024
+# Throughput over a link with any per-chunk stall is chunk_size / stall: with a
+# 1 ms stall, 256 KiB gives 16 MB/s and 1 MiB gives 63 MB/s.
+CHUNK = 1024 * 1024
 
 
 class TransferError(Exception):
@@ -31,12 +33,26 @@ class TransferError(Exception):
 
 
 def _build_zip(src_dir: Path, dest_zip: Path) -> None:
-    """Zip a directory to a temp file (blocking — run in a thread)."""
-    with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+    """Zip a directory to a temp file (blocking — run in a thread).
+
+    Compression is per entry (``files.zip_params``). That cost is paid before
+    the first byte reaches the browser, so it presents as a slow download.
+    """
+    # Skipping the scratch dir is load-bearing: ``dest_zip`` lives in
+    # ``<root>/.minemanager/``, so zipping the instance root itself (the UI's
+    # "download current folder" at ".") otherwise reaches the output file and
+    # the zip consumes itself until the disk fills.
+    with zipfile.ZipFile(dest_zip, "w", zipfile.ZIP_DEFLATED,
+                         compresslevel=files.ZIP_LEVEL) as zf:
         for p in sorted(src_dir.rglob("*")):
             if p.is_symlink() or not p.is_file():
                 continue
-            zf.write(p, arcname=str(p.relative_to(src_dir)))
+            rel = p.relative_to(src_dir)
+            if files.HIDDEN_DIR in rel.parts or p == dest_zip:
+                continue
+            ctype, clevel = files.zip_params(p)
+            zf.write(p, arcname=str(rel),
+                     compress_type=ctype, compresslevel=clevel)
 
 
 async def _run_download(http_base: str, tid: str, root: str, path: str, headers: dict) -> dict:
@@ -91,8 +107,10 @@ async def _run_upload(http_base: str, tid: str, root: str, path: str, headers: d
             async with client.stream("GET", f"{http_base}/api/internal/transfer/{tid}",
                                      headers=headers) as resp:
                 resp.raise_for_status()
-                with tmp.open("wb") as f:
-                    async for chunk in resp.aiter_bytes(CHUNK):
+                # aiter_raw: aiter_bytes re-slices the body to exactly CHUNK,
+                # a second full copy of every byte for no benefit.
+                with tmp.open("wb", buffering=0) as f:
+                    async for chunk in resp.aiter_raw():
                         await asyncio.to_thread(f.write, chunk)
         target.parent.mkdir(parents=True, exist_ok=True)
         os.replace(tmp, target)                  # atomic move into place

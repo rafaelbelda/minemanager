@@ -39,6 +39,16 @@ sudo systemctl enable --now minemanager-hub
 
 Then, put your reverse proxy and authentication in front. **MineManager Hub does not authenticate end users itself.** For extra security, expose it only through WireGuard.
 
+See [`Caddyfile`](Caddyfile) for a working config. Caddy's defaults already
+suit large transfers — no body buffering, no size limit, no timeouts — so the
+only thing to get wrong is adding `request_body max_size` or a transport
+`read_timeout`, either of which breaks multi-GB uploads. (nginx is the opposite:
+its defaults spool both directions to disk and cap bodies at 1 MB.)
+
+If the hub is reached over WireGuard, check the MTU. A tunnel MTU above the real
+path MTU, with PMTU discovery blackholed, presents as a few-MB/s ceiling with no
+error anywhere; `ping -M do -s 1372 <hub>` from the client finds it.
+
 **Agent** - `sudoedit /etc/minemanager/agent.env`
 
 Set `MM_HUB_URL` (use `wss://`; a plaintext `ws://` to a remote host is refused

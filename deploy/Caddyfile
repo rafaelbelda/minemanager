@@ -1,0 +1,21 @@
+# MineManager Hub — Caddy reverse proxy.
+#
+# Caddy's defaults already suit large transfers: it does not buffer request or
+# response bodies to disk, imposes no body-size limit, and sets no read/write
+# timeout. So this is mostly a plain reverse_proxy. Do not add `request_body
+# max_size` or a transport `read_timeout` — either one breaks multi-GB uploads.
+#
+# Put your authentication (Authelia et al.) in front; the hub does not
+# authenticate end users itself.
+
+minemanager.example.internal {          # must match MM_ALLOWED_HOSTS
+	# Compress the UI, never the transfer endpoints: those bodies are already
+	# compressed archives, and encoding one drops Content-Length and with it the
+	# browser's progress bar.
+	@compressible not path /api/instances/*/files/download* /api/internal/transfer/*
+	encode @compressible gzip
+
+	# WebSockets (agent transport, console + event streams) need no special
+	# handling — Caddy v2 proxies them automatically.
+	reverse_proxy 127.0.0.1:8730
+}

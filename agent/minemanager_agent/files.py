@@ -23,6 +23,27 @@ _BINARY_SNIFF_BYTES = 8192
 # huge directory slips past the transfer cap on uncompressed size.
 _ZIP_UNCOMPRESSED_GUARD = 256 * 1024 * 1024
 
+# Zip compression policy. Deflating already-compressed input costs ~40x the CPU
+# for a ratio of 1.000 (measured: 16 MB/s at level 6 vs 760 MB/s stored), and a
+# world folder is almost all `.mca`, which is zlib-compressed internally. So
+# store those suffixes and deflate the rest at level 1 (258 MB/s on log text).
+_STORED_SUFFIXES = frozenset({
+    # Minecraft's own compressed formats
+    ".mca", ".mcr", ".dat", ".dat_old", ".nbt", ".schem", ".schematic",
+    # archives & packages
+    ".zip", ".jar", ".gz", ".tgz", ".bz2", ".xz", ".zst", ".7z", ".rar", ".lz4",
+    # media
+    ".png", ".jpg", ".jpeg", ".webp", ".ogg", ".mp3", ".mp4", ".webm",
+})
+ZIP_LEVEL = 1
+
+
+def zip_params(path: Path) -> tuple[int, int | None]:
+    """``(compress_type, compresslevel)`` for one entry in a directory zip."""
+    if path.suffix.lower() in _STORED_SUFFIXES:
+        return zipfile.ZIP_STORED, None
+    return zipfile.ZIP_DEFLATED, ZIP_LEVEL
+
 # Used only when the hub does not supply its configured limit. Must track the
 # hub's MM_EDITOR_MAX_BYTES / MM_TRANSFER_CAP_BYTES defaults.
 DEFAULT_EDITOR_MAX_BYTES = 5_000_000
@@ -101,14 +122,21 @@ def fetch(root: str | Path, rel: str, cap: int) -> dict:
     if target.is_dir():
         buf = io.BytesIO()
         uncompressed = 0
-        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED, compresslevel=ZIP_LEVEL) as zf:
             for p in sorted(target.rglob("*")):
                 if p.is_symlink() or not p.is_file():
+                    continue
+                rel = p.relative_to(target)
+                # The agent's scratch dir is hidden from the explorer, so it does
+                # not belong in an archive of user content either.
+                if HIDDEN_DIR in rel.parts:
                     continue
                 uncompressed += p.stat().st_size
                 if uncompressed > _ZIP_UNCOMPRESSED_GUARD:
                     raise ValueError("directory is too large to archive here — use the large transfer")
-                zf.write(p, arcname=str(p.relative_to(target)))
+                ctype, clevel = zip_params(p)
+                zf.write(p, arcname=str(rel),
+                         compress_type=ctype, compresslevel=clevel)
         data = buf.getvalue()
         if len(data) > cap:
             raise ValueError(f"zip is larger than the transfer cap ({cap} bytes) — use the large transfer")

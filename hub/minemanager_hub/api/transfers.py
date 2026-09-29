@@ -79,7 +79,15 @@ async def download_stream(instance_id: str, path: str, tid: str) -> StreamingRes
             raise HTTPException(502, fut.result().error or "transfer failed to start")
         raise HTTPException(504, "agent did not start the transfer")
 
-    headers = {"content-disposition": f"attachment; filename*=UTF-8''{quote(ctx.filename or 'download')}"}
+    headers = {
+        "content-disposition": f"attachment; filename*=UTF-8''{quote(ctx.filename or 'download')}",
+        # Caddy (deploy/Caddyfile) streams by default and ignores both of these.
+        # They are here for an nginx front end, whose defaults spool a body this
+        # size to disk, and to stop anything gzipping an archive — which would
+        # drop content-length and with it the browser's progress bar.
+        "x-accel-buffering": "no",
+        "cache-control": "no-store, no-transform",
+    }
     if ctx.total:
         headers["content-length"] = str(ctx.total)
 
@@ -87,7 +95,7 @@ async def download_stream(instance_id: str, path: str, tid: str) -> StreamingRes
         ctx.state = "active"
         try:
             while True:
-                chunk = await ctx.queue.get()
+                chunk = await ctx.get()   # ctx.get releases the byte window
                 if chunk is None:
                     break
                 ctx.sent += len(chunk)
@@ -167,10 +175,7 @@ async def transfer_cancel(tid: str) -> dict:
     if ctx is not None:
         ctx.cancel.set()
         ctx.finish("cancelled")
-        try:
-            ctx.queue.put_nowait(None)   # unblock a consumer parked on get()
-        except asyncio.QueueFull:
-            pass
+        ctx.queue.put_nowait(None)   # unblock a consumer parked on get()
     return {"ok": True}
 
 
@@ -212,10 +217,12 @@ async def internal_pull(tid: str, request: Request) -> StreamingResponse:
 
     async def gen():
         while True:
-            chunk = await ctx.queue.get()
+            chunk = await ctx.get()   # releases the byte window
             if chunk is None or ctx.cancel.is_set():
                 break
             yield chunk
 
-    headers = {"content-length": str(ctx.total)} if ctx.total else {}
+    headers = {"x-accel-buffering": "no", "cache-control": "no-store, no-transform"}
+    if ctx.total:
+        headers["content-length"] = str(ctx.total)
     return StreamingResponse(gen(), media_type="application/octet-stream", headers=headers)

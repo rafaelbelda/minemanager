@@ -14,7 +14,15 @@ import time
 from dataclasses import dataclass, field
 
 CHUNK = 256 * 1024          # streaming chunk size
-_QUEUE_CHUNKS = 16          # ~4 MB in-flight buffer per transfer (bounds memory)
+
+# In-flight buffer per transfer, in bytes rather than queue items: the hub does
+# not choose the chunk size on the producing hop (``request.stream()`` hands over
+# whatever the ASGI server read off the socket), so an item count bounded memory
+# only incidentally.
+_WINDOW_BYTES = 8 * 1024 * 1024
+# A parked producer resumes here, not as soon as one chunk drains — waking per
+# chunk cost ~60% of throughput on loopback.
+_RESUME_BYTES = _WINDOW_BYTES // 2
 
 
 @dataclass
@@ -29,33 +37,67 @@ class TransferContext:
     state: str = "pending"  # pending | active | done | error | cancelled
     error: str | None = None
     queue: "asyncio.Queue[bytes | None]" = field(
-        default_factory=lambda: asyncio.Queue(maxsize=_QUEUE_CHUNKS)
+        default_factory=lambda: asyncio.Queue()      # unbounded; _window bounds it
     )
     header_ready: asyncio.Event = field(default_factory=asyncio.Event)
     cancel: asyncio.Event = field(default_factory=asyncio.Event)
     created: float = field(default_factory=time.monotonic)
     finished_at: float | None = None
 
+    # Bytes queued but not yet handed to the consuming hop, plus the future a
+    # blocked producer parks on (a bare future needs no clear/set handshake).
+    _queued: int = 0
+    _resume: "asyncio.Future[None] | None" = None
+
     async def put(self, item: "bytes | None") -> bool:
+        """Queue a chunk, applying backpressure once the window is full.
+
+        Returns False when the transfer was cancelled while waiting, so the
+        producing hop can exit promptly instead of parking forever on a queue
+        nothing is draining any more.
+        """
+        if self.cancel.is_set():
+            return False
+
+        # EOF is never held back: it carries no bytes, and blocking it would
+        # deadlock a consumer waiting for the end of the stream.
+        if item is not None and self._queued >= _WINDOW_BYTES:
+            if self._resume is None:
+                self._resume = asyncio.get_running_loop().create_future()
+            waiter = self._resume
+            canceller = asyncio.ensure_future(self.cancel.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {waiter, canceller}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                canceller.cancel()
+            if waiter not in done:
+                return False
 
         if self.cancel.is_set():
             return False
-        if not self.queue.full():
-            self.queue.put_nowait(item)
-            return True
+        if item is not None:
+            self._queued += len(item)
+        self.queue.put_nowait(item)
+        return True
 
-        putter = asyncio.ensure_future(self.queue.put(item))
-        waiter = asyncio.ensure_future(self.cancel.wait())
-        try:
-            done, _ = await asyncio.wait(
-                {putter, waiter}, return_when=asyncio.FIRST_COMPLETED
-            )
-            if putter in done:
-                return True
-            putter.cancel()
-            return False
-        finally:
-            waiter.cancel()
+    async def get(self) -> "bytes | None":
+        """Take the next chunk, releasing its bytes back into the window."""
+        item = await self.queue.get()
+        if item is not None:
+            self._queued -= len(item)
+        self._maybe_resume()
+        return item
+
+    def _maybe_resume(self) -> None:
+        """Wake a parked producer once the backlog drains to _RESUME_BYTES."""
+        if self._resume is not None and (
+            self._queued <= _RESUME_BYTES or self.cancel.is_set()
+        ):
+            if not self._resume.done():
+                self._resume.set_result(None)
+            self._resume = None
 
     def finish(self, state: str, error: str | None = None) -> None:
         self.state = state

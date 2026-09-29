@@ -11,7 +11,7 @@ import asyncio
 
 import pytest
 
-from minemanager_hub.transfers import TransferIdInUse, TransferRegistry
+from minemanager_hub.transfers import _WINDOW_BYTES, TransferIdInUse, TransferRegistry
 
 
 @pytest.fixture
@@ -21,6 +21,12 @@ def reg():
 
 def make(reg, tid="t1", direction="download"):
     return reg.create(tid, node_id="n1", direction=direction, path="world.zip")
+
+
+async def _fill_window(ctx, chunk=64 * 1024):
+    """Queue exactly enough bytes to close the in-flight window."""
+    while ctx._queued < _WINDOW_BYTES:
+        assert await ctx.put(b"x" * chunk) is True
 
 
 class TestRegistry:
@@ -75,7 +81,7 @@ class TestContext:
     async def test_put_and_drain(self, reg):
         ctx = make(reg)
         assert await ctx.put(b"chunk") is True
-        assert await ctx.queue.get() == b"chunk"
+        assert await ctx.get() == b"chunk"
 
     async def test_put_refused_after_cancel(self, reg):
         ctx = make(reg)
@@ -84,8 +90,7 @@ class TestContext:
 
     async def test_put_unblocks_when_cancelled_mid_wait(self, reg):
         ctx = make(reg)
-        while not ctx.queue.full():
-            ctx.queue.put_nowait(b"x")
+        await _fill_window(ctx)
 
         async def cancel_soon():
             await asyncio.sleep(0.05)
@@ -93,6 +98,32 @@ class TestContext:
 
         asyncio.ensure_future(cancel_soon())
         assert await asyncio.wait_for(ctx.put(b"blocked"), timeout=2) is False
+
+    async def test_the_window_bounds_bytes_not_chunk_count(self, reg):
+        """An item-counted queue blocked after 16 chunks however small they
+        were, so the real bound depended on the transport's chunk size."""
+        ctx = make(reg)
+        for _ in range(64):
+            assert await asyncio.wait_for(ctx.put(b"x" * 1024), timeout=1) is True
+        assert ctx._queued == 64 * 1024
+
+    async def test_put_blocks_once_the_byte_window_is_full(self, reg):
+        ctx = make(reg)
+        await _fill_window(ctx)
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(ctx.put(b"over"), timeout=0.2)
+
+    async def test_draining_reopens_the_window(self, reg):
+        ctx = make(reg)
+        await _fill_window(ctx)
+        await ctx.get()                       # release one chunk's worth
+        assert await asyncio.wait_for(ctx.put(b"more"), timeout=1) is True
+
+    async def test_the_eof_sentinel_is_never_held_back(self, reg):
+        """A full window must not delay EOF — the consumer waits on it."""
+        ctx = make(reg)
+        await _fill_window(ctx)
+        assert await asyncio.wait_for(ctx.put(None), timeout=1) is True
 
     def test_finish_records_the_first_outcome_only(self, reg):
         ctx = make(reg)
