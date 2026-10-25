@@ -43,12 +43,12 @@ export class ApiError extends Error {
 
 /** Map a failure onto the wording from UI_CONTEXT §7. */
 export function describe(err) {
-  if (!(err instanceof ApiError)) return err?.message || 'Network error — the hub is unreachable.';
+  if (!(err instanceof ApiError)) return err?.message || "Can't reach the hub.";
   switch (err.status) {
-    case 400: return `Bad request — ${err.detail}`;
-    case 404: return 'Not found — it may have been deleted elsewhere.';
-    case 409: return "Node offline — can't reach the agent.";
-    case 502: return `Agent error — ${err.detail}`;
+    case 400: return err.detail || 'The hub rejected that request.';
+    case 404: return 'Not found. It may have been deleted elsewhere.';
+    case 409: return "Node offline. Can't reach the agent.";
+    case 502: return `Agent error: ${err.detail}`;
     case 504: return 'Timed out talking to the agent. Try again.';
     default: return err.detail || `Request failed (${err.status}).`;
   }
@@ -74,7 +74,7 @@ async function request(method, path, body) {
   try {
     res = await fetch(base + path, init);
   } catch (cause) {
-    throw new Error('Network error — the hub is unreachable.', { cause });
+    throw new Error("Can't reach the hub.", { cause });
   }
   if (!res.ok) {
     let detail = res.statusText;

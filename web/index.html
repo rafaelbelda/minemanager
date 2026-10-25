@@ -13,46 +13,41 @@
 
   <!-- ===== TOPBAR ===== -->
   <header class="topbar">
+    <button class="btn-icon nav-toggle" id="nav-toggle" aria-label="Show nodes"
+            aria-expanded="false" aria-controls="sidebar">&#9776;</button>
     <div class="brand">
       <img class="brand-mark" src="./favicon.svg" alt="" width="22" height="22">
       <span class="brand-name">MINEMANAGER</span>
       <span class="brand-ver" id="brand-ver">v0.0.0</span>
     </div>
     <div class="spacer"></div>
-    <div class="hub-health">
-      <span class="dot" id="health-dot" style="width:7px;height:7px;background:#6b6b67"></span>
-      <span id="health-text">connecting&hellip;</span>
-      <span class="sep">&middot;</span>
-      <span id="health-origin"></span>
-    </div>
-    <div class="divider-v"></div>
-    <button class="btn btn-primary" id="btn-add-node">
-      <span style="font-size:15px;line-height:1">+</span> Add node
-    </button>
+    <button class="btn btn-primary" id="btn-add-node">+ Add node</button>
   </header>
+
+  <!-- Hub reachability is only worth screen space when it is a problem. -->
+  <div class="hub-down hidden" id="hub-down" role="alert">
+    Can't reach the hub at <span id="hub-origin"></span>. Retrying every 15 seconds.
+  </div>
 
   <!-- ===== BODY ===== -->
   <div class="body">
 
     <!-- ===== SIDEBAR ===== -->
-    <aside class="sidebar">
+    <div class="nav-scrim" id="nav-scrim" hidden></div>
+    <aside class="sidebar" id="sidebar" aria-label="Nodes and instances">
       <div class="sidebar-head">
-        <div class="filter">
-          <span class="filter-icon">&#8981;</span>
-          <input id="filter" type="text" placeholder="Filter nodes and instances&hellip;" autocomplete="off" spellcheck="false">
-        </div>
+        <label class="sr-only" for="filter">Filter nodes and instances</label>
+        <input class="filter" id="filter" type="search" placeholder="Filter nodes and instances&hellip;"
+               autocomplete="off" spellcheck="false">
       </div>
 
       <div class="tree-hub">
-        <div class="row" id="row-hub">
-          <span class="row-mark">></span>
+        <div class="row" id="row-hub" role="button" tabindex="0">
           <span class="row-title">Overview</span>
-          <!--<span class="spacer"></span>
-          <span class="row-sub" id="row-hub-count">0 inst</span> REMOVED -->
         </div>
       </div>
 
-      <div class="tree" id="tree"></div>
+      <nav class="tree" id="tree" aria-label="Nodes"></nav>
 
     </aside>
 
@@ -62,34 +57,28 @@
       <!-- ---------- HUB VIEW ---------- -->
       <section class="view hidden" id="view-hub">
         <div class="scroll pad">
-          <div class="page-head">
+          <h1 class="page-title">Network</h1>
+
+          <dl class="summary">
             <div>
-              <div class="label" style="margin-bottom:8px">OVERVIEW</div>
-              <h1 class="page-title">Network</h1>
+              <dt>Nodes online</dt>
+              <dd><span id="st-online">0</span><span class="of" id="st-nodes"> / 0</span></dd>
             </div>
-            <button class="btn btn-primary" id="hub-add-node" style="height:34px">+ Add node</button>
-          </div>
+            <div>
+              <dt>Instances</dt>
+              <dd id="st-instances">0</dd>
+            </div>
+            <div>
+              <dt>Running</dt>
+              <dd id="st-running">0</dd>
+            </div>
+            <div>
+              <dt>Needs attention</dt>
+              <dd id="st-attention">0</dd>
+            </div>
+          </dl>
 
-          <div class="stats">
-            <div class="stat">
-              <div class="stat-k">NODES ONLINE</div>
-              <div class="stat-v"><span id="st-online" style="color:var(--ok)">0</span><span class="of" id="st-nodes"> / 0</span></div>
-            </div>
-            <div class="stat">
-              <div class="stat-k">INSTANCES</div>
-              <div class="stat-v" id="st-instances">0</div>
-            </div>
-            <div class="stat">
-              <div class="stat-k">RUNNING</div>
-              <div class="stat-v" id="st-running" style="color:var(--ok)">0</div>
-            </div>
-            <div class="stat">
-              <div class="stat-k">NEEDS ATTENTION</div>
-              <div class="stat-v" id="st-attention" style="color:var(--err)">0</div>
-            </div>
-          </div>
-
-          <div class="label" style="margin-bottom:12px">NODES</div>
+          <h2 class="label">NODES</h2>
           <div class="node-grid" id="node-grid"></div>
 
           <div id="enroll-section"></div>
@@ -101,27 +90,33 @@
         <div class="detail-head">
           <div class="crumbs" id="node-crumbs"></div>
           <div class="detail-title-row">
-            <span class="dot dot-lg" id="node-dot"></span>
             <h1 class="detail-title" id="node-name"></h1>
-            <span class="pill" id="node-badge"></span>
+            <span class="state-pill" id="node-badge"></span>
             <span class="spacer"></span>
-            <button class="btn" id="node-reenroll">Re-enroll</button>
-            <button class="btn btn-danger" id="node-delete">Delete node</button>
+            <button class="btn btn-sm" id="node-reenroll">Re-enroll</button>
           </div>
           <div class="detail-meta" id="node-meta"></div>
         </div>
-        <div class="scroll" style="padding:0 32px 28px">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-            <span class="label" id="node-inst-label">INSTANCES</span>
-            <button class="btn btn-sm" id="node-add-inst" style="height:30px">+ Add instance</button>
+        <div class="scroll node-body">
+          <div class="section-head">
+            <h2 class="label" id="node-inst-label">INSTANCES</h2>
+            <button class="btn btn-sm" id="node-add-inst">+ Add instance</button>
           </div>
           <div class="table">
-            <div class="table-head">
-              <span>NAME</span><span>TYPE</span><span>STATE</span><span>ROOT</span><span>CONTROL</span>
+            <div class="table-head" role="row">
+              <span>NAME</span><span>TYPE</span><span>ROOT</span><span class="sr-only">Controls</span>
             </div>
             <div id="node-inst-rows"></div>
           </div>
-          <div id="node-enroll-section" style="margin-top:26px"></div>
+          <div id="node-enroll-section"></div>
+          <div class="danger-row">
+            <div>
+              <div class="t">Delete this node</div>
+              <div class="d">Removes the node and its instance records from the hub. Files on the
+                machine are left untouched.</div>
+            </div>
+            <button class="btn btn-danger" id="node-delete">Delete node</button>
+          </div>
         </div>
       </section>
 
@@ -132,141 +127,136 @@
           <div class="inst-title-row">
             <h1 class="inst-title" id="inst-name"></h1>
             <span class="inst-type" id="inst-type"></span>
-            <span class="inst-state" id="inst-state"></span>
-            <span class="inst-state hidden" id="inst-armed"></span>
+            <span class="state-pill" id="inst-state"></span>
+            <button class="inst-armed hidden" type="button" id="inst-armed"></button>
             <span class="inst-meta" id="inst-meta"></span>
             <span class="spacer"></span>
             <div class="inst-actions">
-              <button class="btn" id="act-start"><span style="font-size:9px">&#9654;</span> Start</button>
-              <button class="btn" id="act-stop"><span style="font-size:9px">&#9632;</span> Stop</button>
-              <button class="btn" id="act-restart"><span style="font-size:12px">&#10227;</span> Restart</button>
+              <button class="btn" id="act-start">Start</button>
+              <button class="btn" id="act-stop">Stop</button>
+              <button class="btn" id="act-restart">Restart</button>
               <button class="btn btn-danger" id="act-kill">Kill</button>
             </div>
           </div>
-          <div class="tabs">
-            <div class="tab" data-tab="console">CONSOLE</div>
-            <div class="tab" data-tab="files">FILES</div>
-            <div class="tab" data-tab="version">VERSION</div>
-            <div class="tab" data-tab="settings">SETTINGS</div>
+          <div class="tabs" role="tablist" aria-label="Instance sections">
+            <button class="tab" type="button" role="tab" id="tab-console" aria-controls="pane-console" data-tab="console">CONSOLE</button>
+            <button class="tab" type="button" role="tab" id="tab-files" aria-controls="pane-files" data-tab="files">FILES</button>
+            <button class="tab" type="button" role="tab" id="tab-version" aria-controls="pane-version" data-tab="version">VERSION</button>
+            <button class="tab" type="button" role="tab" id="tab-settings" aria-controls="pane-settings" data-tab="settings">SETTINGS</button>
           </div>
         </div>
 
-        <div class="banner hidden" id="inst-offline">
-          <span style="font-size:14px">&#9888;</span>
-          Node offline. Can't reach the agent. Live actions are disabled until it reconnects.
-          You can still change whether instances start with the node in Settings.
+        <div class="banner hidden" id="inst-offline" role="status">
+          Node offline. Live actions stay disabled until its agent reconnects;
+          &ldquo;Start with node&rdquo; can still be changed in Settings.
         </div>
 
         <!-- CONSOLE TAB -->
-        <div class="tab-pane hidden" id="pane-console">
-          <div class="banner err hidden" id="console-hint">
-            <span style="font-size:14px">&#9888;</span>
-            Failed to load console session history. Live output still streams below.
+        <div class="tab-pane hidden" id="pane-console" role="tabpanel" aria-labelledby="tab-console">
+          <div class="banner err hidden" id="console-hint" role="status">
+            Couldn't load earlier console output. Live output still streams below.
           </div>
           <div class="console-wrap">
             <div class="terminal">
               <div class="terminal-head">
-                <span class="dot" id="term-dot" style="width:8px;height:8px"></span>
-                <span class="terminal-title" id="term-title">pty</span>
-                <span class="spacer"></span>
                 <span class="terminal-note" id="term-count">0 lines</span>
-                <span class="terminal-note toggle-link" id="term-autoscroll">&middot; autoscroll</span>
-                <span class="terminal-note toggle-link" id="term-clear">&middot; clear</span>
+                <span class="spacer"></span>
+                <button class="terminal-btn" type="button" id="term-autoscroll" aria-pressed="true">Autoscroll</button>
+                <button class="terminal-btn" type="button" id="term-clear">Clear</button>
               </div>
-              <div class="terminal-body" id="term-body"></div>
+              <div class="terminal-body" id="term-body" tabindex="0" role="log" aria-label="Server console output"></div>
+              <div class="term-empty" id="term-empty" hidden></div>
             </div>
             <div class="console-input">
-              <span class="console-prompt" id="console-prompt">&rsaquo;</span>
+              <span class="console-prompt" aria-hidden="true">&rsaquo;</span>
+              <label class="sr-only" for="console-line">Console command</label>
               <input id="console-line" type="text" placeholder="send a console command&hellip;" autocomplete="off" spellcheck="false">
-              <span class="console-send">&crarr; SEND</span>
+              <button class="console-send" type="button" id="console-send">Send</button>
             </div>
           </div>
         </div>
 
         <!-- FILES TAB -->
-        <div class="tab-pane hidden" id="pane-files">
+        <div class="tab-pane hidden" id="pane-files" role="tabpanel" aria-labelledby="tab-files">
           <div class="files-wrap">
             <div class="files-pane">
               <div class="files-head">
                 <span class="files-path" id="files-path"></span>
                 <span class="spacer"></span>
-                <button class="btn-icon sq" id="files-refresh" title="Refresh">&#10227;</button>
-                <button class="btn-icon sq" id="files-new" title="New text file">+</button>
-                <button class="btn-icon sq" id="files-upload" title="Upload files to this folder">&uarr;</button>
-                <button class="btn-icon sq" id="files-download" title="Download this folder as a zip">&darr;</button>
+                <button class="btn-icon sq" id="files-refresh" title="Refresh" aria-label="Refresh">&#10227;</button>
+                <button class="btn-icon sq" id="files-new" title="New text file" aria-label="New text file">+</button>
+                <button class="btn-icon sq" id="files-upload" title="Upload files to this folder" aria-label="Upload files to this folder">&uarr;</button>
+                <button class="btn-icon sq" id="files-download" title="Download this folder as a zip" aria-label="Download this folder as a zip">&darr;</button>
                 <input type="file" id="files-file-input" multiple hidden>
               </div>
               <div class="files-list" id="files-list"></div>
             </div>
             <div class="editor-pane">
               <div class="editor-head">
-                <span class="editor-name" id="editor-name">&mdash;</span>
-                <span class="editor-dirty hidden" id="editor-dirty">&#9679; modified</span>
+                <span class="editor-name" id="editor-name">No file open</span>
+                <span class="editor-dirty hidden" id="editor-dirty">unsaved</span>
                 <span class="spacer"></span>
                 <span class="editor-info" id="editor-info"></span>
-                <button class="btn-icon sq" id="editor-fullscreen" title="Toggle fullscreen editor">&#10530;</button>
+                <button class="btn-icon sq" id="editor-fullscreen" title="Toggle fullscreen editor" aria-label="Toggle fullscreen editor" aria-pressed="false">&#10530;</button>
                 <button class="btn btn-primary btn-sm" id="editor-save" disabled>Save</button>
               </div>
               <div class="editor">
-                <div class="editor-gutter" id="editor-gutter"></div>
+                <div class="editor-gutter" id="editor-gutter" aria-hidden="true"></div>
                 <div class="editor-scroll" id="editor-scroll">
-                  <pre class="editor-hl" id="editor-hl"></pre>
+                  <pre class="editor-hl" id="editor-hl" aria-hidden="true"></pre>
+                  <label class="sr-only" for="editor-area">File contents</label>
                   <textarea class="editor-area" id="editor-area" spellcheck="false" wrap="soft"></textarea>
                 </div>
               </div>
+              <div class="editor-empty" id="editor-empty">Select a file to view or edit it here.</div>
             </div>
           </div>
         </div>
 
         <!-- VERSION TAB -->
-        <div class="tab-pane hidden" id="pane-version">
-          <div class="scroll" style="padding:22px 28px">
+        <div class="tab-pane hidden" id="pane-version" role="tabpanel" aria-labelledby="tab-version">
+          <div class="scroll pane-pad">
             <div class="version-wrap">
-              <div class="banner warn hidden" id="ver-updating">
+              <div class="banner warn hidden" id="ver-updating" role="status">
                 <span class="spin"></span>
-                Updating the server binary... The server is locked until this finishes.
+                Updating the server binary. The server is locked until this finishes.
               </div>
 
-              <div class="label" style="margin-bottom:12px">CURRENT</div>
-              <div class="ver-card ver-current">
-                <div class="ver-cur-line">
-                  <span class="ver-soft" id="ver-cur-soft">&mdash;</span>
-                  <span class="ver-cur-ver" id="ver-cur-ver">&mdash;</span>
-                </div>
-                <div class="ver-cur-build" id="ver-cur-build"></div>
-              </div>
+              <h2 class="label">INSTALLED</h2>
+              <p class="ver-current">
+                <span class="ver-cur-ver" id="ver-cur-ver"></span>
+                <span class="ver-cur-build" id="ver-cur-build"></span>
+              </p>
 
-              <div class="label" style="margin:24px 0 12px">TARGET</div>
-              <div class="ver-card">
-                <div class="ver-target">
-                  <div id="ver-version-field">
-                    <label class="field-label" id="ver-version-label" for="ver-version">Version</label>
-                    <select class="input" id="ver-version"></select>
-                  </div>
-                  <div id="ver-build-field">
-                    <label class="field-label" id="ver-build-label" for="ver-build">Build</label>
-                    <select class="input" id="ver-build"></select>
-                  </div>
+              <h2 class="label">UPDATE TO</h2>
+              <div class="ver-target">
+                <div id="ver-version-field">
+                  <label class="field-label" id="ver-version-label" for="ver-version">Version</label>
+                  <select class="input" id="ver-version"></select>
                 </div>
-                <div class="ver-actions">
-                  <button class="btn btn-primary btn-lg" id="ver-update">Update</button>
-                  <span class="ver-status" id="ver-status"></span>
-                </div>
-                <div class="ver-note" id="ver-note">
-                  Replaces only the server executable. Worlds, plugins, mods, configuration
-                  and player data are never touched, and the previous jar is backed up first.
+                <div id="ver-build-field">
+                  <label class="field-label" id="ver-build-label" for="ver-build">Build</label>
+                  <select class="input" id="ver-build"></select>
                 </div>
               </div>
+              <div class="ver-actions">
+                <button class="btn btn-primary btn-lg" id="ver-update">Update</button>
+                <span class="ver-status" id="ver-status" role="status"></span>
+              </div>
+              <p class="ver-note">
+                Replaces only the server executable. Worlds, plugins, mods, configuration
+                and player data are never touched, and the previous jar is backed up first.
+              </p>
             </div>
           </div>
         </div>
 
         <!-- SETTINGS TAB -->
-        <div class="tab-pane hidden" id="pane-settings">
-          <div class="scroll" style="padding:22px 28px">
+        <div class="tab-pane hidden" id="pane-settings" role="tabpanel" aria-labelledby="tab-settings">
+          <div class="scroll pane-pad">
             <div class="settings">
-              <div class="label" style="margin-bottom:14px">INSTANCE SPEC</div>
-              <div class="form">
+              <section class="form">
+                <h2 class="label">SERVER</h2>
                 <div>
                   <label class="field-label" for="set-name">Name</label>
                   <input class="input" id="set-name" type="text" autocomplete="off">
@@ -275,9 +265,9 @@
                   <div>
                     <label class="field-label" for="set-type">Type</label>
                     <select class="input" id="set-type">
-                      <option value="paper">paper</option>
-                      <option value="vanilla">vanilla</option>
-                      <option value="velocity">velocity</option>
+                      <option value="paper">Paper</option>
+                      <option value="vanilla">Vanilla</option>
+                      <option value="velocity">Velocity</option>
                     </select>
                   </div>
                   <div class="grow2">
@@ -286,46 +276,60 @@
                   </div>
                 </div>
                 <div>
-                  <label class="field-label" for="set-cmd">Start command
-                    <span class="hint-inline">&middot; applies on next start</span></label>
+                  <label class="field-label" for="set-cmd">Start command</label>
                   <input class="input mono" id="set-cmd" type="text" autocomplete="off" spellcheck="false">
+                  <div class="field-note">Takes effect the next time this instance starts.</div>
                 </div>
-                <div>
-                  <label class="field-label" for="set-jar">Jar path
-                    <span class="hint-inline">&middot; optional &middot; only needed if the start command doesn't name the jar</span></label>
-                  <input class="input mono" id="set-jar" type="text" autocomplete="off" spellcheck="false"
-                         placeholder="derived from the start command">
-                </div>
-                <div>
-                  <label class="field-label" for="set-java">Java directory
-                    <span class="hint-inline">&middot; optional &middot; run this instance on a specific Java version</span></label>
-                  <input class="input mono" id="set-java" type="text" autocomplete="off" spellcheck="false"
-                         placeholder="empty = node's default java">
-                </div>
-                <div>
-                  <label class="field-label" for="set-restart">Restart policy
-                    <span class="hint-inline">&middot; what to do when the server exits on its own</span></label>
-                  <select class="input" id="set-restart">
-                    <option value="never">Never: leave it down, however it ended</option>
-                    <option value="on_crash">On crash: put it back if it fails, honour a deliberate stop</option>
-                    <option value="always">Always: put it back even after a console stop</option>
-                  </select>
-                  <div style="font-size:11px;color:var(--dim-2);margin-top:6px">Stop and Kill always
-                    work, whatever this is set to. The policy only decides what happens when the
-                    server exits without being asked.</div>
-                </div>
+              </section>
+
+              <section class="form">
+                <h2 class="label">STARTUP</h2>
                 <div class="switch-row">
                   <div>
-                    <div class="t">Start with node</div>
-                    <div class="d">Start this instance whenever the node's agent starts, so a
-                      reboot needs no intervention.</div>
+                    <div class="t" id="set-startwith-label">Start with node</div>
+                    <div class="d">Starts automatically whenever the node's agent starts.</div>
                   </div>
-                  <div class="toggle" id="set-startwith"><div class="knob"></div></div>
+                  <button class="toggle" type="button" id="set-startwith" role="switch"
+                          aria-checked="false" aria-labelledby="set-startwith-label">
+                    <span class="knob"></span>
+                  </button>
                 </div>
-                <div style="display:flex;gap:10px;margin-top:4px">
-                  <button class="btn btn-primary btn-lg" id="set-save">Save changes</button>
-                  <button class="btn btn-danger btn-lg" id="set-delete">Delete instance</button>
+                <div>
+                  <label class="field-label" for="set-restart">If the server exits on its own</label>
+                  <select class="input" id="set-restart">
+                    <option value="never">Leave it down</option>
+                    <option value="on_crash">Restart it after a crash</option>
+                    <option value="always">Always restart it</option>
+                  </select>
+                  <div class="field-note">Stop and Kill always work, whatever this is set to.</div>
                 </div>
+              </section>
+
+              <details class="form advanced">
+                <summary>Advanced</summary>
+                <div>
+                  <label class="field-label" for="set-jar">Jar path</label>
+                  <input class="input mono" id="set-jar" type="text" autocomplete="off" spellcheck="false"
+                         placeholder="taken from the start command">
+                </div>
+                <div>
+                  <label class="field-label" for="set-java">Java directory</label>
+                  <input class="input mono" id="set-java" type="text" autocomplete="off" spellcheck="false"
+                         placeholder="the node's default Java">
+                </div>
+              </details>
+
+              <div class="form-actions">
+                <button class="btn btn-primary btn-lg" id="set-save">Save changes</button>
+              </div>
+
+              <div class="danger-row">
+                <div>
+                  <div class="t">Delete this instance</div>
+                  <div class="d">Removes the instance and its secrets from the hub. Files under its
+                    root directory are left untouched on the node.</div>
+                </div>
+                <button class="btn btn-danger" id="set-delete">Delete instance</button>
               </div>
             </div>
           </div>
@@ -336,8 +340,8 @@
   </div>
 </div>
 
-<div class="transfers" id="transfers"></div>
-<div class="toasts" id="toasts"></div>
+<div class="transfers" id="transfers" aria-live="polite" aria-label="File transfers"></div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
 
 <script type="module" src="./app.js"></script>
 </body>

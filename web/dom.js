@@ -30,6 +30,29 @@ function append(node, children) {
 
 export const $ = (id) => document.getElementById(id);
 
+/**
+ * Attributes that make a non-button element behave like one for the keyboard.
+ *
+ * Rows, cards and tree items are divs because they carry their own layout and
+ * nest their own buttons (a <button> may not contain one), but they are the
+ * primary way to navigate the app — so they have to be reachable with Tab and
+ * fire on Enter/Space like any control. Spread into an el() attrs object.
+ */
+export function clickable(onActivate, label) {
+  return {
+    role: 'button',
+    tabindex: '0',
+    'aria-label': label || null,
+    onclick: onActivate,
+    onkeydown: (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      if (ev.target !== ev.currentTarget) return;   // let nested controls win
+      ev.preventDefault();
+      onActivate(ev);
+    },
+  };
+}
+
 export function clear(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
   return node;
@@ -102,9 +125,14 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
             return el('option', { value, selected: value === f.value }, o.label ?? o);
           }));
       } else if (f.type === 'toggle') {
-        input = el('div.toggle' + (f.value ? '.on' : ''), {
-          onclick: () => input.classList.toggle('on'),
-        }, el('div.knob'));
+        input = el('button.toggle' + (f.value ? '.on' : ''), {
+          type: 'button', role: 'switch', 'aria-checked': f.value ? 'true' : 'false',
+          'aria-label': f.label,
+          onclick: () => {
+            const on = input.classList.toggle('on');
+            input.setAttribute('aria-checked', on ? 'true' : 'false');
+          },
+        }, el('span.knob'));
       } else {
         input = el('input.input' + (f.mono ? '.mono' : ''), {
           id: `dlg-${f.name}`, type: f.type || 'text', value: f.value ?? '',
@@ -125,9 +153,12 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
       }
     }
 
+    const opener = document.activeElement;
     const finish = (value) => {
       document.removeEventListener('keydown', onKey, true);
       backdrop.remove();
+      // Put the keyboard back where it was, so a dialog is not a dead end.
+      if (opener && document.contains(opener)) opener.focus?.();
       resolve(value);
     };
 
@@ -146,9 +177,9 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
 
     const backdrop = el('div.backdrop', {
       onmousedown: (ev) => { if (ev.target === backdrop) finish(null); },
-    }, el('div.modal', {},
+    }, el('div.modal', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       el('div.modal-head', {},
-        el('div.modal-title', { text: title }),
+        el('h2.modal-title', { text: title }),
         description && el('div.modal-desc', { text: description })),
       fields.length ? body : el('div', { style: 'height:16px' }),
       el('div.modal-foot', {},
@@ -168,7 +199,10 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
       const set = (name, value) => {
         const r = rec(name);
         if (!r) return;
-        if (r.field.type === 'toggle') r.input.classList.toggle('on', !!value);
+        if (r.field.type === 'toggle') {
+          r.input.classList.toggle('on', !!value);
+          r.input.setAttribute('aria-checked', value ? 'true' : 'false');
+        }
         else r.input.value = value ?? '';
       };
       onMount({ get, set, input: (name) => rec(name)?.input });
@@ -176,6 +210,8 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
 
     const first = [...inputs.values()].find((i) => i.field.type !== 'toggle');
     if (first) { first.input.focus(); first.input.select?.(); }
+    // A fieldless confirmation still needs the keyboard inside the dialog.
+    else backdrop.querySelector('.modal-foot .btn:last-child')?.focus();
   });
 }
 

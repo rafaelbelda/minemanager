@@ -7,21 +7,46 @@
  */
 
 import { api, ApiError, describe, originLabel, wsOrigin } from './api.js';
-import { $, clear, confirmDialog, copyText, dialog, el, fill, repaint, show, toast } from './dom.js';
+import { $, clear, clickable, confirmDialog, copyText, dialog, el, fill, repaint, show, toast } from './dom.js';
 import { NodeEvents } from './events.js';
 
 /* --- constants ----------------------------------------------------------- */
 
 const META = {
-  running: { label: 'RUNNING', color: '#47d18a', anim: 'none' },
-  stopped: { label: 'STOPPED', color: '#6b6b67', anim: 'none' },
-  starting: { label: 'STARTING', color: '#f0b429', anim: 'mm-pulse 1.2s infinite' },
-  stopping: { label: 'STOPPING', color: '#f0b429', anim: 'mm-pulse 1.2s infinite' },
-  crashed: { label: 'CRASHED', color: '#ff5c54', anim: 'mm-pulse 1.6s infinite' },
-  updating: { label: 'UPDATING', color: '#5ac8fa', anim: 'mm-pulse 1.2s infinite' },
-  unknown: { label: 'UNKNOWN', color: '#6b6b67', anim: 'none' },
+  running: { label: 'Running', color: '#47d18a', anim: 'none', glow: true },
+  stopped: { label: 'Stopped', color: '#6b6b67', anim: 'none' },
+  starting: { label: 'Starting', color: '#f0b429', anim: 'mm-pulse 1.2s infinite' },
+  stopping: { label: 'Stopping', color: '#f0b429', anim: 'mm-pulse 1.2s infinite' },
+  crashed: { label: 'Crashed', color: '#ff5c54', anim: 'mm-pulse 1.6s infinite' },
+  updating: { label: 'Updating', color: '#5ac8fa', anim: 'mm-pulse 1.2s infinite' },
+  unknown: { label: 'Unknown', color: '#6b6b67', anim: 'none', hollow: true },
 };
 const metaOf = (s) => META[s] || META.unknown;
+
+const NODE_META = {
+  online: { label: 'Online', color: '#47d18a', glow: true },
+  offline: { label: 'Offline', color: '#6b6b67' },
+  pending: { label: 'Not enrolled yet', color: '#f0b429', hollow: true },
+};
+const nodeMetaOf = (node) =>
+  NODE_META[node.online ? 'online' : node.enrolled ? 'offline' : 'pending'];
+
+/**
+ * A status light, used wherever the same state would otherwise be spelled out
+ * on every row. The colour is the signal; the name is carried in the tooltip
+ * and for screen readers, so it is never colour alone.
+ */
+function statusDot(meta, { size = 8, what = '' } = {}) {
+  // Three shapes, not three greys: filled is live, hollow is "not reporting",
+  // and the one state worth spotting across a page (up) carries a soft glow.
+  const paint = meta.hollow
+    ? `background:transparent;box-shadow:inset 0 0 0 1.5px ${meta.color}`
+    : `background:${meta.color}` + (meta.glow ? `;box-shadow:0 0 7px ${meta.color}99` : '');
+  return el('span.dot', {
+    style: `width:${size}px;height:${size}px;${paint};animation:${meta.anim || 'none'}`,
+    title: what ? `${what}: ${meta.label}` : meta.label,
+  }, el('span.sr-only', { text: meta.label }));
+}
 
 const CONSOLE_CAP = 1500;
 // Files at/under this size use the simple base64 path (fast, no pill); larger
@@ -122,6 +147,7 @@ function navigate(sel, { push = true } = {}) {
     if (location.hash !== hash) history.replaceState(null, '', hash);
   }
   render();
+  setNav(false);   // a choice was made; the drawer has done its job
   if (sel.type === 'instance' && changedInstance) loadTab();
 }
 
@@ -200,19 +226,17 @@ function scheduleRefresh() {
   );
 }
 
+/**
+ * A healthy hub is the normal case, and the normal case does not need a status
+ * light: the page only says anything when it cannot reach the hub.
+ */
 async function refreshHealth() {
-  const dot = $('health-dot');
-  const text = $('health-text');
   try {
     const h = await api.health();
-    dot.style.background = '#47d18a';
-    dot.style.boxShadow = '0 0 8px #47d18a88';
-    text.textContent = 'hub healthy';
     $('brand-ver').textContent = `v${h.version}`;
+    show($('hub-down'), false);
   } catch {
-    dot.style.background = '#ff5c54';
-    dot.style.boxShadow = '0 0 8px #ff5c5488';
-    text.textContent = 'hub unreachable';
+    show($('hub-down'), true);
   }
 }
 
@@ -240,7 +264,7 @@ function onNodeEvent(frame, nodeId) {
         pushConsole(id, `session start · ${new Date().toLocaleString()}`, 'sep');
       }
       const detail = frame.data?.detail;
-      pushConsole(id, detail ? `${st} — ${detail}` : st, 'sys');
+      pushConsole(id, detail ? `${st} · ${detail}` : st, 'sys');
       if (st === 'stopped' || st === 'crashed') pushConsole(id, '', 'sys');  // trailing gap
       if (st === 'running') maybeLoadConsole(id);
       render();
@@ -297,6 +321,7 @@ function pushConsole(instId, raw, kind) {
     while (body.childElementCount > CONSOLE_CAP) body.firstElementChild.remove();
     body.dataset.sig = consoleSig(instId, buf.length);
     $('term-count').textContent = `${buf.length} line${buf.length === 1 ? '' : 's'}`;
+    $('term-empty').hidden = true;
     show($('console-hint'), false);
     if (state.autoscroll) body.scrollTop = body.scrollHeight;
   }
@@ -389,10 +414,6 @@ function sidebarSig() {
 }
 
 function renderSidebar() {
-  /**const online = state.nodes.filter((n) => n.online).length; */
-  /**const instCount = state.nodes.reduce((sum, n) => sum + instancesOf(n.id).length, 0); */
-  /**$('side-count').textContent = `${online}/${state.nodes.length} online`; REMOVED */
-  /**$('row-hub-count').textContent = `${instCount} inst`; REMOVED */
   $('row-hub').classList.toggle('sel', state.sel.type === 'hub');
 
   repaint($('tree'), sidebarSig(), buildTree);
@@ -408,36 +429,31 @@ function buildTree() {
     const nodeSelected = state.sel.nodeId === node.id;
     const group = el('div.tree-group');
 
+    // One status light per row. Spelling the state out on every line turned the
+    // tree into a wall of ONLINE / STOPPED and buried the names it exists for.
+    const nm = nodeMetaOf(node);
     group.append(el(`div.row.row-node${nodeSelected && state.sel.type === 'node' ? '.sel-soft' : ''}`, {
-      onclick: () => selectNode(node.id),
-      title: `${node.name} · ${node.hostname || 'unknown host'}`,
+      ...clickable(() => selectNode(node.id)),
+      title: `${node.name} · ${node.hostname || 'unknown host'} · ${nm.label}`,
     },
-      el('span.row-caret', { text: '▾' }),
-      el('span.dot', { style: `background:${node.online ? '#47d18a' : '#6b6b67'};box-shadow:${node.online ? '0 0 8px #47d18a88' : 'none'}` }),
+      statusDot(nm, { what: node.name }),
       el('span.row-title', { text: node.name }),
-      el('span.row-sub', { text: node.hostname || '' }),
-      el('span.spacer'),
-      el('span.row-badge', {
-        style: `color:${node.online ? '#47d18a' : '#8b8b86'}`,
-        text: node.online ? 'ONLINE' : 'OFFLINE',
-      })));
+      el('span.row-sub', { text: node.hostname || '' })));
 
     const kids = el('div.tree-kids');
     for (const inst of hit.instances) {
       const m = metaOf(runStateOf(inst));
       const sel = state.sel.type === 'instance' && state.sel.instId === inst.id;
       kids.append(el(`div.row.row-inst${sel ? '.sel' : ''}`, {
-        onclick: () => selectInstance(node.id, inst.id),
-        title: inst.root_dir,
+        ...clickable(() => selectInstance(node.id, inst.id)),
+        title: `${inst.name} · ${m.label} · ${inst.root_dir}`,
       },
-        el('span.dot.dot-sm', { style: `background:${m.color};animation:${m.anim}` }),
-        el('span.row-title-inst', { text: inst.name }),
-        el('span.spacer'),
-        el('span.row-state', { style: `color:${m.color}`, text: m.label })));
+        statusDot(m, { size: 7, what: inst.name }),
+        el('span.row-title-inst', { text: inst.name })));
     }
     if (!hit.instances.length) {
       kids.append(el('div.row.row-inst', { style: 'cursor:default' },
-        el('span.row-state', { style: 'color:var(--dim-2)', text: 'no instances' })));
+        el('span.row-empty', { text: 'no instances' })));
     }
     group.append(kids);
     out.push(group);
@@ -474,6 +490,12 @@ function renderHub() {
   $('st-running').textContent = running;
   $('st-attention').textContent = attention;
 
+  // Colour says "look at this", so it is spent only when there is something to
+  // look at: a red 0 reads as a fault when it means the opposite.
+  $('st-online').parentElement.className = online && online === nodes.length ? 'ok' : '';
+  $('st-running').className = running ? 'ok' : '';
+  $('st-attention').className = attention ? 'alert' : '';
+
   repaint($('node-grid'), sidebarSig(), buildNodeCards);
 
   fill($('enroll-section'), enrollSection());
@@ -482,44 +504,46 @@ function renderHub() {
 function buildNodeCards() {
   const nodes = state.nodes;
   if (!nodes.length) {
-    return el('div.empty', {
-      style: 'grid-column:1/-1;border:1px dashed var(--line);border-radius:6px',
-      text: state.loaded ? 'No nodes registered yet.' : 'Loading nodes…',
-    });
+    // The empty state carries the action, which is why the page head no longer
+    // repeats the topbar's "Add node" button.
+    return el('div.empty', { style: 'grid-column:1/-1' },
+      state.loaded
+        ? el('div', {},
+            el('div', { style: 'margin-bottom:14px' }, 'No nodes yet. Add one, then run its agent.'),
+            el('button.btn.btn-primary', { onclick: addNode }, '+ Add node'))
+        : 'Loading nodes…');
   }
   const out = [];
   for (const node of nodes) {
     const insts = instancesOf(node.id);
-    out.push(el('div.node-card', { onclick: () => selectNode(node.id) },
+    out.push(el('div.node-card', clickable(() => selectNode(node.id), `Node ${node.name}`),
       el('div.node-card-head', {},
-        el('span.dot', {
-          style: `width:9px;height:9px;background:${node.online ? '#47d18a' : '#6b6b67'};box-shadow:${node.online ? '0 0 8px #47d18a88' : 'none'}`,
-        }),
+        statusDot(nodeMetaOf(node), { size: 9, what: node.name }),
         el('span.node-card-name', { text: node.name }),
-        el('span.node-card-host', { text: node.hostname || '—' }),
-        el('span.spacer'),
-        nodeBadge(node)),
+        el('span.node-card-host', { text: node.hostname || 'host unknown' })),
       el('div.node-card-meta', {},
-        el('div', {}, el('div.k', { text: 'AGENT' }), node.agent_version || '—'),
+        el('div', {}, el('div.k', { text: 'AGENT' }), node.agent_version || 'not enrolled'),
         el('div', {}, el('div.k', { text: 'LAST SEEN' }), relTime(node.last_seen)),
         el('div', {}, el('div.k', { text: 'INSTANCES' }), String(insts.length))),
       el('div.node-card-insts', {},
         insts.length
-          ? insts.map((inst) => el('span.inst-chip', {},
-              el('span.dot.dot-sm', { style: `background:${metaOf(runStateOf(inst)).color}` }),
-              inst.name))
-          : el('span.inst-chip', { style: 'color:var(--dim-2)' }, 'no instances'))));
+          ? insts.map((inst) => {
+              const m = metaOf(runStateOf(inst));
+              return el('span.inst-chip', { title: `${inst.name}: ${m.label}` },
+                statusDot(m, { size: 6 }),
+                inst.name);
+            })
+          : el('span.inst-chip.muted', {}, 'no instances'))));
   }
   return out;
 }
 
-function nodeBadge(node) {
-  const on = node.online;
-  const label = on ? 'ONLINE' : node.enrolled ? 'OFFLINE' : 'PENDING';
-  const color = on ? '#47d18a' : node.enrolled ? '#8b8b86' : '#f0b429';
-  const border = on ? '#47d18a44' : node.enrolled ? '#2d2e33' : '#f0b42955';
-  const bg = on ? '#47d18a12' : node.enrolled ? '#1a1b1f' : '#f0b4291a';
-  return el('span.pill', { style: `color:${color};border-color:${border};background:${bg}`, text: label });
+/** The one place a node's state is spelled out: its own page. */
+function fillNodeBadge(node) {
+  const m = nodeMetaOf(node);
+  const badge = $('node-badge');
+  badge.style.cssText = `color:${m.color};border-color:${m.color}55;background:${m.color}14`;
+  badge.textContent = m.label;
 }
 
 /** The one-time enrollment token card — the token can never be fetched again. */
@@ -580,18 +604,15 @@ function renderNode() {
     el('span.sep', {}, '/'),
     el('span.cur', { text: node.name }));
 
-  $('node-dot').style.background = node.online ? '#47d18a' : '#6b6b67';
-  $('node-dot').style.boxShadow = node.online ? '0 0 8px #47d18a88' : 'none';
   $('node-name').textContent = node.name;
 
-  const badge = nodeBadge(node);
-  $('node-badge').className = badge.className;
-  $('node-badge').style.cssText = badge.style.cssText;
-  $('node-badge').textContent = badge.textContent;
+  fillNodeBadge(node);
 
+  // No separator glyphs between the items: they dangle at the end of a line
+  // once the row wraps, and the gap already separates them.
   fill($('node-meta'),
-    el('span', { text: node.hostname || 'hostname unknown' }), el('span.sep', {}, '·'),
-    el('span', { text: `agent ${node.agent_version || '—'}` }), el('span.sep', {}, '·'),
+    el('span', { text: node.hostname || 'hostname unknown' }),
+    el('span', { text: `agent ${node.agent_version || 'unknown'}` }),
     el('span', { text: `last seen ${relTime(node.last_seen)}` }));
 
   const insts = instancesOf(node.id);
@@ -610,12 +631,11 @@ function buildInstanceRows(node, insts) {
     const run = runStateOf(inst);
     const m = metaOf(run);
     const live = node.online;
-    out.push(el('div.table-row', { onclick: () => selectInstance(node.id, inst.id) },
-      el('span.cell-name', { text: inst.name }),
+    out.push(el('div.table-row', clickable(() => selectInstance(node.id, inst.id), inst.name),
+      el('span.cell-name', {},
+        statusDot(m, { what: inst.name }),
+        el('span', { text: inst.name })),
       el('span.cell-type', { text: inst.type }),
-      el('span.cell-state', { style: `color:${m.color}` },
-        el('span.dot', { style: `width:7px;height:7px;background:${m.color};animation:${m.anim}` }),
-        m.label),
       el('span.cell-root', { text: inst.root_dir, title: inst.root_dir }),
       el('span.cell-ctl', {},
         powerButton(inst, 'start', '▶', 'Start', !live || ['running', 'starting'].includes(run), 'go'),
@@ -627,7 +647,7 @@ function buildInstanceRows(node, insts) {
 
 function powerButton(inst, op, glyph, title, disabled, extra = '') {
   return el(`button.btn-icon${extra ? '.' + extra : ''}`, {
-    title, disabled,
+    title, disabled, type: 'button', 'aria-label': `${title} ${inst.name}`,
     onclick: (ev) => { ev.stopPropagation(); doPower(inst, op, ev.currentTarget); },
   }, glyph);
 }
@@ -642,7 +662,7 @@ function renderInstance() {
     $('inst-state').textContent = '';
     $('inst-meta').textContent = '';
     fill($('inst-crumbs'), el('a', { onclick: selectHub }, 'Hub'));
-    ['console', 'files', 'settings'].forEach((t) => show($(`pane-${t}`), false));
+    ['console', 'files', 'version', 'settings'].forEach((t) => show($(`pane-${t}`), false));
     return;
   }
   const node = nodeById(inst.node_id);
@@ -661,8 +681,8 @@ function renderInstance() {
   $('inst-type').textContent = inst.type;
 
   const st = $('inst-state');
-  st.style.cssText = `color:${m.color};border:1px solid ${m.color}55;background:${m.color}14`;
-  fill(st, el('span.dot', { style: `width:7px;height:7px;background:${m.color};animation:${m.anim}` }), m.label);
+  st.style.cssText = `color:${m.color};border-color:${m.color}55;background:${m.color}14`;
+  st.textContent = m.label;
 
   renderArmed(inst, run);
 
@@ -681,14 +701,22 @@ function renderInstance() {
   $('act-restart').disabled = !live || updating;
   $('act-kill').disabled = !live || updating || run === 'stopped';
 
-  document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('on', t.dataset.tab === state.tab));
-  show($('inst-offline'), !live);
+  document.querySelectorAll('.tab').forEach((t) => {
+    const on = t.dataset.tab === state.tab;
+    t.classList.toggle('on', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    // Roving tabindex: the strip is one stop, arrow keys move within it.
+    t.tabIndex = on ? 0 : -1;
+  });
+  // Not before the first load resolves: "node offline" is a claim, and until
+  // the nodes are in we simply don't know.
+  show($('inst-offline'), state.loaded && !live);
   show($('pane-console'), state.tab === 'console');
   show($('pane-files'), state.tab === 'files');
   show($('pane-version'), state.tab === 'version');
   show($('pane-settings'), state.tab === 'settings');
 
-  if (state.tab === 'console') renderConsole(inst, m, live);
+  if (state.tab === 'console') renderConsole(inst, live);
   if (state.tab === 'files') renderFiles(inst, live);
   if (state.tab === 'version') renderVersion(inst, live);
 }
@@ -708,8 +736,9 @@ function renderArmed(inst, run) {
   // Armed but not up: it returns on the next agent start, which nothing else
   // on this screen tells you.
   const down = ['stopped', 'crashed', 'unknown'].includes(run);
-  const color = down ? 'var(--warn)' : 'var(--dim-2)';
-  pill.style.cssText = `color:${color};border:1px solid ${color}55;background:${color}14;cursor:pointer`;
+  pill.style.cssText = down
+    ? 'color:var(--warn);border:1px solid #4a3c20;background:#1a1712'
+    : 'color:var(--muted);border:1px solid var(--line-2);background:none';
   pill.textContent = down ? 'RETURNS ON NODE START' : 'STARTS WITH NODE';
   pill.title = state.supervised.get(inst.id) === false
     ? `The agent has stopped trying to keep this up, but it is still armed and will `
@@ -719,18 +748,26 @@ function renderArmed(inst, run) {
       + `Change it under "Start with node" in Settings.`;
 }
 
-function renderConsole(inst, m, live) {
-  $('term-dot').style.cssText = `width:8px;height:8px;background:${m.color};animation:${m.anim}`;
-  $('term-title').textContent = `pty: ${inst.name}`;
-  $('console-prompt').textContent = `${inst.name} ›`;
-
+function renderConsole(inst, live) {
+  // The instance name and its state are in the header right above; repeating
+  // them in the terminal chrome and again in the prompt said nothing new.
   const buf = state.console.get(inst.id) || [];
   $('term-count').textContent = `${buf.length} line${buf.length === 1 ? '' : 's'}`;
-  $('term-autoscroll').classList.toggle('off', !state.autoscroll);
+  $('term-autoscroll').setAttribute('aria-pressed', state.autoscroll ? 'true' : 'false');
 
   const input = $('console-line');
   input.disabled = !live;
+  $('console-send').disabled = !live;
   input.placeholder = live ? 'send a console command…' : 'node offline';
+
+  // An empty black rectangle is not an answer to "why is nothing here?".
+  const empty = $('term-empty');
+  empty.hidden = buf.length > 0;
+  const run = runStateOf(inst);
+  empty.textContent = !live ? 'Node offline. No console output.'
+    : run === 'running' ? 'Waiting for output…'
+    : run === 'stopped' || run === 'crashed' ? 'Server is not running. Output appears here once it starts.'
+    : 'No console output yet.';
 
   // Only surfaced when the history backfill failed — the live console still works.
   show($('console-hint'), state.consoleFailed.has(inst.id));
@@ -765,7 +802,7 @@ async function doPower(inst, op, button) {
     // the old value straight back. Just this control, so a field being edited
     // beside it is not clobbered.
     inst.start_with_node = op === 'start' || op === 'restart';
-    $('set-startwith').classList.toggle('on', inst.start_with_node);
+    setToggle($('set-startwith'), inst.start_with_node);
     toast(`${inst.name}: ${op} → ${res?.state || 'ok'}`, 'ok');
   } catch (err) {
     toast(`${inst.name}: ${describe(err)}`, 'error');
@@ -855,9 +892,8 @@ function buildFileRows(path, segs, live) {
   const out = [];
   if (path !== '.') {
     const parent = segs.slice(0, -1).join('/') || '.';
-    out.push(el('div.file-row.dir', { onclick: () => loadFiles(parent) },
-      el('span.file-icon', {}, '↰'),
-      el('span.file-name', {}, '..')));
+    out.push(el('div.file-row.dir', clickable(() => loadFiles(parent), 'Parent folder'),
+      el('span.file-name', {}, '../')));
   }
   const entries = [...state.files.entries].sort(
     (a, b) => (b.is_dir - a.is_dir) || a.name.localeCompare(b.name));
@@ -875,9 +911,9 @@ function buildFileRows(path, segs, live) {
       attrs.ondragleave = (ev) => ev.currentTarget.classList.remove('drop-hi');
       attrs.ondrop = (ev) => { ev.stopPropagation(); ev.currentTarget.classList.remove('drop-hi'); handleDrop(ev, f.path); };
     }
+    Object.assign(attrs, clickable(attrs.onclick, f.is_dir ? `Open folder ${f.name}` : `Open ${f.name}`));
     out.push(el(`div.file-row${f.is_dir ? '.dir' : ''}${selected ? '.sel' : ''}`, attrs,
-      el('span.file-icon', {}, f.is_dir ? '📂' : '-'),
-      el('span.file-name', { text: f.name }),
+      el('span.file-name', { text: f.is_dir ? `${f.name}/` : f.name }),
       el('span.spacer'),
       el('span.file-size', { text: f.is_dir ? '' : formatSize(f.size) }),
       el('button.file-act', {
@@ -913,16 +949,23 @@ function renderFiles(inst, live) {
 
   // Pure class toggle, so file/editor state is untouched.
   document.querySelector('.files-wrap')?.classList.toggle('editor-fullscreen', state.editorFullscreen);
-  $('editor-fullscreen').title = state.editorFullscreen ? 'Exit fullscreen' : 'Toggle fullscreen editor';
+  const fs = $('editor-fullscreen');
+  fs.title = state.editorFullscreen ? 'Exit fullscreen' : 'Toggle fullscreen editor';
+  fs.setAttribute('aria-label', fs.title);
+  fs.setAttribute('aria-pressed', state.editorFullscreen ? 'true' : 'false');
 
   repaint($('files-list'), filesSig(inst, live), () => buildFileRows(path, segs, live));
 
   // editor header
-  $('editor-name').textContent = state.editor.path || '—';
-  const dirty = state.editor.path !== null && $('editor-area').value !== state.editor.original;
+  const open = state.editor.path !== null;
+  $('editor-name').textContent = open ? state.editor.path : 'No file open';
+  $('editor-name').classList.toggle('placeholder', !open);
+  // An empty gutter and a blank textarea look like a file that failed to load.
+  document.querySelector('.editor-pane')?.classList.toggle('empty-state', !open);
+  const dirty = open && $('editor-area').value !== state.editor.original;
   show($('editor-dirty'), dirty);
   $('editor-save').disabled = !dirty || !live;
-  $('editor-info').textContent = state.editor.path
+  $('editor-info').textContent = open
     ? `${formatSize(new Blob([$('editor-area').value]).size)} · utf-8`
     : '';
   $('editor-area').readOnly = state.editor.path === null || !live;
@@ -1014,7 +1057,7 @@ async function newFile() {
   if (!inst) return;
   const values = await dialog({
     title: 'New text file',
-    description: `Created under ${state.files.path === '.' ? inst.name + '/' : state.files.path + '/'} — parent directories are created as needed.`,
+    description: `Created under ${state.files.path === '.' ? inst.name + '/' : state.files.path + '/'}. Parent directories are created as needed.`,
     fields: [{ name: 'name', label: 'File name', placeholder: 'config/example.yml', mono: true }],
     confirmText: 'Create',
   });
@@ -1482,6 +1525,12 @@ function syncEditorScroll() {
 
 /* --- settings tab -------------------------------------------------------- */
 
+/** Keep a switch's class and its announced state in step. */
+function setToggle(node, on) {
+  node.classList.toggle('on', !!on);
+  node.setAttribute('aria-checked', on ? 'true' : 'false');
+}
+
 function fillSettings(inst) {
   $('set-name').value = inst.name;
   $('set-type').value = inst.type;
@@ -1490,7 +1539,7 @@ function fillSettings(inst) {
   $('set-jar').value = inst.jar_path || '';
   $('set-java').value = inst.java_home || '';
   $('set-restart').value = inst.restart_policy || 'on_crash';
-  $('set-startwith').classList.toggle('on', !!inst.start_with_node);
+  setToggle($('set-startwith'), inst.start_with_node);
 }
 
 async function saveInstance() {
@@ -1590,10 +1639,10 @@ function renderVersion(inst, live) {
 
   show($('ver-updating'), updating);
 
-  // Current
-  $('ver-cur-soft').textContent = v.label || cap(inst.type);
+  // Current. The software is already named by the instance header; the version
+  // itself is what this line is for.
   $('ver-cur-ver').textContent = inst.version || 'not detected yet';
-  const curBuild = inst.build ? `${v.label || cap(inst.type)} Build ${inst.build}` : '';
+  const curBuild = inst.build ? `build ${inst.build}` : '';
   $('ver-cur-build').textContent = curBuild;
   show($('ver-cur-build'), !!curBuild);
 
@@ -1624,7 +1673,7 @@ function renderVersion(inst, live) {
       repaint(bsel, '__loading__', () => el('option', {}, 'Loading…'));
       bsel.disabled = true;
     } else if (!v.builds.length) {
-      repaint(bsel, '__empty__', () => el('option', {}, '—'));
+      repaint(bsel, '__empty__', () => el('option', {}, 'no builds'));
       bsel.disabled = true;
     } else {
       repaint(bsel, v.builds.map((b) => b.id).join('|'),
@@ -1772,19 +1821,21 @@ async function addInstance(node) {
   // those and can be fine-tuned later in Settings.
   const values = await dialog({
     title: `Add instance on ${node.name}`,
-    description: 'Declares a server the agent should manage. The directory must already exist on the node.',
+    description: 'The directory must already exist on the node.',
     fields: [
       { name: 'name', label: 'Name', placeholder: 'survival' },
-      { name: 'type', label: 'Type', type: 'select', options: ['paper', 'vanilla', 'velocity'], value: 'paper' },
+      { name: 'type', label: 'Type', type: 'select', value: 'paper',
+        options: [{ value: 'paper', label: 'Paper' }, { value: 'vanilla', label: 'Vanilla' },
+                  { value: 'velocity', label: 'Velocity' }] },
       { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival', mono: true },
-      { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'Drag the slider or type an exact value (e.g. 4G or 6144M).' },
-      { name: 'restart_policy', label: 'Restart policy', type: 'select', value: 'on_crash',
+      { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'Drag the slider, or type an exact value such as 6144M.' },
+      { name: 'restart_policy', label: 'If the server exits on its own', type: 'select', value: 'on_crash',
         options: [
-          { value: 'never', label: 'Never: leave it down, however it ended' },
-          { value: 'on_crash', label: 'On crash: put it back if it fails, honour a deliberate stop' },
-          { value: 'always', label: 'Always: put it back even after a console stop' },
+          { value: 'never', label: 'Leave it down' },
+          { value: 'on_crash', label: 'Restart it after a crash' },
+          { value: 'always', label: 'Always restart it' },
         ],
-        hint: 'Stop and Kill always work; this only decides what happens when the server exits without being asked.' },
+        hint: 'Stop and Kill always work, whatever this is set to.' },
     ],
     confirmText: 'Create instance',
     onMount: ({ set, input }) => {
@@ -1848,7 +1899,7 @@ async function deleteInstance(inst) {
 /* --- formatting ---------------------------------------------------------- */
 
 function formatSize(bytes) {
-  if (bytes === null || bytes === undefined) return '—';
+  if (bytes === null || bytes === undefined) return '';
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB'];
   let v = bytes / 1024, i = 0;
@@ -1878,14 +1929,32 @@ function joinPath(dir, name) {
 
 /* --- wiring -------------------------------------------------------------- */
 
+/** Open or close the small-screen navigation drawer. */
+function setNav(open) {
+  $('sidebar').classList.toggle('open', open);
+  $('nav-scrim').hidden = !open;
+  $('nav-toggle').setAttribute('aria-expanded', open ? 'true' : 'false');
+  if (open) $('filter').focus();
+}
+
 function bind() {
-  $('health-origin').textContent = originLabel;
+  $('hub-origin').textContent = originLabel;
 
   $('btn-add-node').onclick = addNode;
-  $('hub-add-node').onclick = addNode;
   $('row-hub').onclick = selectHub;
+  $('row-hub').onkeydown = (ev) => {
+    if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectHub(); }
+  };
 
   $('filter').oninput = (ev) => { state.filter = ev.target.value; renderSidebar(); };
+
+  // Below the sidebar breakpoint the tree is a drawer. One toggle, a scrim and
+  // Escape; picking anything inside it closes it (see navigate()).
+  $('nav-toggle').onclick = () => setNav(!$('sidebar').classList.contains('open'));
+  $('nav-scrim').onclick = () => setNav(false);
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape' && $('sidebar').classList.contains('open')) setNav(false);
+  });
 
   $('node-reenroll').onclick = () => { const n = curNode(); if (n) reenrollNode(n); };
   $('node-delete').onclick = () => { const n = curNode(); if (n) deleteNode(n); };
@@ -1903,18 +1972,29 @@ function bind() {
     loadTab();
   };
 
-  document.querySelectorAll('.tab').forEach((tab) => {
-    tab.onclick = async () => {
-      if (state.tab === tab.dataset.tab) return;
-      if (state.tab === 'files' && await maybeDiscard()) return;
-      state.tab = tab.dataset.tab;
-      render();
-      loadTab();
+  const tabs = [...document.querySelectorAll('.tab')];
+  const openTab = async (tab) => {
+    if (state.tab === tab.dataset.tab) return;
+    if (state.tab === 'files' && await maybeDiscard()) return;
+    state.tab = tab.dataset.tab;
+    render();
+    loadTab();
+  };
+  tabs.forEach((tab, i) => {
+    tab.onclick = () => openTab(tab);
+    tab.onkeydown = (ev) => {
+      const step = ev.key === 'ArrowRight' ? 1 : ev.key === 'ArrowLeft' ? -1 : 0;
+      if (!step) return;
+      ev.preventDefault();
+      const next = tabs[(i + step + tabs.length) % tabs.length];
+      next.focus();
+      openTab(next);
     };
   });
 
   // Console
   $('console-line').onkeydown = (ev) => { if (ev.key === 'Enter') sendConsole(); };
+  $('console-send').onclick = sendConsole;
   $('term-autoscroll').onclick = () => {
     state.autoscroll = !state.autoscroll;
     if (state.autoscroll) $('term-body').scrollTop = $('term-body').scrollHeight;
@@ -1934,7 +2014,7 @@ function bind() {
     const atBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 24;
     if (state.autoscroll !== atBottom) {
       state.autoscroll = atBottom;
-      $('term-autoscroll').classList.toggle('off', !state.autoscroll);
+      $('term-autoscroll').setAttribute('aria-pressed', atBottom ? 'true' : 'false');
     }
   };
 
@@ -1989,7 +2069,8 @@ function bind() {
   $('ver-update').onclick = doUpdateVersion;
 
   // Settings
-  $('set-startwith').onclick = () => $('set-startwith').classList.toggle('on');
+  $('set-startwith').onclick = () =>
+    setToggle($('set-startwith'), !$('set-startwith').classList.contains('on'));
   $('set-save').onclick = saveInstance;
   $('set-delete').onclick = () => { const i = curInst(); if (i) deleteInstance(i); };
 
