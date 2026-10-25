@@ -2,26 +2,18 @@
 
 The hub owns desired state; agents lose runtime state on restart. When an agent
 process starts, send power.start to that node's instances marked
-start_with_node.
+start_with_node. Starts are:
 
-Starts are deliberately:
+- Agent-restart-only, keyed on the handshake's per-process session_id. A redial
+  of a live agent has nothing to re-enact.
+- Start-only: never stop instances whose flag is false.
+- Idempotent: power.start adopts existing sessions and restores logs.
+- Serialised: staggered, to avoid loading every JVM at once.
+- Failure-safe: a failed start leaves start_with_node armed, and the agent
+  reports the failure through the event stream.
 
-Agent-restart-only: not on every reconnect. A live agent supervises its own
-servers, so a redial after a dropped link -- or after a hub restart, which
-makes every agent redial at once -- has nothing to re-enact, and re-enacting
-it would restart a server deliberately left down. The handshake carries a
-per-process session_id for this.
-Start-only: never stop instances whose flag is false.
-Idempotent: power.start adopts existing sessions and restores logs.
-Serialised: stagger starts to avoid loading all JVMs at once.
-Failure-safe: failed starts leave start_with_node armed; the agent
-reports the failure through the event stream.
-
-No new protocol action is required, so older agents are supported.
-
-The reverse direction lives here too: note_clean_exit() disarms an instance the
-agent watched shut itself down, so "stop" typed at a console means what the UI's
-Stop button means rather than lasting until the next reboot.
+note_clean_exit() is the reverse direction: it disarms an instance the agent
+watched shut itself down, so a console "stop" means what the UI's Stop means.
 """
 
 from __future__ import annotations
@@ -39,24 +31,20 @@ from minemanager_shared.protocol import Action, Event, PowerData
 log = logging.getLogger("minemanager.hub")
 
 # A start returns once the agent has created the session and waited out its
-# settle window; it does not wait for the world to load. Generous anyway — the
-# node has usually just booted, and a timeout here costs a server its restore.
+# settle window; it does not wait for the world to load. Generous, because a
+# timeout here costs a server its restore.
 _START_TIMEOUT_S = 60.0
 
 
 def note_clean_exit(event: Event) -> None:
     """Disarm an instance the agent saw shut itself down on purpose.
 
-    The split is deliberate: the agent reports an *observation* ("this exited
-    cleanly, after having come up"), and the decision to change declared state
-    is taken here, because the hub owns declared state. The agent never writes
-    it.
+    The agent reports an observation; the decision to change declared state is
+    taken here, because the hub owns declared state.
 
-    Safe against the paths that also end a session, none of which set the flag:
-    a UI Stop already clears it through the REST route, a UI Restart must not
-    clear it, and a graceful agent shutdown emits no state events at all — which
-    matters most, since disarming there would mean nothing came back after a
-    reboot, the exact failure this whole feature exists to prevent.
+    The other paths that end a session do not set ``clean_exit``: a UI Stop
+    clears the flag through its REST route, a UI Restart must not clear it, and
+    a graceful agent shutdown emits no state events at all.
     """
     if event.action != Action.ev_state_changed.value or not event.instance_id:
         return
@@ -72,15 +60,12 @@ def note_clean_exit(event: Event) -> None:
 def pending_for(node_id: str) -> list[str]:
     """Ids of the node's instances declared to be running, in restore order.
 
-    By name, so the order is deterministic on every platform and an operator who
-    cares can impose one by naming (``01-proxy``, ``02-lobby``). Creation order
-    would read better but cannot be relied on: ``created_at`` comes from
-    ``datetime.now()``, whose resolution is coarser than the time it takes to
-    declare two instances, and a tie there falls back to a random uuid.
+    Ordered by name, so it is deterministic and an operator can impose an order
+    by naming (``01-proxy``, ``02-lobby``). ``created_at`` is too coarse to
+    order by.
 
-    This is not dependency ordering, and does not try to be. Velocity does not
-    need its backends at boot — it just refuses connections to one until it is
-    up — so nothing here has to start before anything else.
+    Not dependency ordering: Velocity refuses connections to a backend until it
+    is up, so nothing here has to start before anything else.
     """
     with session_scope() as db:
         rows = (
@@ -93,8 +78,8 @@ def pending_for(node_id: str) -> list[str]:
 
 
 async def _start(conn: AgentConnection, instance_id: str) -> None:
-    # Re-read rather than carrying the row across the stagger: an operator may
-    # have disarmed or deleted the instance while we were sleeping.
+    # Re-read rather than carry the row across the stagger: the instance may
+    # have been disarmed or deleted meanwhile.
     with session_scope() as db:
         inst = db.get(Instance, instance_id)
         if inst is None or not inst.start_with_node:
@@ -125,13 +110,12 @@ async def restore(
 ) -> None:
     """Start everything this node declares should be running.
 
-    ``agent_restarted`` is the gate: false means the agent process on the other
-    end never died, so its own supervisor has been minding those servers the
-    whole time and there is nothing here to restore.
+    ``agent_restarted`` is the gate: false means the agent process never died,
+    so its own supervisor has been minding those servers.
 
-    Runs as a background task off the agent's WebSocket handler and never
-    raises: each ``power.start`` is answered by that handler's own frame pump,
-    so awaiting this inline would deadlock every command until it timed out.
+    Runs as a background task off the agent's WebSocket handler. Each
+    ``power.start`` is answered by that handler's frame pump, so awaiting this
+    inline would deadlock every command until it timed out.
     """
     if not agent_restarted:
         log.info("node %s: reconnect of a live agent; leaving run state alone", node_id)
@@ -147,9 +131,8 @@ async def restore(
         for index, instance_id in enumerate(pending):
             if index:
                 await asyncio.sleep(stagger)
-            # Checked every pass, not just once: a reconnect that raced this one
-            # owns the node now and is running its own restore, so continuing
-            # would send a second set of starts down the replaced socket.
+            # Checked every pass: a reconnect that raced this one owns the node
+            # and runs its own restore.
             if registry.get(node_id) is not conn:
                 log.info("node %s: autostart abandoned, connection replaced", node_id)
                 return
@@ -158,5 +141,5 @@ async def restore(
         raise
     except Exception:
         # Nothing awaits this task, so an escaping exception would surface only
-        # as "task exception was never retrieved" at GC time, long after.
+        # at GC time.
         log.exception("node %s: autostart failed", node_id)

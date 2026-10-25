@@ -20,8 +20,8 @@ CHUNK = 256 * 1024          # streaming chunk size
 # whatever the ASGI server read off the socket), so an item count bounded memory
 # only incidentally.
 _WINDOW_BYTES = 8 * 1024 * 1024
-# A parked producer resumes here, not as soon as one chunk drains — waking per
-# chunk cost ~60% of throughput on loopback.
+# A parked producer resumes here, not as soon as one chunk drains: waking per
+# chunk costs about 60% of throughput on loopback.
 _RESUME_BYTES = _WINDOW_BYTES // 2
 
 

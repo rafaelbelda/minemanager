@@ -2,7 +2,7 @@
 
 The catalog (available versions/builds) is served by the hub from software
 providers; the actual binary download + jar swap happens on the agent. This
-module is provider-agnostic — it never mentions Paper/Vanilla/Velocity.
+module is provider-agnostic: it never mentions Paper/Vanilla/Velocity.
 """
 
 from __future__ import annotations
@@ -72,10 +72,9 @@ async def update_instance(instance_id: str, body: UpdateRequest) -> dict:
     """Resolve the requested version/build and have the agent install it.
 
     Guardrails (stopped-check, backup, atomic replace, rollback) live on the
-    agent, which owns the process and the files. The hub only resolves the
-    download and records the installed version on success. Refuses up front when
-    the server executable cannot be identified — see
-    :mod:`minemanager_hub.serverjar`.
+    agent, which owns the process and the files. The hub resolves the download
+    and records the installed version. Refuses up front when the executable
+    cannot be identified; see :mod:`minemanager_hub.serverjar`.
     """
     conn, spec = agent_and_spec(instance_id)
     # jar_path is not part of the spec the agent receives, so it is read here.

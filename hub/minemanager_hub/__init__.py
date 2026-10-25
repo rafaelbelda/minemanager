@@ -1,4 +1,4 @@
-"""MineManager hub — the web control plane.
+"""MineManager hub: the web control plane.
 
 Serves the web UI, holds declared/desired state in SQLite, terminates the
 persistent agent WebSockets, and fans console/log streams out to UI clients.

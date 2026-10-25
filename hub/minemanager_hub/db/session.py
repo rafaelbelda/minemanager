@@ -1,4 +1,4 @@
-"""Engine + session factory. SQLite is a perfect fit for single-tenant, 5–10 nodes."""
+"""Engine + session factory. SQLite suits a single-tenant, 5-10 node install."""
 
 from __future__ import annotations
 
@@ -61,10 +61,8 @@ SCHEMA_VERSION = 3
 def _drop_columns(conn, table: str, drop: set[str]) -> None:
     """Remove columns by rebuilding the table.
 
-    ``ALTER TABLE ... DROP COLUMN`` needs SQLite 3.35 (2021), and Ubuntu 20.04
-    ships 3.31 — there the statement is a syntax error, so the hub would fail to
-    start rather than migrate. Rebuilding from the ORM's own definition works on
-    every version, and a migration runs once per database.
+    ``ALTER TABLE ... DROP COLUMN`` needs SQLite 3.35, newer than Ubuntu 20.04
+    ships. Rebuilding from the ORM definition works on every version.
     """
     existing = {c["name"] for c in inspect(conn).get_columns(table)}
     if not (drop & existing):
@@ -82,9 +80,8 @@ def _drop_columns(conn, table: str, drop: set[str]) -> None:
 def _carry_over(col) -> str:
     """How to read a column out of the old table.
 
-    A rebuild copies into the *current* schema, which may declare NOT NULL where
-    the old one did not. Rather than let one stale NULL abort the migration —
-    and with it the hub's startup — fill from the model's own default.
+    A rebuild copies into the current schema, which may declare NOT NULL where
+    the old one did not, so a stale NULL is filled from the model's default.
     """
     if col.nullable:
         return col.name
@@ -104,14 +101,8 @@ def _carry_over(col) -> str:
 def _migrate_v1(conn) -> None:
     """Columns added, and RCON removed, before schema versioning existed.
 
-    ``instances.rcon_host`` was ``NOT NULL`` with no DDL default (SQLAlchemy's
-    ``default=`` is applied in Python), so once the ORM stopped sending it every
-    INSERT on an existing database failed the constraint — removing it is what
-    keeps older databases working.
-
-    Must stay idempotent: databases that predate ``schema_meta`` already had
-    these applied by the old inspect-on-every-boot code, and will run it once
-    more to get stamped.
+    Must stay idempotent: a database predating ``schema_meta`` may already have
+    these applied, and runs the step once more to get stamped.
     """
     added = {
         "version": "VARCHAR(64)",
@@ -127,12 +118,11 @@ def _migrate_v1(conn) -> None:
 
 
 def _migrate_v2(conn) -> None:
-    """``nodes.agent_session_id`` — which agent process we last shook hands with.
+    """``nodes.agent_session_id``: which agent process we last shook hands with.
 
-    Nullable, and null on every existing row, which reads as "unknown". The
-    first handshake after this migration therefore counts as a new agent process
-    and restores that node's declared run state once; every reconnect after it
-    is recognised as the same process and does not.
+    Null on every existing row, which reads as "unknown", so the first handshake
+    after this migration counts as a new process and restores that node's
+    declared run state once.
     """
     existing = {c["name"] for c in inspect(conn).get_columns("nodes")}
     if "agent_session_id" not in existing:
@@ -143,21 +133,13 @@ def _migrate_v3(conn) -> None:
     """Name both lifecycle flags for their trigger, and make the restart one a policy.
 
     ``desired_running`` -> ``start_with_node``, and ``auto_restart`` -> a
-    three-valued ``restart_policy``. The old names described a wish; the new
-    ones say *when* they apply, which is what an operator (and the next person
-    to read ``api/reconcile.py``) needs. ``desired_running`` in particular read
-    like a state a controller continuously converges to, which is exactly what
-    it must never become.
+    three-valued ``restart_policy``. The names say *when* a flag applies.
 
-    Deliberately tolerant about what it finds. This migration was reshaped
-    during development, so a database may already carry the intermediate
-    ``restart_on_crash`` column; accepting either source costs one lookup and
-    removes a foot-gun that would otherwise only fire on someone's dev box.
+    Tolerant about its source column: a database may carry either
+    ``auto_restart`` or the intermediate ``restart_on_crash``.
 
-    ``RENAME COLUMN`` needs SQLite 3.25 (2018) and the oldest target here,
-    Ubuntu 20.04, ships 3.31. A rename preserves every row, so an instance stays
-    armed across the upgrade — an unarmed one would silently stop coming back
-    after a reboot, which is the whole point of the flag.
+    ``RENAME COLUMN`` needs SQLite 3.25, which every target ships. A rename
+    preserves every row, so an instance stays armed across the upgrade.
     """
     columns = {c["name"] for c in inspect(conn).get_columns("instances")}
 
@@ -183,7 +165,7 @@ def _migrate_v3(conn) -> None:
         _drop_columns(conn, "instances", {"auto_restart", "restart_on_crash"})
 
 
-#: (version, step). Appended to, never edited — an applied migration is history.
+#: (version, step). Appended to, never edited: an applied migration is history.
 _MIGRATIONS = [(1, _migrate_v1), (2, _migrate_v2), (3, _migrate_v3)]
 
 

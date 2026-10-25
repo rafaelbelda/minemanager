@@ -4,12 +4,12 @@ Run (dev):
     MM_HUB_URL=ws://127.0.0.1:8730/ws/agent MM_ENROLL_TOKEN=<token> \
         python -m minemanager_agent.main
 
-Under systemd this is the ExecStart target — the only daemon on the node.
+Under systemd this is the ExecStart target, the only daemon on the node.
 
 On SIGTERM/SIGINT (systemctl stop, restart, or a system reboot) the agent
-gracefully stops every running server — console stop, wait for a clean world
-save (bounded), then tears down its tmux server and exits. Stopping the agent
-always stops its servers
+gracefully stops every running server: console stop, a bounded wait for a clean
+world save, then tears down its tmux server and exits. Stopping the agent always
+stops its servers.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def _configure_logging() -> None:
 
 
 async def _warn_about_orphans() -> None:
-    """Report sessions on our socket that this agent will not manage — i.e. ones
+    """Report sessions on our socket this agent will not manage, i.e. ones
     started by hand rather than through the hub."""
     try:
         names = await tmux.list_all_sessions()
@@ -65,17 +65,17 @@ async def _amain() -> None:
         try:
             loop.add_signal_handler(sig, stop.set)
         except NotImplementedError:
-            pass  # Windows dev — Ctrl+C still raises KeyboardInterrupt
+            pass  # Windows dev; Ctrl+C still raises KeyboardInterrupt
 
     serve = asyncio.create_task(conn.run_forever())
     serve.add_done_callback(lambda _: stop.set())   # also wake if serve ever exits
     await stop.wait()
 
-    # Always stop servers gracefully — including when `serve` died on its own
+    # Always stop servers gracefully, including when `serve` died on its own
     # (a crashed connection loop must never leave worlds running unsupervised).
     try:
         n = await conn.supervisor.shutdown_all(graceful_s=SHUTDOWN_GRACE_S)
-        log.info("agent stopping — gracefully stopped %d server(s)", n)
+        log.info("agent stopping; gracefully stopped %d server(s)", n)
     except Exception:
         log.exception("graceful shutdown failed; servers may still be running")
     finally:

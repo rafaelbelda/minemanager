@@ -1,4 +1,4 @@
-"""Vanilla provider — official Mojang server jars. No builds.
+"""Vanilla provider: official Mojang server jars. No builds.
 
 Shapes:
   version_manifest_v2.json

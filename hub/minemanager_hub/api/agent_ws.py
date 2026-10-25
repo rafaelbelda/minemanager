@@ -1,18 +1,17 @@
 """The WebSocket endpoint agents dial into.
 
 Flow per connection:
-1. Agent sends a :class:`Hello` carrying *everything* it holds — a stored
+1. Agent sends a :class:`Hello` carrying everything it holds: a stored
    ``node_id`` + credential and/or an enrollment token.
 2. Hub arbitrates (see :func:`_authenticate`: a still-valid enrollment token
    wins, otherwise the stored credential), issues a credential when an
    enrollment succeeds, and replies :class:`Welcome`.
 3. Hub registers an :class:`AgentConnection` and pumps frames: responses resolve
    waiting command futures; events are published to UI subscribers.
-4. If this handshake is a *new agent process* (see :func:`_claim_agent_session`),
-   the node's declared run state is restored in parallel — servers marked
-   ``start_with_node`` are started again, which is what makes a rebooted box come
-   back by itself. A reconnect of an agent that never died restores nothing, so a
-   dropped link or a hub restart cannot resurrect a server left down on purpose.
+4. If this handshake is a new agent process (see :func:`_claim_agent_session`),
+   the node's declared run state is restored in parallel: instances marked
+   ``start_with_node`` are started again. A reconnect of an agent that never
+   died restores nothing.
 """
 
 from __future__ import annotations
@@ -91,13 +90,11 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
 def _claim_agent_session(node_id: str, session_id: str | None) -> bool:
     """Record the connecting agent process; report whether it is a new one.
 
-    True means "this agent restarted", which is the only thing that should
-    trigger a restore: while an agent stays up it supervises its own servers,
-    so a redial after a network drop has nothing for the hub to re-enact.
+    True means the agent restarted, the only thing that should trigger a
+    restore: while an agent stays up it supervises its own servers.
 
-    A missing ``session_id`` is an agent predating the field. It is treated as a
-    new process — the old, unconditional behaviour — because restoring twice is
-    recoverable and never restoring leaves a rebooted node down.
+    A missing ``session_id`` is an agent predating the field, treated as a new
+    process: restoring twice is recoverable, never restoring is not.
     """
     with session_scope() as db:
         node = db.get(Node, node_id)
@@ -162,9 +159,9 @@ async def agent_endpoint(ws: WebSocket) -> None:
             if isinstance(frame, Response):
                 conn.resolve(frame)
             elif isinstance(frame, Event):
-                # Read before it is fanned out: one event can carry a declared-
-                # state consequence (a console shutdown disarms the instance),
-                # and subscribers are UI sockets that cannot apply it.
+                # Read before fan-out: an event can carry a declared-state
+                # consequence, and subscribers are UI sockets that cannot
+                # apply it.
                 reconcile.note_clean_exit(frame)
                 registry.publish(node_id, frame)
                 _touch_last_seen(node_id)
@@ -172,12 +169,11 @@ async def agent_endpoint(ws: WebSocket) -> None:
         pass
     finally:
         # Nothing will read this socket again, so a restore still working
-        # through its stagger is now sending starts nobody can answer.
+        # through its stagger would send starts nobody can answer.
         restore.cancel()
-        # Only tear down the registry entry if it is still *ours*. Half-open TCP
-        # is normal here (WireGuard, sleeping laptops, NAT): a reconnect can
-        # register a replacement before this socket's disconnect is noticed, and
-        # unregistering unconditionally would strand a healthy node as offline.
+        # Only tear down the registry entry if it is still ours. Half-open TCP
+        # is normal here (WireGuard, sleeping laptops, NAT), so a reconnect can
+        # register a replacement before this disconnect is noticed.
         if registry.get(node_id) is conn:
             registry.unregister(node_id)
             _LAST_SEEN_WRITE.pop(node_id, None)
@@ -186,8 +182,7 @@ async def agent_endpoint(ws: WebSocket) -> None:
 
 
 # last_seen is refreshed from the event stream, which carries one event per
-# console line. Committing on every one would put hundreds of serialized SQLite
-# fsyncs per second on the event loop, so only the first write per window lands.
+# console line, so only the first write per window lands.
 _LAST_SEEN_THROTTLE_S = 10.0
 _LAST_SEEN_WRITE: dict[str, float] = {}
 

@@ -1,11 +1,10 @@
 """Work out which file on disk a start command actually executes.
 
-The updater replaces the *server executable*, so it must know exactly which file
-that is. A wrong answer is worse than no answer: installing to a filename nothing
-runs leaves the server booting its old binary while the hub records the new
-version, and no version detector exists to reveal the divergence.
+The updater replaces the server executable, so it must know which file that is.
+A wrong answer is worse than no answer: installing to a filename nothing runs
+leaves the server booting its old binary while the hub records the new version.
 
-Resolution therefore reports how sure it is:
+Resolution reports how sure it is:
 
 ``explicit``
     The operator set ``Instance.jar_path``. Authoritative.
@@ -42,9 +41,8 @@ class ServerExecutable:
     def allow_create(self) -> bool:
         """Whether the agent may create this file when it is missing.
 
-        Only for an operator-supplied path: creating a jar on a mis-parse is the
-        silent divergence this module exists to prevent, and a correctly parsed
-        path is already on disk because the server has been running it.
+        Only for an operator-supplied path. A correctly parsed path is already
+        on disk, because the server has been running it.
         """
         return self.confidence == "explicit"
 
@@ -52,12 +50,12 @@ class ServerExecutable:
 def _tokenize(start_command: str) -> list[str]:
     """Split a start command the way a shell would, so quoted paths survive.
 
-    ``shlex`` treats ``\\`` as an escape, so Windows paths would mangle —
-    irrelevant, every node is Linux.
+    ``shlex`` treats ``\\`` as an escape, which would mangle Windows paths;
+    every node is Linux.
     """
     try:
         return shlex.split(start_command or "")
-    except ValueError:            # unbalanced quotes — degrade, don't raise
+    except ValueError:            # unbalanced quotes: degrade, don't raise
         return (start_command or "").split()
 
 
@@ -110,7 +108,7 @@ def resolve(start_command: str, jar_path: str | None = None) -> ServerExecutable
 CANNOT_RESOLVE_DETAIL = (
     "could not determine which jar this instance runs. Its start command does not name "
     "one directly (a wrapper script, an @argfile launch, or an ambiguous -cp). Set the "
-    "instance's 'Jar path' — the executable's path relative to the instance root, e.g. "
-    "'paper.jar' — and retry. Refusing rather than guessing: installing to a guessed "
-    "filename would leave the server running its old binary while reporting success."
+    "instance's 'Jar path' to the executable's path relative to the instance root, for "
+    "example 'paper.jar', and retry. Guessing would leave the server running its old "
+    "binary while reporting success."
 )

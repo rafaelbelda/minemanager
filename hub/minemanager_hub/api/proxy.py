@@ -5,9 +5,8 @@ an instance id to (connection, declared spec) and one place that turns agent
 failures into HTTP status codes.
 
 Command payloads are built by constructing the action's model from
-``minemanager_shared.protocol`` rather than by assembling a dict, so a field
-renamed in the protocol breaks here — at the call site, in the hub — instead of
-reaching the agent and failing there.
+``minemanager_shared.protocol`` rather than assembling a dict, so a renamed
+field breaks here, at the call site, instead of on the agent.
 """
 
 from __future__ import annotations
@@ -82,7 +81,7 @@ async def proxy(
     timeout: float = 30.0,
     **fields,
 ) -> dict:
-    """Resolve, build the payload, and forward — the whole path for a route."""
+    """Resolve, build the payload, and forward: the whole path for a route."""
     conn, spec = agent_and_spec(instance_id)
     payload = payload_cls(instance=spec, **fields)
     return await call(conn, action, payload, instance_id=instance_id, timeout=timeout)

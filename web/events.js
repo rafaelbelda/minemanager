@@ -1,9 +1,8 @@
 /* Live node event sockets.
  *
- * One WebSocket per node (`/api/nodes/{id}/events`, push-only). The socket
- * carries every event for that node; consumers filter on `instance_id`.
- * Sockets reconnect with capped exponential backoff — a node whose agent is
- * offline simply keeps failing until it comes back.
+ * One push-only WebSocket per node (`/api/nodes/{id}/events`), carrying every
+ * event for that node; consumers filter on `instance_id`. Reconnects with
+ * capped exponential backoff.
  */
 
 import { wsOrigin } from './api.js';
@@ -41,7 +40,7 @@ export class NodeEvents {
     if (!conn) return;
     conn.closed = true;
     clearTimeout(conn.timer);
-    // Drop handlers first so the close doesn't schedule a reconnect.
+    // Drop handlers first so the close does not schedule a reconnect.
     if (conn.ws) {
       conn.ws.onclose = null;
       conn.ws.onerror = null;

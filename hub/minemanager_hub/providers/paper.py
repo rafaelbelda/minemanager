@@ -1,4 +1,4 @@
-"""PaperMC provider — serves both Paper and Velocity via the v3 "Fill" API.
+"""PaperMC provider: serves both Paper and Velocity via the v3 "Fill" API.
 
 Paper and Velocity share an identical catalog shape on ``fill.papermc.io``, so a
 single provider parameterised by project covers both. Both expose builds.

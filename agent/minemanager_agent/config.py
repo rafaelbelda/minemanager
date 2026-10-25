@@ -124,7 +124,7 @@ class AgentConfig:
             "loaded config: hub_url=%s | data_dir=%s | identity=%s",
             self.hub_url,
             self.data_dir,
-            f"node {node_id} ({self.identity_file})" if node_id else "none — will enroll",
+            f"node {node_id} ({self.identity_file})" if node_id else "none; will enroll",
         )
         if self.enroll_token and node_id:
             log.warning(

@@ -1,7 +1,7 @@
 """Agent enrollment tokens and long-lived credentials.
 
-Both are high-entropy random strings, so we store only a SHA-256 hash and
-compare in constant time — no bcrypt needed (these aren't human passwords).
+Both are high-entropy random strings, so only a SHA-256 hash is stored and
+compared in constant time. These are not human passwords, so no bcrypt.
 
 Enrollment flow:
 1. Operator creates a node -> hub mints a one-time enrollment token (shown once).

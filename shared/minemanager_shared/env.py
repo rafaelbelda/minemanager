@@ -1,10 +1,8 @@
 """Environment-variable parsing, shared by the hub and the agent.
 
 Both packages are configured entirely through ``MM_*`` variables and are always
-installed together, so the parsing rules — what counts as true, what a malformed
-integer does — belong in one place rather than being re-derived in each. Before
-this, the truthy set was written out three times across two files and drifting it
-would have been silent.
+installed together, so the parsing rules (what counts as true, what a malformed
+integer does) live in one place.
 
 A malformed value exits with a readable message rather than raising or falling
 back to a default. These are read once at startup, where a wrong value is better

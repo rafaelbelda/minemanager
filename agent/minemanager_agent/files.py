@@ -14,7 +14,7 @@ import shutil
 import zipfile
 from pathlib import Path
 
-# Agent-private scratch dir (jar backups, transfer temp files) — hidden from the
+# Agent-private scratch dir (jar backups, transfer temp files), hidden from the
 # file explorer so it never looks like user content.
 HIDDEN_DIR = ".minemanager"
 
@@ -23,10 +23,8 @@ _BINARY_SNIFF_BYTES = 8192
 # huge directory slips past the transfer cap on uncompressed size.
 _ZIP_UNCOMPRESSED_GUARD = 256 * 1024 * 1024
 
-# Zip compression policy. Deflating already-compressed input costs ~40x the CPU
-# for a ratio of 1.000 (measured: 16 MB/s at level 6 vs 760 MB/s stored), and a
-# world folder is almost all `.mca`, which is zlib-compressed internally. So
-# store those suffixes and deflate the rest at level 1 (258 MB/s on log text).
+# Zip compression policy: store already-compressed suffixes (a world folder is
+# almost all zlib-compressed `.mca`) and deflate the rest at level 1.
 _STORED_SUFFIXES = frozenset({
     # Minecraft's own compressed formats
     ".mca", ".mcr", ".dat", ".dat_old", ".nbt", ".schem", ".schematic",
@@ -127,19 +125,18 @@ def fetch(root: str | Path, rel: str, cap: int) -> dict:
                 if p.is_symlink() or not p.is_file():
                     continue
                 rel = p.relative_to(target)
-                # The agent's scratch dir is hidden from the explorer, so it does
-                # not belong in an archive of user content either.
+                # Hidden from the explorer, so not user content here either.
                 if HIDDEN_DIR in rel.parts:
                     continue
                 uncompressed += p.stat().st_size
                 if uncompressed > _ZIP_UNCOMPRESSED_GUARD:
-                    raise ValueError("directory is too large to archive here — use the large transfer")
+                    raise ValueError("directory is too large to archive here; use the large transfer")
                 ctype, clevel = zip_params(p)
                 zf.write(p, arcname=str(rel),
                          compress_type=ctype, compresslevel=clevel)
         data = buf.getvalue()
         if len(data) > cap:
-            raise ValueError(f"zip is larger than the transfer cap ({cap} bytes) — use the large transfer")
+            raise ValueError(f"zip is larger than the transfer cap ({cap} bytes); use the large transfer")
         name = (target.name or Path(root).resolve().name or "download") + ".zip"
         return {"filename": name, "is_dir": True, "size": len(data),
                 "content_b64": base64.b64encode(data).decode()}
@@ -148,7 +145,7 @@ def fetch(root: str | Path, rel: str, cap: int) -> dict:
         raise FileNotFoundError(rel)
     size = target.stat().st_size
     if size > cap:
-        raise ValueError(f"file is larger than the transfer cap ({cap} bytes) — use the large transfer")
+        raise ValueError(f"file is larger than the transfer cap ({cap} bytes); use the large transfer")
     return {"filename": target.name, "is_dir": False, "size": size,
             "content_b64": base64.b64encode(target.read_bytes()).decode()}
 
@@ -182,9 +179,8 @@ def tail_lines(
 ) -> dict:
     """Return the last ``lines`` lines of a text file (for console backfill).
 
-    Reads at most the final ``max_bytes`` of the file so a huge log never loads
-    fully. A missing file is not an error — it just yields no lines (a server
-    that has never produced ``logs/latest.log`` is a normal state).
+    Reads at most the final ``max_bytes`` so a huge log never loads fully. A
+    missing file is not an error: it yields no lines.
     """
     target = resolve_within(root, rel)
     if not target.is_file():
@@ -225,7 +221,7 @@ def delete(root: str | Path, rel: str, recursive: bool = False) -> dict:
         if recursive:
             shutil.rmtree(target)
         else:
-            target.rmdir()  # fails if non-empty — intentional
+            target.rmdir()  # fails if non-empty, intentionally
     else:
         target.unlink()
     return {"path": rel, "deleted": True}

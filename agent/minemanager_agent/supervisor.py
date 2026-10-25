@@ -7,8 +7,7 @@ sessions, and restarts crashed instances under a crash-loop limit.
 systemd supervises the *agent*; the agent supervises the *servers*.
 
 A failed launch explains itself through the mirrored tmux pane (see
-:func:`tmux.pipe_pane`), whose tail is replayed onto the console on a crash —
-tailing the log alone cannot show output written before the logger starts.
+:func:`tmux.pipe_pane`), whose tail is replayed onto the console on a crash.
 """
 
 from __future__ import annotations
@@ -38,39 +37,33 @@ EmitFn = Callable[[Event], Awaitable[None]]
 # Console command that asks each software to shut down gracefully.
 _STOP_COMMAND = {"paper": "stop", "vanilla": "stop", "velocity": "end"}
 
-# Verb for a session whose instance type we no longer know. "stop" is wrong only
-# for Velocity, and a proxy holds no world, so falling back to the kill path
-# costs it nothing.
+# Verb for a session whose instance type we no longer know. Wrong only for
+# Velocity, which holds no world, so the kill fallback costs it nothing.
 _DEFAULT_STOP_VERB = "stop"
 
 _CRASH_LIMIT = 5
 _CRASH_WINDOW_S = 60.0
 
-# Failures *before* readiness are counted separately and much more tightly. A
-# window cannot catch them
+# Failures before readiness are counted separately and more tightly.
 _LAUNCH_FAILURE_LIMIT = 3
 
-# A server is RUNNING once it says so. Until then it is STARTING, however long
-# tmux has had a session open. Paper/Vanilla print
-#   Done (4.115s)! For help, type "help"
-# and Velocity prints `Done (0.5s)!`.
+# A server is RUNNING once it says so; until then it is STARTING. Paper and
+# Vanilla print `Done (4.115s)! For help, type "help"`, Velocity `Done (0.5s)!`.
 _READY_RE = re.compile(r"Done \(\d+[.,]?\d*s\)!")
 
 # Not every server announces readiness in a form we recognise (modded servers,
-# forks, a relocated log). Rather than leave those STARTING forever, assume a
-# still-alive instance is up after this long. Generous: a large world can take
-# minutes to load, and being late here is harmless.
+# forks, a relocated log), so assume a still-alive instance is up after this
+# long. Generous, because a large world can take minutes to load.
 _STARTUP_GRACE_S = 300.0
 # Stop budgets, one ordered chain. Keep SHUTDOWN_GRACE_S well under the unit's
-# TimeoutStopSec (300s) — that is systemd's SIGKILL deadline and the backstop if
-# the agent hangs. KillMode=mixed means systemd signals only the agent, so the
-# sequence below is what actually stops worlds.
+# TimeoutStopSec (300s), systemd's SIGKILL deadline. KillMode=mixed means
+# systemd signals only the agent, so this sequence is what stops worlds.
 _GRACEFUL_STOP_S = 45.0
 SHUTDOWN_GRACE_S = 120.0
 
-# tmux reports success as soon as the *session* exists, which says nothing about
-# whether the command inside it survived. Re-check after this long so an
-# instantly-dying JVM is reported as crashed rather than running.
+# tmux reports success once the session exists, which says nothing about the
+# command inside it. Re-check after this long so an instantly-dying JVM reads
+# as crashed rather than running.
 _LAUNCH_SETTLE_S = 1.0
 
 # Grace for the log follower to pick up a stopped server's final lines before it
@@ -78,14 +71,13 @@ _LAUNCH_SETTLE_S = 1.0
 _TAIL_DRAIN_S = 1.5
 
 # Raw pane mirror (see tmux.pipe_pane): how much to replay on a crash, and the
-# ceiling the file is kept under. It duplicates console output for a healthy
-# server, so it must stay bounded.
+# ceiling the file is kept under. It duplicates console output, so it is bounded.
 _PTY_TAIL_LINES = 40
 _PTY_MAX_BYTES = 2 * 1024 * 1024
 _PTY_KEEP_BYTES = 512 * 1024
 
-# ANSI/pty control noise. The pane is a terminal, so its mirror carries escape
-# sequences that logs/latest.log never has. Tab and newline are kept.
+# ANSI/pty control noise: the pane is a terminal, so its mirror carries escape
+# sequences the log never has. Tab and newline are kept.
 _ANSI_RE = re.compile(
     r"\x1b[@-Z\\-_]|\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)"
     r"|[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]"
@@ -97,21 +89,18 @@ class ManagedInstance:
     spec: InstanceSpec
     session: str
     state: RunState = RunState.stopped
-    # Is this agent currently responsible for keeping the instance alive? Set by
-    # start, cleared by stop/kill and by the restart policy giving up. Purely
-    # runtime and process-local — it is *not* the hub's ``start_with_node``,
-    # which is declared state about the next agent start. The two were once both
-    # called ``desired_running``, which hid the difference: this one answers
-    # "should I relaunch it right now?", that one "should it come up at boot?".
+    # "Should I relaunch this right now?" Set by start, cleared by stop/kill and
+    # by the restart policy giving up. Process-local runtime state, not the hub's
+    # ``start_with_node``, which declares what happens at the next agent start.
     should_be_up: bool = False
     crash_times: list[float] = field(default_factory=list)
     tail_task: asyncio.Task | None = None
-    # A failed launch is noticed twice (settle check, then monitor); this stops
-    # the same error printing twice. Reset by _launch, once per run.
+    # A failed launch is noticed twice (settle check, then monitor); this keeps
+    # the error to one printing. Reset by _launch, once per run.
     pty_replayed: bool = False
-    # Whether the *current* run announced readiness, and when it was launched.
-    # Together these decide whether a vanished session was a runtime crash or a
-    # launch that never came up. Reset by _launch.
+    # Whether this run announced readiness, and when it launched. Together they
+    # decide whether a vanished session was a crash or a launch that never came
+    # up. Reset by _launch.
     ready: bool = False
     launched_at: float = 0.0
     # Consecutive launches that died before readiness. Cleared once one gets up.
@@ -123,8 +112,7 @@ class ManagedInstance:
 
 
 def root_dir_problem(root_dir: str) -> str | None:
-    # Why ``root_dir`` is unusable as a working directory, or None if it is fine.
-
+    """Why ``root_dir`` is unusable as a working directory, or None if it is fine."""
     path = Path(root_dir)
     if not path.is_dir():
         return f"root directory does not exist on this node: {root_dir}"
@@ -137,7 +125,7 @@ def java_home_problem(java_home: str) -> str | None:
     """Why ``java_home`` is unusable, or None if it looks fine.
 
     Checked before every launch, so an instance pointed at a moved JDK says so
-    once instead of crash-looping with "command not found".
+    once instead of crash-looping.
     """
     exe = Path(java_home) / "bin" / "java"
     if not exe.is_file():
@@ -150,11 +138,9 @@ def java_home_problem(java_home: str) -> str | None:
 def launch_command(spec: InstanceSpec) -> str:
     """The start command as actually run, with the instance's JDK applied.
 
-    Injecting JAVA_HOME/PATH rather than rewriting the ``java`` token leaves the
-    operator's command untouched and works for launches that never name an
-    interpreter (wrapper scripts, ``@argfile``), since the child inherits the
-    environment either way. Only the directory is quoted — ``$PATH`` must stay
-    expandable by the shell tmux runs the command with.
+    JAVA_HOME/PATH are injected rather than rewriting the ``java`` token, so
+    wrapper scripts and ``@argfile`` launches inherit the JDK too. Only the
+    directory is quoted; ``$PATH`` must stay expandable by tmux's shell.
     """
     if not spec.java_home:
         return spec.start_command
@@ -212,11 +198,10 @@ class Supervisor:
         if spec.id in self._updating:
             raise RuntimeError("cannot start: a server update is in progress")
         if await tmux.has_session(mi.session):
-            # Already up, usually because the agent reconnected to a server it
-            # did not launch. Its readiness line is long gone from a log we were
-            # not tailing, but it has demonstrably come up — so treat it as
-            # ready, which also routes a later death down the crash path rather
-            # than the launch-failure one.
+            # Already up, usually a server this agent did not launch. Its
+            # readiness line is long gone, but it has demonstrably come up, so
+            # mark it ready: a later death then takes the crash path rather than
+            # the launch-failure one.
             mi.should_be_up = True
             mi.ready = True
             mi.launch_failures = 0
@@ -241,20 +226,19 @@ class Supervisor:
             await self._set_state(mi, RunState.stopped, detail=f"failed to start: {exc}")
             raise RuntimeError(f"failed to start: {exc}") from exc
 
-        # Set only now: any earlier and the monitor races the settle window below
-        # and counts the same launch as a crash twice.
+        # Set only now, so the monitor cannot race the settle window above and
+        # count one launch as two crashes.
         mi.should_be_up = True
         mi.crash_times.clear()
         mi.launch_failures = 0
         if not alive:
             # Not counted here: the monitor counts every run that ends without
-            # reaching readiness, and this session is already gone, so it will
-            # see this one on its next pass. One counting site, no double-count.
+            # reaching readiness, and will see this one on its next pass.
             await self._replay_pty(mi)
             await self._set_state(mi, RunState.crashed, detail="exited immediately after launch")
             return {"state": mi.state.value, "launch_failed": True}
-        # Deliberately still STARTING: the session existing says nothing about
-        # whether the server came up. _on_ready promotes it.
+        # Still STARTING: a live session says nothing about whether the server
+        # came up. _on_ready promotes it.
         return {"state": mi.state.value}
 
     async def _launch(self, mi: ManagedInstance) -> bool:
@@ -290,9 +274,8 @@ class Supervisor:
 
         stop_cmd = _STOP_COMMAND.get(spec.type.value, _DEFAULT_STOP_VERB)
         await self._set_state(mi, RunState.stopping, detail=f"sending '{stop_cmd}', waiting for a clean save")
-        # Keep tailing until it is actually down: "Saving worlds" / "Closing
-        # Server" are written during this wait, and they are what tells the
-        # operator the stop was clean.
+        # Keep tailing until it is down: "Saving worlds" and "Closing Server"
+        # are written during this wait and show the stop was clean.
         graceful = await self._stop_session(mi.session, stop_cmd, graceful_s)
         await self._drain_tail(mi)
         await self._set_state(
@@ -367,8 +350,7 @@ class Supervisor:
             mi.tail_task.cancel()
 
     async def _drain_tail(self, mi: ManagedInstance) -> None:
-        # Let the tail catch the last lines, then stop it.
-
+        """Let the tail catch the last lines, then stop it."""
         await asyncio.sleep(_TAIL_DRAIN_S)
         self._cancel_tail(mi)
 
@@ -397,7 +379,7 @@ class Supervisor:
         if mi.state is not RunState.running:
             await self._set_state(mi, RunState.running, detail=detail)
 
-    # -- raw pane mirror (the "why" behind a failed launch) ------------------
+    # -- raw pane mirror -----------------------------------------------------
     def _pty_path(self, mi: ManagedInstance) -> Path | None:
         if self._pty_dir is None:
             return None
@@ -411,9 +393,8 @@ class Supervisor:
     def _clear_exit_status(self, mi: ManagedInstance) -> None:
         """Drop the previous run's status before launching.
 
-        Load-bearing: a session we *kill* never records one, so a stale file
-        left in place would make the next kill read as the previous run's clean
-        shutdown and silently disarm the instance.
+        A killed session records no status, so a stale file would read as that
+        run's clean shutdown and disarm the instance.
         """
         path = self._status_path(mi)
         if path is None:
@@ -427,10 +408,8 @@ class Supervisor:
     def _read_exit_status(self, mi: ManagedInstance) -> int | None:
         """The status the last run ended with, or None when we cannot know.
 
-        None is not "unknown, assume the best": every case it covers — no pty
-        dir configured, a session killed before its shell could write, a garbled
-        file — means "this was not an orderly shutdown", which is what the
-        caller does with it.
+        None means "not an orderly shutdown": no pty dir, a session killed
+        before its shell could write, or a garbled file.
         """
         path = self._status_path(mi)
         if path is None:
@@ -445,9 +424,11 @@ class Supervisor:
             return None
 
     def _reset_pty_log(self, mi: ManagedInstance) -> None:
-        """Begin each run with an empty mirror, so a replay is never the previous
-        run's output. Truncates *in place*: the pipe's ``cat`` holds the inode
-        open, so replacing the file would leave it writing to an unlinked one."""
+        """Begin each run with an empty mirror.
+
+        Truncates in place: the pipe's ``cat`` holds the inode open, so
+        replacing the file would leave it writing to an unlinked one.
+        """
         path = self._pty_path(mi)
         if path is None:
             return
@@ -459,8 +440,7 @@ class Supervisor:
             pass  # diagnostics are best-effort; never block a launch
 
     def _trim_pty_log(self, mi: ManagedInstance) -> None:
-        """Keep the mirror bounded: it duplicates console output, so left alone
-        it grows for as long as the instance runs."""
+        """Keep the mirror bounded; it grows for as long as the instance runs."""
         path = self._pty_path(mi)
         if path is None:
             return
@@ -491,17 +471,17 @@ class Supervisor:
         return [ln for ln in lines if ln.strip()][-_PTY_TAIL_LINES:]
 
     async def _attach_pty_mirror(self, mi: ManagedInstance) -> None:
-        """Mirror an adopted session. Whatever it printed before we arrived is
-        gone, but a later crash still gets explained. Fresh launches mirror from
-        the start — see :func:`tmux.new_session`."""
+        """Mirror an adopted session, so a later crash is still explained.
+
+        Fresh launches mirror from the start; see :func:`tmux.new_session`.
+        """
         path = self._pty_path(mi)
         if path is not None:
             await tmux.pipe_pane(mi.session, str(path))
 
     async def _replay_pty(self, mi: ManagedInstance) -> None:
-        """Push the tail of the raw pane onto the console: the output that never
-        reached ``logs/latest.log``. Emitted before the crashed state so the
-        reason reads above the verdict."""
+        """Push the tail of the raw pane onto the console, for output that never
+        reached ``logs/latest.log``. Emitted before the crashed state."""
         if mi.pty_replayed:
             return                  # already shown for this run
         lines = await asyncio.to_thread(self._read_pty_tail, mi)
@@ -539,23 +519,16 @@ class Supervisor:
         if not mi.should_be_up:
             return
 
-        # Gone while it was supposed to be running — but was that a failure or a
-        # person? "stop" at the console exits 0 through the same shell that
-        # records the status; a crash does not, and a session we killed records
-        # nothing. Without this the two are indistinguishable, because both do
-        # nothing but make the session disappear.
-        #
-        # Only once it had come up. A clean exit *before* readiness is a server
-        # refusing to run (an unaccepted EULA exits 0), not somebody shutting it
-        # down — and the launch-failure path below explains that far better,
-        # with the pane output that says why.
+        # Gone while it was supposed to be running: failure, or a person? A
+        # console "stop" exits 0 through the shell that records the status; a
+        # crash does not, and a killed session records nothing. Only counted
+        # once it had come up, since a clean exit before readiness is a server
+        # refusing to run (an unaccepted EULA exits 0).
         clean_exit = mi.ready and await asyncio.to_thread(self._read_exit_status, mi) == 0
 
-        # ALWAYS is the one policy that overrules a person: the operator has
-        # asked for uptime over intent, so a console stop is put back like any
-        # other exit. It still cannot make the server unstoppable — Stop, Kill
-        # and agent shutdown never reach here, having cleared should_be_up
-        # first — and the crash-loop breaker below still caps the retrying.
+        # ALWAYS is the one policy that overrules a person: a console stop is
+        # put back like any other exit. Stop, Kill and agent shutdown clear
+        # should_be_up before reaching here, and the crash-loop breaker caps it.
         if clean_exit and mi.spec.restart_policy is not RestartPolicy.always:
             mi.should_be_up = False
             mi.crash_times.clear()
@@ -568,10 +541,9 @@ class Supervisor:
             )
             return
 
-        # A failure, then — or a shutdown this instance is configured to
-        # overrule. Replay the raw pane for a failure: when something dies
-        # before the logger is up, that is the only record. A deliberate stop
-        # needs no explaining, so it is not dumped back at the operator.
+        # A failure, or a shutdown this instance is configured to overrule.
+        # Replay the raw pane only for a failure: when something dies before the
+        # logger is up, that is the only record of it.
         if not clean_exit:
             await self._replay_pty(mi)
         launched = mi.ready   # did *this* run ever come up?
@@ -601,8 +573,8 @@ class Supervisor:
             mi.should_be_up = False
             await self._set_state(
                 mi, RunState.crashed,
-                detail=f"failed to start {mi.launch_failures}x in a row without coming up — "
-                       f"not retrying. See the console output above for why.",
+                detail=f"failed to start {mi.launch_failures}x in a row without "
+                       f"coming up; not retrying. See the console output above.",
             )
             return
 
@@ -615,7 +587,7 @@ class Supervisor:
             return
 
         if clean_exit:
-            # Nothing crashed: the operator stopped it and the policy overruled.
+            # Nothing crashed: the operator stopped it, the policy overruled.
             await self._set_state(
                 mi, RunState.starting,
                 detail="shut down from the console; restarting anyway (policy: always)",
@@ -641,8 +613,7 @@ class Supervisor:
     async def _check_startup_grace(self, mi: ManagedInstance) -> None:
         """Assume a still-alive instance is up once the grace period expires.
 
-        Covers software whose readiness line we do not recognise; without this
-        such an instance would sit in STARTING for its whole life.
+        Covers software whose readiness line we do not recognise.
         """
         if mi.launched_at and time.monotonic() - mi.launched_at >= _STARTUP_GRACE_S:
             await self._on_ready(
@@ -657,10 +628,8 @@ class Supervisor:
         not start itself. Sessions are stopped concurrently, so ``graceful_s`` is
         the budget for the whole operation, not per server. Returns how many.
         """
-        # Freeze the restart policy *before* anything stops. The monitor is still
-        # running, and a clean exit is indistinguishable from a crash — without
-        # this it relaunches servers mid-shutdown and kill_server() then tears the
-        # fresh ones down ungracefully.
+        # Freeze the restart policy before anything stops: the monitor is still
+        # running and would relaunch servers mid-shutdown.
         self._shutting_down = True
         for mi in self._instances.values():
             mi.should_be_up = False
@@ -684,14 +653,13 @@ class Supervisor:
     async def _stop_session(self, name: str, verb: str, graceful_s: float) -> bool:
         """Type ``verb`` at the console, wait for the session to end, else kill it.
 
-        The single stop primitive — both per-instance ``stop`` and the shutdown
-        path go through here, so there is one wait loop and one kill-on-timeout
-        rule. Returns True if the server exited on its own.
+        The single stop primitive: per-instance ``stop`` and the shutdown path
+        both go through here. Returns True if the server exited on its own.
         """
         try:
             await tmux.send_keys(name, verb)
         except tmux.TmuxError:
-            pass          # session already gone, or tmux unavailable — fall through
+            pass          # session already gone, or tmux unavailable
         deadline = time.monotonic() + graceful_s
         while time.monotonic() < deadline:
             if not await tmux.has_session(name):
@@ -704,8 +672,7 @@ class Supervisor:
         """Real run-state for a set of instances, checking tmux for anything not
         actively tracked, so a freshly-connected agent answers truthfully.
 
-        Queried concurrently: one ``has-session`` per instance, run serially,
-        made a page load wait on N subprocess spawns.
+        Queried concurrently: one ``has-session`` subprocess per instance.
         """
         transient = (RunState.starting, RunState.stopping, RunState.crashed)
 
@@ -717,8 +684,8 @@ class Supervisor:
                 return mi.state.value               # trust tracked transient states
             if not await tmux.has_session(self.session_name(iid)):
                 return RunState.stopped.value
-            # A live session we are not tracking: it predates this agent, so we
-            # have no readiness signal for it and "up" is the honest answer.
+            # A live session we do not track predates this agent, so there is no
+            # readiness signal for it and "up" is the honest answer.
             return RunState.running.value
 
         results = await asyncio.gather(*(one(iid) for iid in ids))

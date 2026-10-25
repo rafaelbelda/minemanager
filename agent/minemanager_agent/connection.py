@@ -31,9 +31,9 @@ log = logging.getLogger("minemanager.agent")
 
 # This agent process's identity, minted at import and constant for its lifetime.
 # Module level on purpose: it must survive a Connection being rebuilt, because
-# what it identifies is the *process*, not the socket. The hub restores declared
-# run state only when this changes, so a reconnect cannot restart a server that
-# was deliberately left down — only an actual agent restart can.
+# what it identifies is the process, not the socket. The hub restores declared
+# run state only when this changes, so only an actual agent restart can bring
+# back a server that was deliberately left down.
 SESSION_ID = uuid.uuid4().hex
 
 
@@ -76,7 +76,7 @@ class Connection:
             reason = getattr(welcome, "error", "unknown")
             raise RuntimeError(f"handshake rejected: {reason}")
         if welcome.credential and welcome.node_id:
-            # First enrollment — persist the issued long-lived credential.
+            # First enrollment: persist the issued long-lived credential.
             self.config.save_identity(welcome.node_id, welcome.credential)
             log.info("enrolled as node %s", welcome.node_id)
         resolved_id, credential = self.config.load_identity()

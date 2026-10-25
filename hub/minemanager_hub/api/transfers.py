@@ -81,10 +81,9 @@ async def download_stream(instance_id: str, path: str, tid: str) -> StreamingRes
 
     headers = {
         "content-disposition": f"attachment; filename*=UTF-8''{quote(ctx.filename or 'download')}",
-        # Caddy (deploy/Caddyfile) streams by default and ignores both of these.
-        # They are here for an nginx front end, whose defaults spool a body this
-        # size to disk, and to stop anything gzipping an archive — which would
-        # drop content-length and with it the browser's progress bar.
+        # For an nginx front end, whose defaults spool a body this size to disk,
+        # and to stop anything gzipping an archive, which drops content-length
+        # and with it the browser's progress bar. Caddy ignores both.
         "x-accel-buffering": "no",
         "cache-control": "no-store, no-transform",
     }
@@ -162,7 +161,7 @@ async def upload_stream(instance_id: str, path: str, tid: str, request: Request)
 def transfer_status(tid: str) -> dict:
     ctx = transfers.get(tid)
     if ctx is None:
-        # Either not started yet or already swept — the pill grace-handles this.
+        # Either not started yet or already swept; the UI handles this state.
         return {"id": tid, "state": "unknown", "total": 0, "sent": 0}
     return ctx.as_status()
 

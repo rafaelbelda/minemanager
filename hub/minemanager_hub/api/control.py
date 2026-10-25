@@ -44,10 +44,9 @@ from minemanager_shared.protocol import (
 
 router = APIRouter(prefix="/api", tags=["control"])
 
-# A graceful stop waits for the world to save — up to 45s on the agent, and a
-# restart is a stop followed by a start. The default 30s command timeout expired
-# first, so a slow but *successful* stop reported 504 while the agent went on to
-# complete it. Must stay above the agent's own budget.
+# A graceful stop waits for the world to save, up to 45s on the agent, and a
+# restart is a stop followed by a start. Must stay above the agent's own budget,
+# or a slow but successful stop reports 504.
 _STOP_TIMEOUT_S = 120.0
 
 
@@ -105,10 +104,9 @@ async def power(instance_id: str, op: str) -> dict:
     )
 
     # Recorded only after the agent accepts, so a failed command cannot leave the
-    # DB claiming "should be running". This is what the node is restored from
-    # when its agent reconnects (see api/reconcile.py), which is why *kill*
-    # clears it too: a killed server staying down is the point of Kill, and
-    # leaving it armed would resurrect it on the next handshake.
+    # DB claiming "should be running". The node is restored from this when its
+    # agent reconnects (see api/reconcile.py), so kill clears it too: a killed
+    # server is meant to stay down.
     with session_scope() as db:
         inst = db.get(Instance, instance_id)
         if inst is not None:
@@ -163,12 +161,11 @@ async def files_delete(instance_id: str, path: str, recursive: bool = False) -> 
 
 @router.post("/instances/{instance_id}/files/upload")
 async def files_upload(instance_id: str, body: FileUpload) -> dict:
-    """Simple (non-streaming) upload for normal-sized files. Larger files use the
-    streaming transfer path (separate feature)."""
+    """Simple upload for normal-sized files; larger ones stream."""
     cap = get_settings().transfer_cap_bytes
     approx_bytes = len(body.content_b64) * 3 // 4
     if approx_bytes > cap:
-        raise HTTPException(413, f"file exceeds the {cap}-byte simple-upload limit — use the large transfer")
+        raise HTTPException(413, f"file exceeds the {cap}-byte simple-upload limit; use the large transfer")
     return await proxy(
         instance_id, Action.files_upload.value, FilesUploadData,
         path=body.path, content_b64=body.content_b64,

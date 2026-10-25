@@ -149,7 +149,7 @@ def _do_zip(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
         plan, by_rel, total = [], {}, 0
         for info in zf.infolist():
             if not _is_regular_zip_member(info):
-                continue          # symlink / device / socket — never materialise it
+                continue          # symlink, device or socket: never materialise it
             target, joined = _safe_target(root, dest_rel, info.filename)
             plan.append((target, joined, info.is_dir()))
             by_rel[joined] = info

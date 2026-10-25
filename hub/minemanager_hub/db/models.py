@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models — the hub's declared/desired state.
+"""SQLAlchemy ORM models: the hub's declared/desired state.
 
 Runtime/observed state (is a process actually up, live logs, pid) is *not*
 stored here; it lives on the agent and is reported over the WebSocket. This DB
@@ -40,7 +40,7 @@ class SchemaMeta(Base):
 
 
 class Node(Base):
-    """A managed machine — i.e. one agent."""
+    """A managed machine, i.e. one agent."""
 
     __tablename__ = "nodes"
 
@@ -90,21 +90,20 @@ class Instance(Base):
     # Explicit path to the server executable, relative to root_dir. Only needed
     # when the start command does not name it (wrapper script, @argfile launch,
     # ambiguous -cp); otherwise it is parsed from start_command. See
-    # ``minemanager_hub.serverjar`` — the updater refuses rather than guess.
+    # ``minemanager_hub.serverjar``; the updater refuses rather than guess.
     jar_path: Mapped[str | None] = mapped_column(String(1024), default=None)
 
     # Optional JDK directory used to launch *this* instance (must contain
     # bin/java). Lets one node run servers on different Java versions. NULL =
     # whatever ``java`` the agent's PATH resolves to. A plain path, not a
-    # secret — it is shown and edited in the UI like any other field.
+    # secret: it is shown and edited in the UI like any other field.
     java_home: Mapped[str | None] = mapped_column(String(1024), default=None)
 
     # Desired lifecycle: should the agent keep this running?
     start_with_node: Mapped[bool] = mapped_column(Boolean, default=False)
-    # "never" | "on_crash" | "always" — see protocol.RestartPolicy. A three-
-    # valued policy rather than a boolean beside start_with_node: the two are
-    # one intent at two triggers (while the agent watches / when it starts), and
-    # what to do about an exit has three answers, not two.
+    # "never" | "on_crash" | "always"; see protocol.RestartPolicy. The two
+    # lifecycle flags are one intent at two triggers: while the agent watches,
+    # and when it starts.
     restart_policy: Mapped[str] = mapped_column(String(16), default="on_crash")
 
     # Installed server-binary version/build. Set by the updater; until a proper

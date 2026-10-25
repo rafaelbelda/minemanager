@@ -1,7 +1,7 @@
 """Follow an instance's log file and emit new lines.
 
-Console *output* comes from tailing ``logs/latest.log`` (clean, no ANSI — what
-we display), rather than scraping the pty.
+Console output comes from tailing ``logs/latest.log``, which is clean of ANSI,
+rather than from scraping the pty.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ async def follow(path: Path, poll_s: float = 0.5, from_start: bool = False) -> A
 
         now_ident = (st.st_dev, st.st_ino)
         if ident is not None and now_ident != ident:
-            pos, buf = 0, b""      # replaced by a new file — read it from the top
+            pos, buf = 0, b""      # replaced by a new file: read from the top
         ident = now_ident
 
         if not started:

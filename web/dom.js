@@ -1,6 +1,6 @@
 /* Small DOM helpers: element building, toasts, and modal dialogs. */
 
-/** el('div.foo', {onclick}, ...children) — tag may carry .classes. */
+/** el('div.foo', {onclick}, ...children); the tag may carry .classes. */
 export function el(spec, attrs, ...children) {
   const [tag, ...classes] = String(spec).split('.');
   const node = document.createElement(tag || 'div');
@@ -32,11 +32,8 @@ export const $ = (id) => document.getElementById(id);
 
 /**
  * Attributes that make a non-button element behave like one for the keyboard.
- *
- * Rows, cards and tree items are divs because they carry their own layout and
- * nest their own buttons (a <button> may not contain one), but they are the
- * primary way to navigate the app — so they have to be reachable with Tab and
- * fire on Enter/Space like any control. Spread into an el() attrs object.
+ * Rows and cards are divs because they nest their own buttons. Spread into an
+ * el() attrs object.
  */
 export function clickable(onActivate, label) {
   return {
@@ -65,11 +62,8 @@ export function fill(node, ...children) {
 
 /**
  * Rebuild `node`'s children only when `sig` changes; `build()` returns them.
- *
- * The app renders wholesale — a heartbeat or the slow poll repaints the active
- * view — so an unchanged list would be torn down and rebuilt every few seconds.
- * For a scroll container that resets the scroll position mid-read, and for a
- * <select> it closes an open dropdown. Returns true when it actually rebuilt.
+ * The app renders wholesale, so without this a scroll container would reset
+ * mid-read and an open <select> would close. Returns true when it rebuilt.
  */
 export function repaint(node, sig, build) {
   if (node.dataset.sig === sig) return false;
@@ -96,17 +90,15 @@ export function toast(message, kind = 'info', ttl = 5200) {
 /* --- modals -------------------------------------------------------------- */
 
 /**
- * Open a dialog. `fields` describe inputs; resolves with a values object keyed
- * by field name, or null if the user cancelled.
+ * Open a dialog. Resolves with a values object keyed by field name, or null on
+ * cancel.
  *
  * field: { name, label, value, type: 'text'|'password'|'select'|'toggle',
  *          options: [...], mono: bool, placeholder, hint }
  *
  * `onMount({ get, set, input })` runs once after the inputs exist, for wiring
- * reactive relationships between fields (e.g. a select that rewrites another
- * field). `get(name)`/`set(name,v)` read/write values; `input(name)` returns the
- * element so callers can attach listeners. Programmatic `set` does not fire
- * input events, so cross-field updates cannot loop.
+ * one field to another. Programmatic `set` fires no input event, so cross-field
+ * updates cannot loop.
  */
 export function dialog({ title, description, fields = [], confirmText = 'OK', danger = false, onMount }) {
   return new Promise((resolve) => {
@@ -116,9 +108,7 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
     for (const f of fields) {
       let input;
       if (f.type === 'select') {
-        // An option is either a bare string (value doubles as its label) or
-        // { value, label } — needed once a field's stored values are wire
-        // constants that should not be what the operator reads.
+        // An option is a bare string (value doubles as label) or { value, label }.
         input = el('select.input', { id: `dlg-${f.name}` },
           f.options.map((o) => {
             const value = o.value ?? o;
@@ -157,7 +147,7 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
     const finish = (value) => {
       document.removeEventListener('keydown', onKey, true);
       backdrop.remove();
-      // Put the keyboard back where it was, so a dialog is not a dead end.
+      // Put the keyboard back where it was.
       if (opener && document.contains(opener)) opener.focus?.();
       resolve(value);
     };
@@ -210,7 +200,7 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
 
     const first = [...inputs.values()].find((i) => i.field.type !== 'toggle');
     if (first) { first.input.focus(); first.input.select?.(); }
-    // A fieldless confirmation still needs the keyboard inside the dialog.
+    // A fieldless confirmation still needs focus inside the dialog.
     else backdrop.querySelector('.modal-foot .btn:last-child')?.focus();
   });
 }

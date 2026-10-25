@@ -3,8 +3,8 @@
 Every action is one row in :data:`_HANDLERS`: the payload model it expects and
 the coroutine that carries it out. The payload is validated against that model
 before the handler runs, so a handler receives typed fields rather than indexing
-a raw dict — a contract mismatch becomes one clear error instead of a ``KeyError``
-surfacing as "KeyError: 'new_name'" in the UI.
+a raw dict, and a contract mismatch becomes one clear error instead of a
+``KeyError`` surfacing in the UI.
 
 Instance-scoped payloads carry the declared :class:`InstanceSpec` (the hub
 attaches it), so the agent never keeps its own copy of instance config.

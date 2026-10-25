@@ -27,7 +27,7 @@ class NodeOut(BaseModel):
 
 
 class EnrollmentOut(BaseModel):
-    """Returned once when a node is created — the token is shown a single time."""
+    """Returned once when a node is created; the token is shown a single time."""
 
     node_id: str
     enrollment_token: str
@@ -55,18 +55,15 @@ _JAVA_HOME = Field(
                 "Leave empty to use the node's default java.",
 )
 
-# The value ends up in the agent's launch command line. It is shell-quoted there,
-# and anyone able to set it can already set start_command (arbitrary shell), so
-# this is not a privilege boundary — it is here to reject typos and paths that
-# would silently mangle the launch line rather than fail loudly.
+# The value ends up shell-quoted in the agent's launch command. Not a privilege
+# boundary (whoever sets this can already set start_command): it rejects typos
+# and paths that would silently mangle the launch line.
 _JAVA_HOME_FORBIDDEN = set(";&|$`<>\n\r\t\"'\\")
 
 
 # Fields backed by NOT NULL columns. A PATCH carrying an explicit null for one
-# of these used to reach the ORM and surface as a 500 on the flush; rejecting it
-# here makes it the 422 it always was.
+# of these is a 422, not a 500 from the ORM flush.
 def _require_value(value):
-
     if value is None:
         raise ValueError("may not be null")
     if isinstance(value, Enum):
@@ -90,8 +87,8 @@ def _clean_java_home(value: Optional[str]) -> Optional[str]:
     if bad:
         raise ValueError(f"java_home may not contain {' '.join(repr(c) for c in bad)}")
     if value.endswith("/bin/java"):
-        raise ValueError("java_home is the JDK directory, not the java binary "
-                         "— drop the trailing /bin/java")
+        raise ValueError("java_home is the JDK directory, not the java binary; "
+                         "drop the trailing /bin/java")
     return value
 
 
@@ -116,11 +113,11 @@ class InstanceCreate(BaseModel):
 
 
 class InstanceUpdate(BaseModel):
-    """Partial update — only the fields present are changed (PATCH semantics).
+    """Partial update: only the fields present are changed (PATCH semantics).
 
-    Every field is Optional so it may be omitted, but the ones backed by NOT NULL
-    columns still reject an explicit null. Defaults are not validated in pydantic
-    v2, so these validators fire only when the field was actually sent.
+    Every field is Optional so it may be omitted, but those backed by NOT NULL
+    columns still reject an explicit null. Pydantic v2 does not validate
+    defaults, so these validators fire only for fields actually sent.
     """
 
     name: Optional[str] = None

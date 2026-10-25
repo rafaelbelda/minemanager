@@ -5,12 +5,12 @@ to the hub). Every message on that socket is one JSON-encoded :class:`Frame`.
 
 Frame kinds
 -----------
-- ``hello`` / ``welcome`` — the enrollment/identity handshake, sent once when a
+- ``hello`` / ``welcome``: the enrollment/identity handshake, sent once when a
   connection opens.
-- ``command`` — a request from the hub to the agent. Carries a correlation
-  ``id`` and an ``action`` string (e.g. ``power.start``).
-- ``response`` — the agent's reply to a command, echoing the same ``id``.
-- ``event`` — an unsolicited push from the agent (console output, log lines,
+- ``command``: a request from the hub to the agent, with a correlation ``id``
+  and an ``action`` string (e.g. ``power.start``).
+- ``response``: the agent's reply to a command, echoing the same ``id``.
+- ``event``: an unsolicited push from the agent (console output, log lines,
   state changes, heartbeats). No correlation id; consumers match on ``action``.
 
 Payloads are free-form ``dict`` on the *envelope* so the transport layer never
@@ -18,12 +18,8 @@ needs to know every action, but each action's payload has a model below and both
 sides use it: the hub builds command payloads by constructing the model, and the
 agent validates incoming ones against it before handling.
 
-Two deliberate limits:
-  1) Modelling it is worth doing, but it is
-  simply not done yet, and saying so beats implying otherwise.
-  2) Unknown fields are ignored, not rejected (pydantic's default). A newer hub
-  that adds a field must not break an older agent, so ``extra="forbid"`` would
-  make version skew worse rather than better.
+Unknown fields are ignored rather than rejected (pydantic's default), so a
+newer hub adding a field does not break an older agent.
 """
 
 from __future__ import annotations
@@ -70,14 +66,10 @@ class InstanceType(str, Enum):
 class RestartPolicy(str, Enum):
     """What the agent does when an instance's session ends by itself.
 
-    Ordered, and one field rather than two booleans: "restart on crash" and
-    "restart on anything" are three states between them, not four, and the
-    fourth ("leave crashes dead but overrule a deliberate stop") is incoherent.
+    One ordered field rather than two booleans: the states are three, not four.
 
-    None of these can make a server unstoppable. They only decide what to do
-    about an exit the agent did not ask for — Stop, Kill and agent shutdown all
-    clear the instance's supervision flag before the monitor ever sees the
-    session vanish.
+    None of these can make a server unstoppable. Stop, Kill and agent shutdown
+    clear the supervision flag before the monitor sees the session vanish.
     """
 
     never = "never"          # it ended; leave it down whatever the reason
@@ -228,18 +220,19 @@ class InstanceSpec(BaseModel):
     name: str
     root_dir: str
     start_command: str
-    # Optional JDK directory (a JAVA_HOME, i.e. it contains ``bin/java``). When
-    # set, the agent launches the start command with JAVA_HOME/PATH pointed at
-    # it, so this instance runs a specific Java version without the start
-    # command having to name an interpreter. Empty = the node's default java.
+    # Optional JDK directory containing ``bin/java``. The agent points
+    # JAVA_HOME/PATH at it, so the start command need not name an interpreter.
+    # Empty = the node's default java.
     java_home: Optional[str] = None
     restart_policy: RestartPolicy = RestartPolicy.on_crash
 
 
 class UpdateDownload(BaseModel):
-    """A resolved server-binary download, produced by a hub version provider and
-    handed to the agent to fetch and install. Kept provider-agnostic: the agent
-    only downloads a URL, optionally verifies a checksum, and swaps the jar."""
+    """A resolved server-binary download, produced by a hub version provider.
+
+    Provider-agnostic: the agent downloads a URL, optionally verifies a
+    checksum, and swaps the jar.
+    """
 
     url: str
     filename: str                    # source filename (informational)
@@ -260,7 +253,7 @@ class UpdateApplyData(BaseModel):
     instance: "InstanceSpec"
     jar_name: str                    # target jar to replace, relative to root
     # Only an operator-supplied jar path may be created when missing, so a
-    # mis-parsed one fails loudly instead of installing a jar nothing runs.
+    # mis-parsed one fails loudly.
     allow_create: bool = False
     download: UpdateDownload
 
@@ -281,7 +274,7 @@ class InstanceCommand(BaseModel):
 
 
 class PowerData(InstanceCommand):
-    """power.start / power.stop / power.restart / power.kill — spec only."""
+    """power.start / power.stop / power.restart / power.kill; spec only."""
 
 
 class ConsoleSendData(InstanceCommand):
@@ -299,8 +292,7 @@ class FilesListData(InstanceCommand):
 
 class FilesReadData(InstanceCommand):
     path: str
-    # None = use the agent's own default; the hub normally sends its configured
-    # limit. Optional so an older hub that omits it still works.
+    # None = the agent's own default. Optional, so an older hub still works.
     max_bytes: Optional[int] = None
 
 
@@ -336,15 +328,14 @@ class FilesExtractData(InstanceCommand):
 
 class TransferStartData(InstanceCommand):
     tid: str
-    # Closed set: an unrecognised direction previously fell through to the
-    # upload path and overwrote `path` with whatever the hub streamed back.
+    # Closed set: anything else must not reach the upload path.
     direction: Literal["download", "upload"]
     path: str
     total: Optional[int] = None
 
 
 class InstanceStatesData(BaseModel):
-    """instance.states — node-scoped, so no instance spec."""
+    """instance.states; node-scoped, so no instance spec."""
 
     ids: list[str] = Field(default_factory=list)
 
@@ -356,8 +347,8 @@ class InstanceStatesData(BaseModel):
 
 class ConsoleOutputData(BaseModel):
     line: str
-    # "log" = tail of logs/latest.log (the normal stream); "pty" = replayed tail
-    # of the mirrored tmux pane, used to explain a crash that happened before the
+    # "log" = tail of logs/latest.log, the normal stream. "pty" = replayed tail
+    # of the mirrored tmux pane, which explains a crash that happened before the
     # server's own logger started.
     source: Literal["log", "pty"] = "log"
 
@@ -365,18 +356,15 @@ class ConsoleOutputData(BaseModel):
 class StateChangedData(BaseModel):
     state: RunState
     detail: Optional[str] = None
-    # The instance exited on its own with a success status *after* having come
-    # up — i.e. somebody shut it down from the console rather than it dying.
-    # Reported as an observation, not a decision: the hub reads it and clears
-    # the instance's start-with-node flag, so "stop" typed at a console means
-    # the same thing as the UI's Stop button instead of lasting only until the
-    # next reboot. Declared state still changes only on the hub.
+    # The instance exited with a success status after having come up: somebody
+    # shut it down from the console. An observation, not a decision; the hub
+    # reads it and clears start_with_node, so a console "stop" means what the
+    # UI's Stop means.
     clean_exit: bool = False
-    # Is the agent still keeping this instance up after the transition? False
-    # once it has stopped trying (policy never, crash-loop, launch failures, a
-    # bad path), so the UI can say "abandoned" rather than "restarting". The
-    # hub's start_with_node is untouched by it: a reboot is a fair retry, and
-    # disarming here would turn a transient failure into a silent "never again".
+    # Is the agent still keeping this instance up? False once it has given up
+    # (policy never, crash-loop, launch failures, a bad path), so the UI can say
+    # "abandoned" rather than "restarting". Does not touch start_with_node: a
+    # reboot is a fair retry.
     supervised: bool = True
 
 

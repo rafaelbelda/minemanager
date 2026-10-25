@@ -3,9 +3,9 @@
 Each supported server software supplies available versions, optional builds, and
 a resolved download (URL + checksum + target filename) through a common
 :class:`~minemanager_hub.providers.base.Provider` interface. The version REST
-API and the updater consume that interface only — adding Purpur, Fabric, Forge,
-etc. later is a new provider module and one line in the registry, with no change
-to the API or the UI.
+API and the updater consume that interface only, so adding Purpur, Fabric or
+Forge later is a new provider module and one line in the registry, with no
+change to the API or the UI.
 """
 
 from minemanager_hub.providers.base import (

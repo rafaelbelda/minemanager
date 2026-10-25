@@ -1,7 +1,7 @@
 """Map a server software name to its provider.
 
 Adding a new software (Purpur, Fabric, Forge, …) is a new provider module plus
-one entry here — nothing else changes.
+one entry here; nothing else changes.
 """
 
 from __future__ import annotations

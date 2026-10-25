@@ -6,11 +6,9 @@ Each managed instance runs in its own detached tmux session named
 Process supervision (restart policy, crash detection) lives one layer up in
 :mod:`minemanager_agent.supervisor`.
 
-Both names below are constants, not configuration. Together they *are* a running
-server's identity: changing either while servers are up makes every existing
-session invisible to the agent, so it reports them stopped, starts duplicates
-that crash-loop against ``session.lock``, and never stops them on shutdown.
-Nothing about a deployment needs them to differ.
+Both names below are constants, not configuration: together they are a running
+server's identity. Changing either while servers are up makes every existing
+session invisible to the agent.
 """
 
 from __future__ import annotations
@@ -24,9 +22,8 @@ SESSION_PREFIX = "mm"
 
 
 # Occupies the pane between creating a session and respawning the real command
-# into it (see new_session). It must print *nothing*: an interactive shell writes
-# a prompt, which then shows up in the mirrored pane and gets replayed to the
-# operator as if the server had printed it.
+# into it (see new_session). It must print nothing: a shell prompt would show up
+# in the mirrored pane and be replayed as if the server had printed it.
 _PLACEHOLDER = "sh -c 'read _'"
 
 
@@ -79,15 +76,12 @@ async def new_session(
     """Start ``command`` in a fresh detached session rooted at ``workdir``,
     optionally mirroring everything its pane prints to ``mirror_path``.
 
-    When ``command`` exits, the session ends — that transition is how the
-    supervisor detects a stop/crash.
+    When ``command`` exits the session ends, which is how the supervisor
+    detects a stop or crash.
 
-    With ``status_path``, the command's exit status is appended to the shell
-    line so it is written there as the command finishes. Nothing else can
-    recover it: a session is *gone* by the time we notice, so the status has to
-    be recorded from inside, before the pane closes. That ordering is what makes
-    the file trustworthy — it exists before the session disappears, and a
-    session we had to kill leaves none, which is itself the right answer.
+    With ``status_path``, the exit status is appended to the shell line and so
+    written from inside the pane, before it closes. A session that had to be
+    killed leaves no file, which reads as "not an orderly shutdown".
     """
     if await has_session(name):
         raise TmuxError(f"session already exists: {name}")
@@ -101,16 +95,15 @@ async def new_session(
     if mirror_path is not None:
         await pipe_pane(name, mirror_path)
 
-    # Appended rather than wrapped so the operator's command is still what the
-    # shell sees first, and a shell-dependent start line (``$PATH``, an argfile,
-    # a wrapper script) keeps working exactly as it did.
+    # Appended rather than wrapped, so the operator's command is still what the
+    # shell sees first and a shell-dependent start line keeps working.
     launched = command if status_path is None else (
         f'{command}; printf %s "$?" > {shlex.quote(status_path)}'
     )
     code, _, err = await _run("respawn-pane", "-k", "-t", name, "-c", workdir, launched)
     if code != 0:
-        # Leave nothing behind: the idle shell would otherwise keep the session
-        # alive, and every liveness check we have would call it a running server.
+        # Leave nothing behind: an idle shell would keep the session alive and
+        # read as a running server.
         await kill_session(name)
         raise TmuxError(f"failed to start session {name}: {err.strip()}")
 
@@ -126,8 +119,7 @@ async def pipe_pane(name: str, path: str) -> bool:
 
 
 async def stop_pipe_pane(name: str) -> None:
-    # Close the pane mirror opened by :func:`pipe_pane`.
-
+    """Close the pane mirror opened by :func:`pipe_pane`."""
     try:
         await _run("pipe-pane", "-t", name)
     except FileNotFoundError:
@@ -139,8 +131,7 @@ async def send_keys(name: str, line: str) -> None:
     if not await has_session(name):
         raise TmuxError(f"no such session: {name}")
     # Literal (-l) text, then a separate Enter, so control chars aren't parsed.
-    # "--" terminates option parsing: without it a console line starting with
-    # "-" is read by tmux as flags instead of as text.
+    # "--" terminates option parsing, so a line starting with "-" is text.
     code, _, err = await _run("send-keys", "-t", name, "-l", "--", line)
     if code != 0:
         raise TmuxError(f"send-keys failed: {err.strip()}")
@@ -153,8 +144,7 @@ async def kill_session(name: str) -> None:
 
 
 async def kill_server() -> None:
-    """Tear down our whole tmux server, leaving nothing behind after a shutdown.
-    Tolerates 'no server running'."""
+    """Tear down our whole tmux server. Tolerates 'no server running'."""
     try:
         await _run("kill-server")
     except FileNotFoundError:

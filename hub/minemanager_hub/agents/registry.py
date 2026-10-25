@@ -5,8 +5,8 @@ commands through it and awaits correlated responses via per-command futures.
 Unsolicited events (console output, log lines, state changes, heartbeats) are
 published to any UI subscribers currently watching that node.
 
-This state is deliberately in-memory and ephemeral — it mirrors *live*
-connections. Durable/declared state lives in the database.
+This state is in-memory and ephemeral: it mirrors live connections. Durable
+declared state lives in the database.
 """
 
 from __future__ import annotations
@@ -98,9 +98,9 @@ class AgentRegistry:
         previous = self._agents.get(conn.node_id)
         if previous is not None and previous is not conn:
             # Two live sockets for one node (a reconnect that raced its own
-            # disconnect, or a duplicate agent). Newest wins — but the displaced
-            # connection's in-flight commands must be rejected now rather than
-            # hanging until timeout on a socket nobody will read again.
+            # disconnect, or a duplicate agent). Newest wins, and the displaced
+            # connection's in-flight commands are rejected rather than left to
+            # time out on a socket nobody will read.
             previous.fail_all(ConnectionError("agent connection replaced by a newer one"))
         self._agents[conn.node_id] = conn
 

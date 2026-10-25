@@ -1,9 +1,6 @@
 /* MineManager web UI.
- *
- * Two-layer rule from docs/UI_CONTEXT.md: REST for actions and declared state,
- * WebSocket for live streams. Declared state (nodes, instances) is fetched and
- * refreshed on a slow poll; runtime state (run states, console output) is owned
- * by the per-node event sockets.
+ * REST for actions and declared state (slow poll); per-node WebSockets for run
+ * states and console output. See docs/UI_CONTEXT.md.
  */
 
 import { api, ApiError, describe, originLabel, wsOrigin } from './api.js';
@@ -31,14 +28,9 @@ const NODE_META = {
 const nodeMetaOf = (node) =>
   NODE_META[node.online ? 'online' : node.enrolled ? 'offline' : 'pending'];
 
-/**
- * A status light, used wherever the same state would otherwise be spelled out
- * on every row. The colour is the signal; the name is carried in the tooltip
- * and for screen readers, so it is never colour alone.
- */
+/** Status light. The name goes in the tooltip and to screen readers. */
 function statusDot(meta, { size = 8, what = '' } = {}) {
-  // Three shapes, not three greys: filled is live, hollow is "not reporting",
-  // and the one state worth spotting across a page (up) carries a soft glow.
+  // filled = live, hollow ring = not reporting, glow = up.
   const paint = meta.hollow
     ? `background:transparent;box-shadow:inset 0 0 0 1.5px ${meta.color}`
     : `background:${meta.color}` + (meta.glow ? `;box-shadow:0 0 7px ${meta.color}99` : '');
@@ -49,8 +41,7 @@ function statusDot(meta, { size = 8, what = '' } = {}) {
 }
 
 const CONSOLE_CAP = 1500;
-// Files at/under this size use the simple base64 path (fast, no pill); larger
-// ones (and all directories) use the streaming transfer with a progress pill.
+// Above this, and for every directory, transfers stream with a progress pill.
 const STREAM_THRESHOLD = 4 * 1024 * 1024;
 const REFRESH_MS = 10000;
 const REFRESH_FAST_MS = 3000;
@@ -102,7 +93,7 @@ function instById(instId) {
   return null;
 }
 
-/** Runtime state of an instance — unknowable while its node is offline. */
+/** Runtime state of an instance. Unknowable while its node is offline. */
 function runStateOf(inst) {
   const node = nodeById(inst.node_id);
   if (!node || !node.online) return 'unknown';
@@ -200,9 +191,8 @@ async function refreshNodes({ quiet = false } = {}) {
   scheduleRefresh();
 }
 
-/** Ask each online node's agent for the real run-state of its instances, so the
- *  UI shows stopped/running immediately instead of waiting for a heartbeat.
- *  Non-blocking: updates and re-renders as answers arrive. */
+/** Pull real run-states from each online agent instead of waiting for a
+ *  heartbeat. Non-blocking: re-renders as answers arrive. */
 function primeStates(nodes) {
   for (const node of nodes.filter((n) => n.online)) {
     api.nodeInstanceStates(node.id).then((res) => {
@@ -211,9 +201,9 @@ function primeStates(nodes) {
         if (state.runState.get(iid) !== st) { state.runState.set(iid, st); changed = true; }
       }
       if (changed) render();
-      // A now-known "running" instance we're viewing should backfill its console.
+      // Backfill the console of a now-running instance we are viewing.
       if (state.sel.type === 'instance') maybeLoadConsole(state.sel.instId);
-    }).catch(() => { /* offline / transient — keep unknown */ });
+    }).catch(() => { /* offline or transient; keep unknown */ });
   }
 }
 
@@ -226,10 +216,7 @@ function scheduleRefresh() {
   );
 }
 
-/**
- * A healthy hub is the normal case, and the normal case does not need a status
- * light: the page only says anything when it cannot reach the hub.
- */
+/** Hub poll. The page only says anything when the hub cannot be reached. */
 async function refreshHealth() {
   try {
     const h = await api.health();
@@ -256,7 +243,7 @@ function onNodeEvent(frame, nodeId) {
       const st = frame.data?.state || 'unknown';
       const prev = state.runState.get(id);
       state.runState.set(id, st);
-      // Live-only: absent after a reload, so the pill never depends on it.
+      // Live-only: absent after a reload.
       state.supervised.set(id, frame.data?.supervised !== false);
       // Visually separate each server run in the console.
       if (st === 'starting' && prev !== 'starting') {
@@ -271,7 +258,7 @@ function onNodeEvent(frame, nodeId) {
       break;
     }
     case 'heartbeat': {
-      // Node-level: refreshes every instance state at once and proves liveness.
+      // Node-level: every instance state at once, and proof of liveness.
       const node = nodeById(nodeId);
       if (node && !node.online) node.online = true;
       const map = frame.data?.instances || {};
@@ -328,17 +315,15 @@ function pushConsole(instId, raw, kind) {
 }
 
 /**
- * Backfill the console with recent lines from the instance's log, so a fresh
- * web session sees what happened before it connected. Loaded once per instance;
- * the log is the source of truth, so we replace the buffer with its snapshot
- * and let the live stream append from there. Best-effort: any failure is
- * surfaced as a soft banner and never breaks the live console.
+ * Backfill the console from the instance's log, once per instance. The log
+ * snapshot replaces the buffer and the live stream appends from there.
+ * Best-effort: failure shows a soft banner and leaves the live console alone.
  */
 async function loadConsoleHistory(inst) {
   if (!inst || state.consoleLoaded.has(inst.id)) return;
   if (!isOnline(inst)) return; // retry when the console is reopened online
-  // A stopped instance shows an empty console rather than replaying the last
-  // run's log. Not marked loaded, so it backfills if/when it starts running.
+  // A stopped instance shows an empty console. Not marked loaded, so it
+  // backfills once it starts running.
   if (runStateOf(inst) !== 'running') {
     if (!state.console.has(inst.id)) state.console.set(inst.id, []);
     return;
@@ -353,7 +338,7 @@ async function loadConsoleHistory(inst) {
     $('term-body').dataset.sig = '';   // force a repaint from the new buffer
     if (state.tab === 'console' && state.sel.instId === inst.id) render();
   } catch {
-    // Never break the console over history — just flag it.
+    // Flag it; the live console keeps working.
     if (state.sel.instId === inst.id) {
       state.consoleFailed.add(inst.id);
       if (state.tab === 'console') render();
@@ -429,8 +414,7 @@ function buildTree() {
     const nodeSelected = state.sel.nodeId === node.id;
     const group = el('div.tree-group');
 
-    // One status light per row. Spelling the state out on every line turned the
-    // tree into a wall of ONLINE / STOPPED and buried the names it exists for.
+    // One status light per row; the state name is in the row's title.
     const nm = nodeMetaOf(node);
     group.append(el(`div.row.row-node${nodeSelected && state.sel.type === 'node' ? '.sel-soft' : ''}`, {
       ...clickable(() => selectNode(node.id)),
@@ -490,8 +474,7 @@ function renderHub() {
   $('st-running').textContent = running;
   $('st-attention').textContent = attention;
 
-  // Colour says "look at this", so it is spent only when there is something to
-  // look at: a red 0 reads as a fault when it means the opposite.
+  // Colour only where there is something to look at.
   $('st-online').parentElement.className = online && online === nodes.length ? 'ok' : '';
   $('st-running').className = running ? 'ok' : '';
   $('st-attention').className = attention ? 'alert' : '';
@@ -504,8 +487,6 @@ function renderHub() {
 function buildNodeCards() {
   const nodes = state.nodes;
   if (!nodes.length) {
-    // The empty state carries the action, which is why the page head no longer
-    // repeats the topbar's "Add node" button.
     return el('div.empty', { style: 'grid-column:1/-1' },
       state.loaded
         ? el('div', {},
@@ -538,7 +519,7 @@ function buildNodeCards() {
   return out;
 }
 
-/** The one place a node's state is spelled out: its own page. */
+/** Node state, spelled out on the node's own page. */
 function fillNodeBadge(node) {
   const m = nodeMetaOf(node);
   const badge = $('node-badge');
@@ -546,7 +527,7 @@ function fillNodeBadge(node) {
   badge.textContent = m.label;
 }
 
-/** The one-time enrollment token card — the token can never be fetched again. */
+/** One-time enrollment token card. The token cannot be fetched again. */
 function enrollSection() {
   const e = state.enrollment;
   if (!e) return null;
@@ -608,8 +589,6 @@ function renderNode() {
 
   fillNodeBadge(node);
 
-  // No separator glyphs between the items: they dangle at the end of a line
-  // once the row wraps, and the gap already separates them.
   fill($('node-meta'),
     el('span', { text: node.hostname || 'hostname unknown' }),
     el('span', { text: `agent ${node.agent_version || 'unknown'}` }),
@@ -686,13 +665,11 @@ function renderInstance() {
 
   renderArmed(inst, run);
 
-  // Used to show the RCON endpoint; RCON is gone, so surface the installed
-  // build instead — the one other piece of per-instance metadata worth a glance.
   $('inst-meta').textContent = inst.version
     ? `${inst.version}${inst.build ? ` build ${inst.build}` : ''}`
     : '';
 
-  // Power controls — gated on reachability, and fully locked during an update.
+  // Gated on reachability, and locked outright during an update.
   const updating = run === 'updating';
   const start = $('act-start');
   start.classList.toggle('btn-start', live && !updating && ['stopped', 'crashed', 'unknown'].includes(run));
@@ -705,11 +682,10 @@ function renderInstance() {
     const on = t.dataset.tab === state.tab;
     t.classList.toggle('on', on);
     t.setAttribute('aria-selected', on ? 'true' : 'false');
-    // Roving tabindex: the strip is one stop, arrow keys move within it.
+    // Roving tabindex: the strip is one tab stop; arrows move within it.
     t.tabIndex = on ? 0 : -1;
   });
-  // Not before the first load resolves: "node offline" is a claim, and until
-  // the nodes are in we simply don't know.
+  // Only once the first load resolves; before that, offline is not known.
   show($('inst-offline'), state.loaded && !live);
   show($('pane-console'), state.tab === 'console');
   show($('pane-files'), state.tab === 'files');
@@ -723,18 +699,15 @@ function renderInstance() {
 
 /**
  * The declared "start with node" flag, and where it disagrees with reality.
- *
- * Driven by `start_with_node` rather than the run state, so it still says
- * something while the node is offline — `runStateOf` is 'unknown' then, which is
- * exactly when "will this come back?" is the question being asked.
+ * Driven by `start_with_node`, not run state, so it still says something while
+ * the node is offline.
  */
 function renderArmed(inst, run) {
   const pill = $('inst-armed');
   show(pill, !!inst.start_with_node);
   if (!inst.start_with_node) return;
 
-  // Armed but not up: it returns on the next agent start, which nothing else
-  // on this screen tells you.
+  // Armed but not up: it returns on the next agent start.
   const down = ['stopped', 'crashed', 'unknown'].includes(run);
   pill.style.cssText = down
     ? 'color:var(--warn);border:1px solid #4a3c20;background:#1a1712'
@@ -749,8 +722,6 @@ function renderArmed(inst, run) {
 }
 
 function renderConsole(inst, live) {
-  // The instance name and its state are in the header right above; repeating
-  // them in the terminal chrome and again in the prompt said nothing new.
   const buf = state.console.get(inst.id) || [];
   $('term-count').textContent = `${buf.length} line${buf.length === 1 ? '' : 's'}`;
   $('term-autoscroll').setAttribute('aria-pressed', state.autoscroll ? 'true' : 'false');
@@ -760,7 +731,6 @@ function renderConsole(inst, live) {
   $('console-send').disabled = !live;
   input.placeholder = live ? 'send a console command…' : 'node offline';
 
-  // An empty black rectangle is not an answer to "why is nothing here?".
   const empty = $('term-empty');
   empty.hidden = buf.length > 0;
   const run = runStateOf(inst);
@@ -769,7 +739,7 @@ function renderConsole(inst, live) {
     : run === 'stopped' || run === 'crashed' ? 'Server is not running. Output appears here once it starts.'
     : 'No console output yet.';
 
-  // Only surfaced when the history backfill failed — the live console still works.
+  // Shown only when the history backfill failed.
   show($('console-hint'), state.consoleFailed.has(inst.id));
 
   const body = $('term-body');
@@ -796,11 +766,8 @@ async function doPower(inst, op, button) {
   try {
     const res = await api.power(inst.id, op);
     if (res && res.state) state.runState.set(inst.id, res.state);
-    // The hub writes start_with_node on every accepted power op. Mirror it
-    // rather than refetching — and sync the toggle itself, since the settings
-    // form is only filled on tab open: left stale, the next Save would write
-    // the old value straight back. Just this control, so a field being edited
-    // beside it is not clobbered.
+    // The hub writes start_with_node on every accepted power op; mirror it,
+    // and sync the toggle so a later Save does not write back a stale value.
     inst.start_with_node = op === 'start' || op === 'restart';
     setToggle($('set-startwith'), inst.start_with_node);
     toast(`${inst.name}: ${op} → ${res?.state || 'ok'}`, 'ok');
@@ -960,7 +927,7 @@ function renderFiles(inst, live) {
   const open = state.editor.path !== null;
   $('editor-name').textContent = open ? state.editor.path : 'No file open';
   $('editor-name').classList.toggle('placeholder', !open);
-  // An empty gutter and a blank textarea look like a file that failed to load.
+  // Hide the editor itself until a file is open.
   document.querySelector('.editor-pane')?.classList.toggle('empty-state', !open);
   const dirty = open && $('editor-area').value !== state.editor.original;
   show($('editor-dirty'), dirty);
@@ -975,7 +942,7 @@ async function openFile(entry) {
   const inst = curInst();
   if (!inst) return;
 
-  // Binary guard by extension — never even try to open these as text.
+  // Binary guard by extension.
   if (isBinaryName(entry.name)) return binaryNotice(entry);
 
   // Large-file guard, using configurable thresholds from the hub.
@@ -1002,7 +969,7 @@ async function openFile(entry) {
   try {
     const res = await api.readFile(inst.id, entry.path);
     if (state.sel.instId !== inst.id) return;
-    // Server-side content detection (NUL bytes) — belt and suspenders.
+    // Server-side content detection (NUL bytes).
     if (res.binary) return binaryNotice(entry);
     state.editor = { path: entry.path, original: res.content ?? '', size: entry.size };
     $('editor-area').value = state.editor.original;
@@ -1102,7 +1069,7 @@ async function deleteEntry(entry) {
 
 /* --- files: type helpers ------------------------------------------------- */
 
-// Extensions we refuse to open as text (the editor is for text). .jar included.
+// Extensions the text editor refuses to open.
 const BINARY_EXT = new Set(
   ('jar zip gz tgz tar bz2 xz rar 7z png jpg jpeg gif webp bmp ico svgz pdf class '
     + 'dat mca mcr nbt db sqlite so dll dylib exe bin o ttf otf woff woff2 mp3 mp4 '
@@ -1121,8 +1088,7 @@ function triggerDownload(url) {
   a.remove();
 }
 
-/** Download a file, or a directory as a zip. Confirms first (name + size) unless
- *  the caller already asked (binary/large-file "download instead?" flows). */
+/** Download a file, or a directory as a zip. Confirms unless the caller did. */
 async function downloadEntry(entry, { confirm = true } = {}) {
   const inst = curInst();
   if (!inst) return;
@@ -1137,8 +1103,7 @@ async function downloadEntry(entry, { confirm = true } = {}) {
     });
     if (!ok) return;
   }
-  // Large files and directories stream (with a progress pill); small files take
-  // the simple, instant path.
+  // Directories and large files stream; small files download directly.
   if (entry.is_dir || (entry.size ?? 0) > STREAM_THRESHOLD) {
     startDownloadStream(inst, entry);
   } else {
@@ -1164,8 +1129,8 @@ function fileToBase64(file) {
   });
 }
 
-/** Upload {file, relPath}[] into destPath. Large files stream (with a progress
- *  pill); small files take the quick base64 path. Refreshes on completion. */
+/** Upload {file, relPath}[] into destPath. Large files stream, small ones go
+ *  base64. Refreshes on completion. */
 async function uploadFiles(items, destPath) {
   const inst = curInst();
   if (!inst || !items.length) return;
@@ -1478,8 +1443,7 @@ function showContextMenu(ev, entry) {
   if (r.right > innerWidth) menu.style.left = `${innerWidth - r.width - 8}px`;
   if (r.bottom > innerHeight) menu.style.top = `${innerHeight - r.height - 8}px`;
 
-  // The mousedown/contextmenu that opened this already fired, so registering now
-  // won't self-close; outside interaction dismisses it.
+  // Registered after the opening event, so it cannot self-close.
   const onDown = (e) => { if (!menu.contains(e.target)) closeContextMenu(); };
   const onKey = (e) => { if (e.key === 'Escape') closeContextMenu(); };
   const onScroll = () => closeContextMenu();
@@ -1550,9 +1514,9 @@ async function saveInstance() {
     type: $('set-type').value,
     root_dir: $('set-root').value.trim(),
     start_command: $('set-cmd').value.trim(),
-    // Empty means "derive it from the start command" (see hub serverjar.py).
+    // Empty means: derive it from the start command (hub serverjar.py).
     jar_path: $('set-jar').value.trim() || null,
-    // Empty means "use whatever java the node's PATH resolves to".
+    // Empty means: use whatever java the node's PATH resolves to.
     java_home: $('set-java').value.trim() || null,
     restart_policy: $('set-restart').value,
     start_with_node: $('set-startwith').classList.contains('on'),
@@ -1639,8 +1603,7 @@ function renderVersion(inst, live) {
 
   show($('ver-updating'), updating);
 
-  // Current. The software is already named by the instance header; the version
-  // itself is what this line is for.
+  // Current
   $('ver-cur-ver').textContent = inst.version || 'not detected yet';
   const curBuild = inst.build ? `build ${inst.build}` : '';
   $('ver-cur-build').textContent = curBuild;
@@ -1726,12 +1689,7 @@ const jarForType = (type) => JAR_FOR_TYPE[type] || 'server.jar';
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
-/**
- * Build the launch command for a new instance from its type and max memory.
- * The command field is hidden in the add dialog (beginners only pick memory);
- * it can be fine-tuned later in the instance's Settings. Servers take `nogui`;
- * Velocity does not.
- */
+/** Launch command for a new instance. Servers take `nogui`; Velocity does not. */
 function buildStartCommand(type, ram) {
   const xmx = (ram || '').trim() ? `-Xmx${ram.trim()} ` : '';
   const gui = type === 'velocity' ? '' : ' nogui';
@@ -1817,8 +1775,8 @@ async function deleteNode(node) {
 }
 
 async function addInstance(node) {
-  // Beginner-friendly: pick a type and memory; the launch command is built from
-  // those and can be fine-tuned later in Settings.
+  // Type and memory only; the launch command is built from them and can be
+  // edited later in Settings.
   const values = await dialog({
     title: `Add instance on ${node.name}`,
     description: 'The directory must already exist on the node.',
@@ -1839,8 +1797,7 @@ async function addInstance(node) {
     ],
     confirmText: 'Create instance',
     onMount: ({ set, input }) => {
-      // Pair the memory text field with a beginner-friendly slider (1–32 GB).
-      // Both edit the same value and stay in sync with each other.
+      // Slider (1-32 GB) and text field edit the same value, kept in sync.
       const ramEl = input('ram');
       ramEl.classList.add('ram-value');
       const slider = el('input.ram-slider', { type: 'range', min: '1', max: '32', step: '1' });
@@ -1909,8 +1866,8 @@ function formatSize(bytes) {
 
 function relTime(iso) {
   if (!iso) return 'never';
-  // The hub stores UTC but serialises naive timestamps ("…T23:49:12.231535"),
-  // which Date.parse would read as local time. Pin those to UTC.
+  // The hub serialises naive UTC timestamps, which Date.parse would read as
+  // local time. Pin those to UTC.
   const hasZone = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(iso);
   const then = Date.parse(hasZone ? iso : `${iso}Z`);
   if (Number.isNaN(then)) return 'unknown';
@@ -1948,8 +1905,8 @@ function bind() {
 
   $('filter').oninput = (ev) => { state.filter = ev.target.value; renderSidebar(); };
 
-  // Below the sidebar breakpoint the tree is a drawer. One toggle, a scrim and
-  // Escape; picking anything inside it closes it (see navigate()).
+  // Below the sidebar breakpoint the tree is a drawer: toggle, scrim, Escape.
+  // navigate() closes it on any selection.
   $('nav-toggle').onclick = () => setNav(!$('sidebar').classList.contains('open'));
   $('nav-scrim').onclick = () => setNav(false);
   document.addEventListener('keydown', (ev) => {
@@ -2007,8 +1964,7 @@ function bind() {
     $('term-body').dataset.sig = '';
     render();
   };
-  // Turning autoscroll off implicitly when the user scrolls up keeps the log
-  // readable while it is still streaming.
+  // Scrolling up turns autoscroll off so a streaming log stays readable.
   $('term-body').onscroll = (ev) => {
     const b = ev.target;
     const atBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 24;
@@ -2027,8 +1983,8 @@ function bind() {
   $('editor-fullscreen').onclick = toggleFullscreen;
   $('editor-save').onclick = saveFile;
 
-  // Drag & drop onto the list background uploads into the current folder
-  // (folder rows handle their own drops and stop propagation).
+  // Dropping on the list background uploads into the current folder; folder
+  // rows handle their own drops and stop propagation.
   const flist = $('files-list');
   const hasFiles = (ev) => ev.dataTransfer && [...ev.dataTransfer.types].includes('Files');
   flist.addEventListener('dragover', (ev) => { if (hasFiles(ev)) { ev.preventDefault(); flist.classList.add('drop-hi'); } });
@@ -2092,10 +2048,10 @@ async function boot() {
   state.sel = hashToSel();
   render();
   refreshHealth();
-  // Load configurable file-explorer thresholds (best-effort; defaults otherwise).
+  // File-explorer thresholds; falls back to the defaults above.
   try { state.config = { ...state.config, ...(await api.config()) }; } catch { /* keep defaults */ }
   setInterval(refreshHealth, HEALTH_MS);
-  // Keep "last seen" strings honest without hammering the API.
+  // Keep "last seen" strings fresh without hammering the API.
   setInterval(() => { if (state.sel.type !== 'instance') render(); }, 20000);
   await refreshNodes();
   if (state.sel.type === 'instance') loadTab();

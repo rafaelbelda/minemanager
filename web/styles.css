@@ -1,11 +1,9 @@
-/* MineManager web UI — design tokens and components.
+/* MineManager web UI: design tokens and components.
    Palette and metrics follow the MineManager.dc.html design. */
 
-/* Self-hosted (latin subset, SIL Open Font License 1.1). The hub is expected to
-   sit behind WireGuard with no outbound internet, so fetching these from a CDN
-   would leave the UI unstyled exactly where it is meant to run — and would
-   report every page view to a third party from an ops console.
-   Space Grotesk is variable: one file covers 400-700. */
+/* Self-hosted (latin subset, SIL Open Font License 1.1): the hub runs behind
+   WireGuard with no outbound internet, so a CDN is not an option.
+   Space Grotesk is variable, so one file covers 400-700. */
 @font-face {
   font-family: 'Space Grotesk';
   font-style: normal;
@@ -43,9 +41,8 @@
   --line-3: #1a1b1f;
   --line-4: #1e1f23;
 
-  /* Text ramp. The three dim steps were below 4.5:1 against the panels they
-     sit on, which is where the small mono metadata lives — lifted until every
-     step clears AA for its size. Nothing below --dim-3 carries meaning. */
+  /* Text ramp. Every step clears AA contrast for its size against the panels.
+     Nothing below --dim-3 carries meaning. */
   --fg: #e6e6e3;
   --fg-2: #c3c3bf;
   --muted: #a3a39d;
@@ -71,8 +68,7 @@
   --term-dim-3: #797871;
   --term-lvl: #c9c5b9;
 
-  /* Three radii, by role: controls, surfaces, and the few genuinely round
-     things. Anything else was an arbitrary value picked per component. */
+  /* Three radii, by role: controls, surfaces, and genuinely round things. */
   --pad-x: 32px;
 
   --r-ctl: 4px;
@@ -108,15 +104,14 @@ input, select, textarea, button { font-family: inherit; }
 .spacer { flex: 1; }
 .hidden { display: none !important; }
 
-/* Visible to screen readers only — labels for inputs whose placeholder or
-   surrounding text already carries the name visually. */
+/* Screen readers only: labels for inputs whose placeholder or surrounding
+   text already names them visually. */
 .sr-only {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
   clip-path: inset(50%); white-space: nowrap;
 }
 
-/* One focus ring for everything, including the rows and cards that act as
-   buttons. Keyboard-only, so pointer users never see it. */
+/* One focus ring for everything, rows and cards included. Keyboard-only. */
 :focus-visible {
   outline: 2px solid var(--mm-accent-hi);
   outline-offset: 2px;
@@ -189,8 +184,6 @@ select.input option { background: var(--panel); color: var(--fg); }
 .input.ram-value { width: 90px; flex: none; text-align: center; }
 
 /* --- version tab --------------------------------------------------------- */
-/* No cards here: two short label/value groups on an otherwise empty page read
-   better as a page than as boxes inside one. */
 .version-wrap { max-width: 620px; }
 .ver-current {
   display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px;
@@ -240,8 +233,6 @@ select.input option { background: var(--panel); color: var(--fg); }
   border-bottom: 1px solid var(--line); background: var(--panel);
 }
 .brand { display: flex; align-items: center; gap: 10px; }
-/* The logo carries its own colour and transparency, so it needs sizing only —
-   the accent square and glyph centring here were for the ◆ character. */
 .brand-mark {
   width: 22px; height: 22px; flex: none;
   object-fit: contain;
@@ -251,8 +242,7 @@ select.input option { background: var(--panel); color: var(--fg); }
   font-family: var(--mono); font-size: 10px; color: var(--muted);
   border: 1px solid var(--line-2); padding: 2px 6px; border-radius: var(--r-ctl);
 }
-/* Full-width strip under the topbar; only present when the hub is unreachable,
-   which is the only state worth telling anyone about. */
+/* Full-width strip under the topbar, present only when the hub is unreachable. */
 .hub-down {
   flex: none; padding: 9px var(--pad-x);
   background: var(--danger-bg); border-bottom: 1px solid var(--danger-line);
@@ -330,8 +320,7 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 .crumbs .sep { color: var(--dim-3); margin: 0 4px; }
 .crumbs .cur { color: var(--fg-2); }
 
-/* Overview counts. Four numbers do not need four cards: a strip sized to its
-   content reads in one pass and leaves the page to the nodes themselves. */
+/* Overview counts: a strip sized to its content, not a grid of cards. */
 .summary {
   display: flex; flex-wrap: wrap; gap: 8px 34px;
   margin: 0 0 26px; padding: 0 0 18px;
@@ -419,8 +408,7 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 .node-body { padding: 0 var(--pad-x) 28px; }
 .pane-pad { padding: 22px var(--pad-x); }
 
-/* Destructive actions live at the end of the page they belong to, explained,
-   rather than beside the save button they could be mistaken for. */
+/* Destructive actions, at the end of the page they belong to. */
 .danger-row {
   display: flex; align-items: center; justify-content: space-between; gap: 18px;
   margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--line-3);
@@ -461,14 +449,12 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 .inst-head { flex: none; padding: 20px var(--pad-x) 0; }
 .inst-title-row { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .inst-title { margin: 0; font-size: 23px; font-weight: 700; }
-/* The type is context, not a status: plain text rather than a third badge
-   crowding the title row. */
+/* The type is context, not a status, so it is plain text. */
 .inst-type {
   font-family: var(--mono); font-size: 11px; letter-spacing: .08em;
   color: var(--muted); text-transform: uppercase;
 }
-/* The one place a state is spelled out: a detail page's own header. One per
-   screen is what makes the status lights in the lists readable. */
+/* A state spelled out, used once per screen on a detail page's header. */
 .state-pill {
   flex: none; font-family: var(--mono); font-size: 10.5px; letter-spacing: .08em;
   text-transform: uppercase; white-space: nowrap;
@@ -520,8 +506,6 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
   padding: 6px 8px 6px 14px; border-bottom: 1px solid var(--term-line); background: var(--term-head);
 }
 .terminal-note { font-family: var(--mono); font-size: 10px; color: var(--term-dim-2); }
-/* Were faint "· autoscroll" labels that looked like notes and behaved like
-   controls. Now they look like what they are. */
 .terminal-btn {
   padding: 5px 9px; background: none; cursor: pointer;
   border: 1px solid transparent; border-radius: var(--r-ctl);
@@ -569,7 +553,6 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 }
 .console-input input::placeholder { color: var(--term-dim); }
 .console-input input:disabled { color: var(--term-dim-2); }
-/* Was a "⏎ SEND" label that looked like a button and did nothing. */
 .console-send {
   flex: none; height: 30px; padding: 0 12px; cursor: pointer;
   background: none; border: 1px solid var(--term-line); border-radius: var(--r-ctl);
@@ -602,9 +585,7 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 }
 .file-row:hover { background: rgba(255, 255, 255, .035); }
 .file-row.sel { background: color-mix(in srgb, var(--mm-accent) 12%, transparent); }
-/* Directories are marked by the trailing "/" their names carry (shell
-   convention) plus weight — an emoji folder beside a hyphen "icon" for files
-   was two icon families saying what the name already says. */
+/* Directories are marked by the trailing "/" in their name, plus weight. */
 .file-name {
   font-family: var(--mono); font-size: 12px; color: var(--fg-2);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -680,9 +661,9 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 .editor-pane.empty-state .editor { display: none; }
 .editor-pane:not(.empty-state) .editor-empty { display: none; }
 .editor-info { font-family: var(--mono); font-size: 10px; color: var(--dim-2); }
-/* The textarea owns the scrolling; the highlight <pre> is translated to match
-   so comment colouring lines up with the real caret position. Both use the
-   identical font box, and lines never wrap so the gutter stays in step. */
+/* The textarea owns the scrolling and the highlight <pre> is translated to
+   match. Both use the same font box, and lines never wrap, so the gutter and
+   the caret stay in step. */
 .editor {
   flex: 1; min-height: 0; display: flex; overflow: hidden;
   font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
@@ -713,8 +694,7 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 
 /* --- settings ------------------------------------------------------------ */
 .settings { max-width: 640px; }
-/* Grouped so the form reads as three short decisions rather than one list of
-   nine fields. Each group's heading is its only label. */
+/* Three groups, each labelled only by its heading. */
 .form { display: flex; flex-direction: column; gap: 16px; margin-bottom: 28px; }
 .form > .label { margin: 0 0 -2px; }
 .form.advanced > summary {
@@ -820,9 +800,8 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
 }
 
 /* --- responsive ----------------------------------------------------------
-   One real breakpoint, set by what the layout needs rather than by a device:
-   below ~820px the fixed sidebar plus a usable work area no longer fit side by
-   side, so the sidebar becomes a drawer and everything else goes full width. */
+   Below ~820px the fixed sidebar and a usable work area no longer fit side by
+   side, so the sidebar becomes a drawer and the rest goes full width. */
 
 @media (max-width: 1040px) {
   :root { --pad-x: 24px; }
@@ -843,14 +822,11 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
   .nav-scrim { display: block; position: fixed; inset: 50px 0 0; z-index: 44; background: rgba(6, 6, 8, .6); }
   .nav-scrim[hidden] { display: none; }
 
-  /* The topbar keeps the brand and the one global action; the hub's address is
-     a detail that only matters when something is wrong, and it is still in the
-     tooltip-free health line on wider screens. */
   .topbar { gap: 10px; padding: 0 12px; }
   .brand-ver { display: none; }
   .brand-name { font-size: 12px; letter-spacing: .1em; }
 
-  /* Touch targets: the tree and file list are dense by design on a desktop. */
+  /* Touch targets; the tree and file list are dense by design on a desktop. */
   .row, .row-node, .row-inst { height: 40px; }
   .file-row { height: 38px; }
   .file-act, .file-del { display: grid; }

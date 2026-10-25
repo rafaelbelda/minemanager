@@ -33,7 +33,7 @@ class TransferError(Exception):
 
 
 def _build_zip(src_dir: Path, dest_zip: Path) -> None:
-    """Zip a directory to a temp file (blocking — run in a thread).
+    """Zip a directory to a temp file. Blocking, so run it in a thread.
 
     Compression is per entry (``files.zip_params``). That cost is paid before
     the first byte reaches the browser, so it presents as a slow download.
@@ -127,9 +127,9 @@ async def handle(identity, data: TransferStartData, root: str) -> dict:
     """Dispatch a ``transfer.start`` command. ``identity`` carries node_id,
     credential and the hub's http base.
 
-    ``direction`` is a closed set on the payload model, so an unrecognised value
-    is rejected before it reaches here — it must never fall through to the upload
-    path, which would overwrite ``path`` with whatever the hub streamed back.
+    ``direction`` is a closed set on the payload model, so an unrecognised
+    value is rejected before it reaches here. It must never fall through to the
+    upload path, which would overwrite ``path`` with whatever the hub sent.
     """
     headers = {"x-mm-node": identity.node_id, "x-mm-cred": identity.credential}
     if data.direction == "download":

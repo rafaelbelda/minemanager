@@ -1,10 +1,8 @@
 /* REST client for the MineManager hub.
  *
- * The hub sits behind Auth Service + WireGuard, so there is no app-layer auth here:
- * requests are same-origin and the reverse proxy has already authenticated the
- * user. For local dev against a hub on another port, override the base with
- * `?hub=http://localhost:8730` (remembered in localStorage) and start the hub
- * with MM_CORS_ORIGINS pointing at the dev server.
+ * No app-layer auth: requests are same-origin behind the reverse proxy. For dev
+ * against a hub on another port, pass `?hub=http://localhost:8730` (kept in
+ * localStorage) and start the hub with MM_CORS_ORIGINS set.
  */
 
 const STORE_KEY = 'mm.hubBase';
@@ -20,10 +18,10 @@ function resolveBase() {
   return localStorage.getItem(STORE_KEY) || '';
 }
 
-/** Base origin of the hub — '' means same-origin. */
+/** Base origin of the hub; '' means same-origin. */
 export const base = resolveBase();
 
-/** Human-readable origin for the topbar. */
+/** Human-readable origin, shown when the hub is unreachable. */
 export const originLabel = base || location.host;
 
 /** ws:// or wss:// origin for the events sockets. */
@@ -54,8 +52,7 @@ export function describe(err) {
   }
 }
 
-/* FastAPI reports a 422 as a list of per-field objects. Rendered raw that is a
- * wall of JSON in a toast, so pull out the messages people can act on. */
+/* FastAPI reports a 422 as a list of per-field objects; pull out the messages. */
 function errorList(detail) {
   if (!Array.isArray(detail)) return JSON.stringify(detail);
   const msgs = detail
@@ -83,7 +80,7 @@ async function request(method, path, body) {
       if (payload && payload.detail) {
         detail = typeof payload.detail === 'string' ? payload.detail : errorList(payload.detail);
       }
-    } catch { /* non-JSON error body — keep the status text */ }
+    } catch { /* non-JSON error body; keep the status text */ }
     throw new ApiError(res.status, detail);
   }
   if (res.status === 204) return null;
@@ -132,8 +129,8 @@ export const api = {
     post(`/api/instances/${id}/files/rename`, { path, new_name: newName }),
   extractFile: (id, path, overwrite = false) =>
     post(`/api/instances/${id}/files/extract`, { path, overwrite }),
-  // A file/dir download is a plain GET the browser handles (attachment header),
-  // so we expose the URL rather than fetching it into memory.
+  // Downloads are plain GETs the browser handles, so expose the URL rather
+  // than fetching into memory.
   downloadUrl: (id, path) => `${base}/api/instances/${id}/files/download?path=${q(path)}`,
 
   // Large-file streaming transfers (multi-GB, memory-bounded).

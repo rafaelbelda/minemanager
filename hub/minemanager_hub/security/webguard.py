@@ -1,10 +1,7 @@
 """``Host`` and ``Origin`` guards for the hub.
 
-Check ``Host`` and ``Origin``.
-
-``MM_ALLOW_API_CLIENTS`` decides whether requests with no ``Origin`` (curls, scripts) 
-may make state-changing calls; it is off by default, so the safe posture
-needs no configuration and the convenient one is a deliberate choice.
+``MM_ALLOW_API_CLIENTS`` decides whether requests with no ``Origin`` (curl,
+scripts) may make state-changing calls. Off by default.
 
 Exempt paths authenticate themselves with a node credential rather than an
 origin, and are used by non-browser clients that legitimately send no ``Origin``:
@@ -19,7 +16,7 @@ from urllib.parse import urlparse
 log = logging.getLogger("minemanager.hub")
 
 # Methods that change state. GET/HEAD/OPTIONS are safe to serve cross-origin:
-# the browser still cannot *read* the response without CORS.
+# the browser still cannot read the response without CORS.
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
 # Authenticated by the per-node credential (see transfers._auth_agent and the
@@ -38,12 +35,12 @@ def _header(scope, name: bytes) -> str:
 
 
 def _hostname(value: str) -> str:
-    # Bare lowercase hostname from a ``Host`` header or an origin's netloc.
+    """Bare lowercase hostname from a ``Host`` header or an origin's netloc."""
     value = (value or "").strip().lower()
     value = value.rpartition("@")[2]               # drop any userinfo
-    if value.startswith("["):                      # [::1]:8730 — IPv6 literal
+    if value.startswith("["):                      # [::1]:8730, IPv6 literal
         return value.partition("]")[0].lstrip("[")
-    if value.count(":") > 1:                       # ::1 — bare IPv6, no port
+    if value.count(":") > 1:                       # ::1, bare IPv6, no port
         return value
     return value.partition(":")[0]
 

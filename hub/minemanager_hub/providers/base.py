@@ -1,7 +1,7 @@
 """The common provider interface and its value types.
 
 Everything above the providers (REST API, updater) speaks only in terms of these
-dataclasses and the :class:`Provider` ABC — never in Paper/Vanilla/Velocity
+dataclasses and the :class:`Provider` ABC, never in Paper/Vanilla/Velocity
 specifics.
 """
 
@@ -46,8 +46,8 @@ class Download:
 class Provider(ABC):
     """Interface every server software implements.
 
-    ``has_builds`` tells the UI whether to show a build selector — the interface
-    adapts to the metadata each software exposes rather than assuming builds.
+    ``has_builds`` tells the UI whether to show a build selector, so the
+    interface adapts to the metadata each software exposes.
     """
 
     software: str

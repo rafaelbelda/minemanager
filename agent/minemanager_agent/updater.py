@@ -11,7 +11,7 @@ live elsewhere in the instance root and are never touched. The swap is:
      replace.
 
 The download runs in a worker thread so it never blocks the event loop. Stdlib
-only — the agent keeps a minimal dependency surface.
+only, to keep the agent's dependency surface minimal.
 """
 
 from __future__ import annotations

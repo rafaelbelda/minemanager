@@ -3,13 +3,11 @@
 To run the server, use the launcher that honors MM_HOST/MM_PORT:
     python -m minemanager_hub          # or the installed `minemanager-hub`
 
-(The bare ``uvicorn minemanager_hub.main:app`` CLI is a separate entry point
-that never sees our settings, so it binds uvicorn's own 127.0.0.1:8000 default.
-Nothing here can change that. Use the launcher above; if you want the uvicorn
-CLI for ``--reload`` during development, pass ``--host``/``--port`` yourself.)
+The bare ``uvicorn minemanager_hub.main:app`` CLI never sees these settings and
+binds uvicorn's own 127.0.0.1:8000, so pass ``--host``/``--port`` if you use it.
 
-In production this sits behind Auth Service + WireGuard; it does not authenticate
-end users itself.
+In production this sits behind Auth Service + WireGuard; it does not
+authenticate end users itself.
 """
 
 from __future__ import annotations
@@ -63,7 +61,7 @@ async def lifespan(_app: FastAPI):
             webguard.ANY_HOST not in settings.allowed_hosts and \
             not (settings.allowed_hosts - {"localhost", "127.0.0.1", "::1", "[::1]"}):
         log.warning(
-            "bound to %s but MM_ALLOWED_HOSTS is still loopback-only — every request "
+            "bound to %s but MM_ALLOWED_HOSTS is still loopback-only. Every request "
             "arriving under this hub's real hostname will be rejected with HTTP 400. "
             "Set MM_ALLOWED_HOSTS to the name clients use.",
             settings.host,
@@ -97,7 +95,7 @@ app = FastAPI(
     openapi_url="/openapi.json" if _settings.enable_docs else None,
 )
 
-# CORS for UI dev only (empty in production — UI is served same-origin).
+# CORS for UI dev only; empty in production, where the UI is same-origin.
 _origins = get_settings().cors_origins
 if _origins:
     app.add_middleware(
