@@ -71,9 +71,8 @@ def resolve_instance_root(node_root: str | Path | None, instance_root: str) -> P
     """Check an instance root against the node root and return it resolved.
 
     The outer half of the jail: ``resolve_within`` keeps a file operation inside
-    one instance, this keeps the instance itself inside the node's directory.
-    The hub validates the same thing, but only this check runs on the machine
-    that holds the files, so it is the one that has to hold.
+    one instance, this keeps the instance inside the node's directory. The hub
+    checks the same thing, but only this runs where the files are.
 
     ``node_root`` of None means no root is configured and nothing is enforced.
     """

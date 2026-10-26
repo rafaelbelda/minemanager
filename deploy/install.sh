@@ -110,7 +110,8 @@ if [ "$DO_AGENT" = 1 ]; then
   note "$([ "$DO_HUB" = 1 ] && echo 4 || echo 1). sudoedit $ETC/agent.env  -> set MM_HUB_URL"
   note "$([ "$DO_HUB" = 1 ] && echo 5 || echo 2). create the node in the hub UI, paste its token in as MM_ENROLL_TOKEN"
   note "$([ "$DO_HUB" = 1 ] && echo 6 || echo 3). sudo systemctl enable --now minemanager-agent"
-  note "   servers live under $SERVERS; widen ReadWritePaths in the unit if yours do not"
+  note "   servers live under $SERVERS; if yours do not, set MM_ROOT_DIR and widen"
+  note "   ReadWritePaths in the unit to match"
 fi
 note ""
 note "Check it worked:  journalctl -u 'minemanager-*' -n 40 --no-pager"

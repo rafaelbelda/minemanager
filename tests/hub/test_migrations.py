@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 
 def _v1_database(path) -> str:
@@ -193,6 +194,73 @@ class TestFlagReshapeV3:
         upgraded.init_db()
         columns = {c["name"] for c in inspect(upgraded._engine).get_columns("instances")}
         assert "start_with_node" in columns
+
+
+class TestOneNamePerNode:
+    """v5: a name identifies a directory, so it is unique per node. An older
+    database never checked, so duplicates are renamed rather than refused."""
+
+    def test_the_unique_index_exists(self, upgraded):
+        with upgraded._engine.connect() as conn:
+            names = {i["name"] for i in inspect(conn).get_indexes("instances")}
+        assert "uq_instance_node_name" in names
+
+    def test_a_second_instance_with_the_same_name_is_refused(self, upgraded):
+        with pytest.raises(IntegrityError):
+            with upgraded._engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO instances (id, node_id, name, type, root_dir, "
+                    "start_command, start_with_node, restart_policy) VALUES ('i9', 'n1', "
+                    "'survival', 'paper', '/srv/mc/other', 'java -jar p.jar', 0, 'on_crash')"
+                ))
+
+    def test_the_same_name_on_another_node_is_fine(self, upgraded):
+        with upgraded._engine.begin() as conn:
+            conn.execute(text("INSERT INTO nodes (id, name) VALUES ('n2', 'box-b')"))
+            conn.execute(text(
+                "INSERT INTO instances (id, node_id, name, type, root_dir, "
+                "start_command, start_with_node, restart_policy, created_at) VALUES "
+                "('i9', 'n2', 'survival', 'paper', '/srv/mc/survival', "
+                "'java -jar p.jar', 0, 'on_crash', CURRENT_TIMESTAMP)"
+            ))
+        with upgraded._engine.connect() as conn:
+            count = conn.execute(
+                text("SELECT COUNT(*) FROM instances WHERE name = 'survival'")
+            ).scalar()
+        assert count == 2
+
+
+def test_duplicates_already_on_disk_are_renamed_not_refused(tmp_path, monkeypatch):
+    """A hub that would not boot leaves the operator no UI to fix it from, and
+    the name is only a label: sessions and paths key off the id and the root."""
+    from minemanager_hub.db import session as db_session
+
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    url = _v1_database(data_dir / "minemanager.db")
+    engine = create_engine(url)
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO instances (id, node_id, name, type, root_dir, start_command, "
+            "desired_running, auto_restart) "
+            "VALUES ('i2', 'n1', 'survival', 'paper', '/srv/mc/two', 'java -jar p.jar', 0, 1)"
+        ))
+    engine.dispose()
+
+    monkeypatch.setenv("MM_DATA_DIR", str(data_dir))
+    from minemanager_hub import config
+    config._settings = None
+    db_session._engine = None
+    db_session._SessionFactory = None
+    try:
+        db_session.init_db()
+        with db_session._engine.connect() as conn:
+            names = dict(conn.execute(text("SELECT id, name FROM instances")).all())
+        assert names == {"i1": "survival", "i2": "survival-2"}
+    finally:
+        config._settings = None
+        db_session._engine = None
+        db_session._SessionFactory = None
 
 
 def test_an_intermediate_shape_is_also_accepted(tmp_path, monkeypatch):

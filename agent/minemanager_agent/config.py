@@ -31,6 +31,12 @@ def _write_private(path: Path, text: str) -> None:
 DEFAULT_DATA_DIR = Path("/var/lib/minemanager-agent")
 
 
+def _root_from_env() -> Path | None:
+    """``MM_ROOT_DIR`` as a path, or None when it is unset or empty."""
+    raw = env_opt("MM_ROOT_DIR")
+    return Path(raw).expanduser() if raw else None
+
+
 @dataclass
 class AgentConfig:
     hub_url: str = field(
@@ -45,10 +51,7 @@ class AgentConfig:
     # Directory every instance on this node must live under. Local configuration,
     # never taken from the hub, so it is the agent's own boundary. Unset means no
     # isolation is enforced and new servers cannot be provisioned here.
-    root_dir: Path | None = field(
-        default_factory=lambda: Path(env_opt("MM_ROOT_DIR")).expanduser()
-        if env_opt("MM_ROOT_DIR") else None
-    )
+    root_dir: Path | None = field(default_factory=lambda: _root_from_env())
 
     reconnect_min_s: float = 1.0
     reconnect_max_s: float = 30.0
@@ -69,13 +72,12 @@ class AgentConfig:
     def pty_dir(self) -> Path:
         return self.data_dir / "pty"
 
-    @property
-    def resolved_root(self) -> Path | None:
-        """The node root as an absolute, symlink-free path, or None if unset."""
-        return self.root_dir.resolve() if self.root_dir else None
-
     def ensure_root(self) -> None:
-        """Create the node root if one is configured, or exit explaining why not."""
+        """Create the node root if one is configured, or exit explaining why not.
+
+        Resolves it afterwards, so the supervisor's boundary check and the root
+        reported at handshake are the same symlink-free path.
+        """
         if self.root_dir is None:
             log.warning(
                 "MM_ROOT_DIR is not set: new servers cannot be created on this node and "
@@ -85,6 +87,7 @@ class AgentConfig:
             return
         try:
             self.root_dir.mkdir(parents=True, exist_ok=True)
+            self.root_dir = self.root_dir.resolve()
         except (OSError, ValueError) as exc:
             raise SystemExit(
                 f"cannot create the node root {self.root_dir} ({exc}). Set MM_ROOT_DIR to a "

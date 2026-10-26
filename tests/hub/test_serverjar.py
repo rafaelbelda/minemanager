@@ -74,3 +74,57 @@ def test_update_refuses_when_the_jar_cannot_be_identified(client, node_id):
     assert r.status_code in (400, 409)      # 400 unresolvable, 409 if agent offline first
     if r.status_code == 400:
         assert "jar" in r.json()["detail"].lower()
+
+
+class TestTheLaunchConventionForNewServers:
+    """One builder, used for both kinds of create, so the jar name and the
+    nogui rule are not restated per caller."""
+
+    def test_each_supported_software_has_its_jar(self):
+        assert serverjar.jar_for_type("paper") == "paper.jar"
+        assert serverjar.jar_for_type("vanilla") == "server.jar"
+        assert serverjar.jar_for_type("velocity") == "velocity.jar"
+
+    def test_a_server_takes_nogui(self):
+        assert serverjar.build_start_command("paper", "4G") == (
+            "java -Xmx4G -jar paper.jar nogui"
+        )
+
+    def test_a_proxy_does_not(self):
+        assert serverjar.build_start_command("velocity", "2G") == (
+            "java -Xmx2G -jar velocity.jar"
+        )
+
+    def test_no_memory_means_no_xmx(self):
+        assert serverjar.build_start_command("paper", None) == "java -jar paper.jar nogui"
+        assert serverjar.build_start_command("paper", "  ") == "java -jar paper.jar nogui"
+
+    def test_unknown_software_is_refused_rather_than_guessed(self):
+        """Inventing a jar name is what the rest of this module exists to avoid."""
+        with pytest.raises(serverjar.UnsupportedSoftware):
+            serverjar.jar_for_type("purpur")
+        with pytest.raises(serverjar.UnsupportedSoftware):
+            serverjar.build_start_command("purpur", "4G")
+
+
+class TestDeclaringAnExistingServer:
+    def test_the_start_command_is_composed_when_it_is_omitted(self, client, node_id):
+        inst = client.post(f"/api/nodes/{node_id}/instances", json={
+            "name": "survival", "type": "paper", "root_dir": "/srv/mc/survival",
+            "memory": "6G",
+        }).json()
+        assert inst["start_command"] == "java -Xmx6G -jar paper.jar nogui"
+
+    def test_an_explicit_start_command_still_wins(self, client, node_id):
+        inst = client.post(f"/api/nodes/{node_id}/instances", json={
+            "name": "wrapped", "type": "paper", "root_dir": "/srv/mc/wrapped",
+            "start_command": "./start.sh", "memory": "6G",
+        }).json()
+        assert inst["start_command"] == "./start.sh"
+
+    def test_a_memory_value_the_jvm_would_refuse_is_rejected(self, client, node_id):
+        r = client.post(f"/api/nodes/{node_id}/instances", json={
+            "name": "survival", "type": "paper", "root_dir": "/srv/mc/survival",
+            "memory": "2048",
+        })
+        assert r.status_code == 422

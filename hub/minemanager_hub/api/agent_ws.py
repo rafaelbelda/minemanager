@@ -80,8 +80,8 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
             if node and tokens.verify_token(hello.credential, node.credential_hash):
                 node.agent_version = hello.agent_version
                 node.hostname = hello.hostname or node.hostname
-                # Mirrored every handshake: the agent may be reconfigured, and
-                # the hub must never hold a root the agent no longer enforces.
+                # Every handshake: the hub must not hold a root the agent no
+                # longer enforces.
                 node.root_dir = hello.root_dir
                 return node.id, None, None
             detail = f" ({enroll_error})" if enroll_error else ""
@@ -98,11 +98,9 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
 def _warn_about_stranded_instances(node_id: str) -> None:
     """Say which declared instances this node's root does not cover.
 
-    The agent refuses every instance-scoped command for a root outside its own,
-    so an operator who sets MM_ROOT_DIR on a node that already has servers
-    elsewhere silently loses power, console and files for them. The REST layer
-    reports it per instance (``InstanceOut.outside_node_root``); this is the
-    line in the journal at the moment it starts being true.
+    Setting MM_ROOT_DIR on a node that already has servers elsewhere cuts off
+    power, console and files for them. The REST layer reports it per instance
+    (``InstanceOut.outside_node_root``); this is the journal line.
     """
     with session_scope() as db:
         node = db.get(Node, node_id)
@@ -172,9 +170,7 @@ async def agent_endpoint(ws: WebSocket) -> None:
     )
 
     restarted = _claim_agent_session(node_id, frame.session_id)
-    # After the root has been mirrored onto the node, so it reflects what this
-    # agent just said it will enforce.
-    _warn_about_stranded_instances(node_id)
+    _warn_about_stranded_instances(node_id)   # after the root was mirrored
 
     conn = AgentConnection(node_id=node_id, send=ws.send_json)
     registry.register(conn)

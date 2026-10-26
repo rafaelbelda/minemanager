@@ -300,6 +300,17 @@ class Supervisor:
         await self._set_state(mi, RunState.stopped, detail="killed")
         return {"state": mi.state.value}
 
+    def forget(self, instance_id: str) -> None:
+        """Drop an instance this agent will never hear about again.
+
+        Nothing else prunes ``_instances``, so an un-declared id would be
+        carried for the life of the process and reported by :meth:`states`.
+        Only drops the bookkeeping: stop or kill it first.
+        """
+        mi = self._instances.pop(instance_id, None)
+        if mi is not None:
+            self._cancel_tail(mi)
+
     async def send(self, spec: InstanceSpec, line: str) -> dict:
         mi = self._managed(spec)
         await tmux.send_keys(mi.session, line)
@@ -490,10 +501,8 @@ class Supervisor:
     async def pty_tail(self, instance_id: str) -> list[str]:
         """The tail of an instance's raw pane, for a caller with no console.
 
-        :meth:`_replay_pty` pushes this onto the console, which is the right
-        place for a crash the hub will keep the instance for. A failed creation
-        is the case where there will be no instance: see
-        :mod:`minemanager_agent.provision`.
+        :meth:`_replay_pty` is the same text pushed onto the console; this is
+        for a failed creation, where no instance survives to hold one.
         """
         mi = self._instances.get(instance_id)
         if mi is None:

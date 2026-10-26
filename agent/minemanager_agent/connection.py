@@ -45,7 +45,7 @@ class Connection:
         self._send_lock = asyncio.Lock()
         self._inflight: set[asyncio.Task] = set()
         # The supervisor emits events through this connection.
-        self.supervisor = Supervisor(self._emit_event, config.pty_dir, config.resolved_root)
+        self.supervisor = Supervisor(self._emit_event, config.pty_dir, config.root_dir)
 
     async def _emit_event(self, event: Event) -> None:
         ws = self._ws
@@ -68,7 +68,7 @@ class Connection:
             enrollment_token=self.config.enroll_token,
             session_id=SESSION_ID,
             capabilities=["power", "console", "files", "logs"],
-            root_dir=str(self.config.resolved_root) if self.config.root_dir else None,
+            root_dir=str(self.config.root_dir) if self.config.root_dir else None,
         )
         await ws.send(hello.model_dump_json())
         raw = json.loads(await ws.recv())

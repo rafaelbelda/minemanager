@@ -3,9 +3,14 @@
 The agent is faked, so what is covered here is the hub's half: the refusals that
 must happen before anything is built, the payload the agent is handed, and that
 a failed creation leaves no instance declared.
+
+The route returns 202 and builds in a task, so anything about the *outcome* is
+asserted after :func:`settle`, and the 202 body is only the declared row.
 """
 
 from __future__ import annotations
+
+import time
 
 import pytest
 
@@ -101,6 +106,37 @@ def create(client, node_id, **overrides):
     return client.post(f"/api/nodes/{node_id}/servers", json={**BODY, **overrides})
 
 
+def settle(timeout_s: float = 5.0, *, require: bool = True) -> None:
+    """Wait for the in-flight builds to finish.
+
+    The TestClient runs the app's loop in its own thread for the lifetime of the
+    fixture, so sleeping here lets the build task progress.
+    """
+    deadline = time.monotonic() + timeout_s
+    while servers._running and time.monotonic() < deadline:
+        time.sleep(0.01)
+    if require:
+        assert not servers._running, "a build task did not finish"
+
+
+@pytest.fixture(autouse=True)
+def _leave_no_build_running():
+    """A build still in flight when the TestClient tears its loop down is
+    cancelled mid-write, so every test ends with the hub idle."""
+    yield
+    settle(require=False)
+
+
+def created(client, node_id, **overrides) -> dict:
+    """Create, wait for the build, and read the instance back."""
+    posted = create(client, node_id, **overrides)
+    assert posted.status_code == 202, posted.text
+    settle()
+    iid = posted.json()["id"]
+    listed = client.get(f"/api/nodes/{node_id}/instances").json()
+    return next((i for i in listed if i["id"] == iid), {})
+
+
 class TestRefusals:
     def test_an_unknown_node_is_404(self, client):
         assert create(client, "nope").status_code == 404
@@ -126,10 +162,20 @@ class TestRefusals:
         assert create(client, rooted, name=name).status_code == 422
 
     def test_a_duplicate_name_is_refused(self, client, rooted, agent, provider):
-        assert create(client, rooted).status_code == 201
+        assert create(client, rooted).status_code == 202
+        settle()
         r = create(client, rooted)
         assert r.status_code == 409
         assert "already has an instance" in r.json()["detail"]
+
+    def test_a_duplicate_is_refused_even_while_the_first_is_still_building(
+        self, client, rooted, agent, provider
+    ):
+        """The uniqueness constraint, not a read of the table: the second
+        request arrives before the first has anything on disk."""
+        assert create(client, rooted).status_code == 202
+        assert create(client, rooted).status_code == 409
+        settle()
 
     def test_an_unresolvable_version_is_a_400(self, client, rooted, agent, monkeypatch):
         monkeypatch.setattr(servers, "get_provider", lambda s: FakeProvider(fail=True))
@@ -161,7 +207,8 @@ class TestRefusals:
         """Velocity is not Mojang's and holds no world; demanding acceptance
         would be both wrong and a thing to make an operator affirm falsely."""
         r = create(client, rooted, name="lobby", type="velocity", accept_eula=False)
-        assert r.status_code == 201
+        assert r.status_code == 202
+        settle()
         assert agent.sent(Action.instance_create.value)[0]["data"]["accept_eula"] is False
 
 
@@ -184,6 +231,7 @@ class TestSuccessfulCreation:
 
     def test_the_agent_is_told_to_create_it(self, client, rooted, agent, provider):
         create(client, rooted)
+        settle()
         sent = agent.sent(Action.instance_create.value)
         assert len(sent) == 1
         data = sent[0]["data"]
@@ -195,24 +243,37 @@ class TestSuccessfulCreation:
 
     def test_run_after_is_off_unless_asked_for(self, client, rooted, agent, provider):
         create(client, rooted)
+        settle()
         assert agent.sent(Action.instance_create.value)[0]["data"]["run_after"] is False
 
     def test_the_installed_version_is_recorded(self, client, rooted, agent, provider):
-        inst = create(client, rooted, version="1.21.8", build="60").json()
+        inst = created(client, rooted, version="1.21.8", build="60")
         assert (inst["version"], inst["build"]) == ("1.21.8", "60")
         assert provider.resolved == [("1.21.8", "60")]
+
+    def test_the_declared_row_is_returned_before_anything_is_built(
+        self, client, rooted, agent, provider
+    ):
+        """What the UI gets to show while the build runs."""
+        posted = create(client, rooted)
+        assert posted.status_code == 202
+        body = posted.json()
+        assert body["name"] == "survival"
+        assert body["version"] is None        # nothing is installed yet
+        assert client.get(f"/api/nodes/{rooted}/instances").json()[0]["id"] == body["id"]
+        settle()
 
     def test_a_server_left_stopped_is_not_armed_for_the_next_boot(
         self, client, rooted, agent, provider
     ):
-        inst = create(client, rooted, run_after=False).json()
+        inst = created(client, rooted, run_after=False)
         assert inst["start_with_node"] is False
 
     def test_a_server_that_was_started_stays_armed(self, client, rooted, provider, node_id):
         conn = FakeAgent(node_id, data={"ok": True, "started": True})
         registry.register(conn)
         try:
-            inst = create(client, node_id, run_after=True).json()
+            inst = created(client, node_id, run_after=True)
             assert inst["start_with_node"] is True
         finally:
             registry.unregister(node_id)
@@ -223,12 +284,38 @@ class TestAgentFailure:
         conn = FakeAgent(node_id, ok=False, error="the first run produced no server.properties")
         registry.register(conn)
         try:
-            r = create(client, node_id)
-            assert r.status_code == 502
-            assert "server.properties" in r.json()["detail"]
+            assert create(client, node_id).status_code == 202
+            settle()
             assert client.get(f"/api/nodes/{node_id}/instances").json() == []
         finally:
             registry.unregister(node_id)
+
+    def test_the_failure_is_reported_on_the_node_event_stream(
+        self, client, rooted, provider, node_id
+    ):
+        """The request is long gone, so this is how the reason reaches anyone."""
+        conn = FakeAgent(node_id, ok=False, error="exited immediately: boom")
+        registry.register(conn)
+        seen: list = []
+        try:
+            with registry._subscription(node_id, seen.append):
+                assert create(client, node_id).status_code == 202
+                settle()
+        finally:
+            registry.unregister(node_id)
+        done = [e for e in seen if e.action == Action.ev_provision_done.value]
+        assert len(done) == 1
+        assert done[0].data["ok"] is False
+        assert "boom" in done[0].data["error"]
+
+    def test_success_is_reported_too(self, client, rooted, agent, provider):
+        seen: list = []
+        with registry._subscription(rooted, seen.append):
+            assert create(client, rooted).status_code == 202
+            settle()
+        done = [e for e in seen if e.action == Action.ev_provision_done.value]
+        assert len(done) == 1
+        assert done[0].data == {"ok": True, "name": "survival", "error": None}
 
 
 class TestDeclaredRootsAreConfined:

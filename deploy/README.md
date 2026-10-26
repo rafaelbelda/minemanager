@@ -61,9 +61,17 @@ sudo systemctl enable --now minemanager-agent
 
 Once the node shows online, delete the `MM_ENROLL_TOKEN` line.
 
-If your servers do not live under `/srv/minecraft`, add their directory to
-`ReadWritePaths=` in `/etc/systemd/system/minemanager-agent.service`. The unit
-runs with `ProtectSystem=strict`, so anything not listed is read-only.
+If your servers do not live under `/srv/minecraft`, set `MM_ROOT_DIR` to the
+directory they are in and add that directory to `ReadWritePaths=` in
+`/etc/systemd/system/minemanager-agent.service`. The unit runs with
+`ProtectSystem=strict`, so anything not listed is read-only.
+
+`MM_ROOT_DIR` is also the agent's own boundary: every instance on the node must
+sit inside it, and the agent refuses file, power and console commands for one
+that does not. On a node whose servers are spread across several directories,
+point it at a parent that covers them all, or move them first — the hub logs
+which instances a root leaves out when the agent connects, and the UI marks
+them.
 
 ## Check
 

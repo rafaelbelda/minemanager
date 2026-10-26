@@ -45,9 +45,8 @@ def is_stranded(node_root: str | None, instance_root: str) -> bool:
     """Whether the agent will refuse every command for this instance.
 
     The agent gates each instance-scoped command on the same containment check,
-    so an instance declared before its node gained a root — or outside the root
-    it gained — stops answering entirely. Reported so the UI can say that,
-    instead of the operator meeting it as "path rejected" on every button.
+    so an instance outside its node's root stops answering entirely. Reported
+    so the UI can say so rather than failing one button at a time.
     """
     try:
         check_under(node_root, instance_root)

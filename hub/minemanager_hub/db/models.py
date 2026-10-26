@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -58,9 +58,8 @@ class Node(Base):
     agent_version: Mapped[str] = mapped_column(String(32), default="")
 
     # The directory this node's servers live under, reported by the agent at
-    # every handshake. The agent owns it; the hub only mirrors it so the UI can
-    # show it and routes can reject an instance root outside it. NULL means the
-    # agent has no root configured, which disables provisioning for this node.
+    # every handshake and mirrored here for the UI and the root checks. The
+    # agent owns it. NULL = none configured, which disables provisioning.
     root_dir: Mapped[str | None] = mapped_column(String(1024), default=None)
 
     # The agent process we last completed a handshake with. Persisted, not held
@@ -81,6 +80,14 @@ class Instance(Base):
     """A server or proxy living on a node."""
 
     __tablename__ = "instances"
+
+    # A name identifies a directory (the node root joined with it), so two
+    # instances sharing one on a node would share a directory.
+    #
+    # A named Index, not a UniqueConstraint: migration v3 rebuilds this table
+    # from the metadata below, and an inline constraint would come back as an
+    # anonymous sqlite_autoindex that v5 cannot recognise.
+    __table_args__ = (Index("uq_instance_node_name", "node_id", "name", unique=True),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"))

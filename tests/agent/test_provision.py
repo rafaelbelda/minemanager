@@ -48,9 +48,13 @@ class FakeSupervisor:
         self.provisioned: list[str] = []
         # What the real supervisor would have mirrored from the tmux pane.
         self.pane: list[str] = ["Error: LinkageError", "UnsupportedClassVersionError"]
+        self.forgotten: list[str] = []
 
     async def pty_tail(self, instance_id: str) -> list[str]:
         return self.pane
+
+    def forget(self, instance_id: str) -> None:
+        self.forgotten.append(instance_id)
 
     def session_name(self, instance_id: str) -> str:
         return f"mm-{instance_id}"
@@ -327,3 +331,17 @@ class TestFailureCleanup:
         assert result["started"] is False
         assert "no tmux" in result["start_error"]
         assert (node_root / "survival" / "paper.jar").exists()
+
+
+class TestBookkeeping:
+    async def test_a_failed_creation_is_forgotten(self, node_root, stub_tmux):
+        """The hub un-declares it, so the agent must not keep reporting it."""
+        sup = FakeSupervisor(node_root, behaviour="dies")
+        with pytest.raises(provision.ProvisionError):
+            await run(sup, stub_tmux, spec_for(node_root))
+        assert sup.forgotten == ["i1"]
+
+    async def test_a_successful_creation_is_kept(self, node_root, stub_tmux):
+        sup = FakeSupervisor(node_root)
+        await run(sup, stub_tmux, spec_for(node_root))
+        assert sup.forgotten == []

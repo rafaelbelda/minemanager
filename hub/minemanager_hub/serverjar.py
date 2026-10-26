@@ -115,19 +115,37 @@ CANNOT_RESOLVE_DETAIL = (
 
 
 # --- New servers -----------------------------------------------------------
-#: The jar a freshly provisioned server of each type is installed as.
-JAR_FOR_TYPE = {"paper": "paper.jar", "vanilla": "server.jar", "velocity": "velocity.jar"}
+#: Per software: the filename its jar is installed as, and whether the launch
+#: line takes ``nogui`` (Velocity is a proxy; it does not). No fallback --
+#: guessing a jar name is what this module exists to refuse.
+_LAUNCH = {
+    "paper": ("paper.jar", True),
+    "vanilla": ("server.jar", True),
+    "velocity": ("velocity.jar", False),
+}
 
-#: Velocity is a proxy and takes no ``nogui``.
-_GUI_FLAG = {"paper": " nogui", "vanilla": " nogui", "velocity": ""}
+
+class UnsupportedSoftware(KeyError):
+    """No launch convention for this software."""
+
+
+def _launch_for(software: str) -> tuple[str, bool]:
+    try:
+        return _LAUNCH[software]
+    except KeyError:
+        raise UnsupportedSoftware(
+            f"no launch convention for software {software!r}; supported: "
+            f"{', '.join(sorted(_LAUNCH))}"
+        ) from None
 
 
 def jar_for_type(software: str) -> str:
     """Install filename for a new server of this type."""
-    return JAR_FOR_TYPE.get(software, "server.jar")
+    return _launch_for(software)[0]
 
 
 def build_start_command(software: str, memory: str | None = None) -> str:
     """The launch line a new server starts with. Editable afterwards in Settings."""
+    jar, nogui = _launch_for(software)
     xmx = f"-Xmx{memory.strip()} " if memory and memory.strip() else ""
-    return f"java {xmx}-jar {jar_for_type(software)}{_GUI_FLAG.get(software, ' nogui')}"
+    return f"java {xmx}-jar {jar}{' nogui' if nogui else ''}"

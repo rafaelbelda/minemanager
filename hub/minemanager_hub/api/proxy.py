@@ -12,6 +12,7 @@ field breaks here, at the call site, instead of on the agent.
 from __future__ import annotations
 
 from fastapi import HTTPException
+from pydantic import BaseModel
 
 from minemanager_hub.agents.registry import AgentConnection, CommandTimeout, registry
 from minemanager_hub.db.models import Instance
@@ -51,12 +52,16 @@ def agent_and_spec(instance_id: str) -> tuple[AgentConnection, InstanceSpec]:
 async def call(
     conn: AgentConnection,
     action: str,
-    payload: InstanceCommand,
+    payload: BaseModel,
     *,
     instance_id: str | None = None,
     timeout: float = 30.0,
 ) -> dict:
-    """Send a validated payload to an agent and unwrap its response."""
+    """Send a validated payload to an agent and unwrap its response.
+
+    ``BaseModel``, not :class:`InstanceCommand`: the updater's and the
+    provisioner's payloads carry an instance without being one.
+    """
     try:
         resp = await conn.call(
             action,

@@ -64,6 +64,27 @@ _JAVA_HOME = Field(
 # and paths that would silently mangle the launch line.
 _JAVA_HOME_FORBIDDEN = set(";&|$`<>\n\r\t\"'\\")
 
+# ``-Xmx`` takes a whole number and a unit. A bare number means *bytes* to the
+# JVM and a fractional one is refused outright, so both are rejected here
+# rather than at the server's first launch.
+_MEMORY_RE = re.compile(r"^\d+[KMGkmg]$")
+
+_MEMORY = Field(
+    default="4G",
+    examples=["4G", "6144M"],
+    description="Heap ceiling for the composed start command (-Xmx). A whole "
+                "number and a unit. Ignored when start_command is given.",
+)
+
+
+def _clean_memory(value: Optional[str]) -> Optional[str]:
+    if value is None or not value.strip():
+        return None
+    value = value.strip()
+    if not _MEMORY_RE.match(value):
+        raise ValueError("memory must be a whole number with a unit, such as 4G or 6144M")
+    return value
+
 
 # Fields backed by NOT NULL columns. A PATCH carrying an explicit null for one
 # of these is a 422, not a 500 from the ORM flush.
@@ -97,18 +118,35 @@ def _clean_java_home(value: Optional[str]) -> Optional[str]:
 
 
 class InstanceCreate(BaseModel):
+    """Declare an instance that already exists on a node."""
+
     name: str
     type: InstanceType
     root_dir: str
-    start_command: str
+    # Omitted: the hub composes it from ``type`` and ``memory`` (see
+    # ``serverjar``), as it does for a server it creates itself.
+    start_command: Optional[str] = None
+    memory: Optional[str] = _MEMORY
     jar_path: Optional[str] = _JAR_PATH
     java_home: Optional[str] = _JAVA_HOME
     restart_policy: RestartPolicy = RestartPolicy.on_crash
 
-    @field_validator("name", "root_dir", "start_command")
+    @field_validator("name", "root_dir")
     @classmethod
     def _check_required(cls, value: str) -> str:
         return _require_value(value)
+
+    @field_validator("start_command")
+    @classmethod
+    def _check_start_command(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None            # the hub builds it
+        return value.strip()
+
+    @field_validator("memory")
+    @classmethod
+    def _check_memory(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_memory(value)
 
     @field_validator("java_home")
     @classmethod
@@ -159,10 +197,9 @@ class InstanceOut(BaseModel):
     restart_policy: str
     version: Optional[str] = None    # installed server version (updater / detector)
     build: Optional[str] = None      # installed build, when applicable
-    # This instance's root is not under its node's root, so the agent refuses
-    # every command for it. Set when a node gained an MM_ROOT_DIR that does not
-    # cover a server declared before it; surfaced rather than hidden, because
-    # the only other symptom is every action failing with "path rejected".
+    # Root not under the node's root, so the agent refuses every command for
+    # this instance. Arises when a node gains an MM_ROOT_DIR that does not
+    # cover a server declared before it.
     outside_node_root: bool = False
 
 
@@ -197,17 +234,10 @@ class UpdateRequest(BaseModel):
 
 
 # --- New servers -----------------------------------------------------------
-# A new server's directory is the node root joined with its name, so the name is
-# a path component and is checked like one. Letters, digits and -_. only, and it
-# must start with a letter or digit: that rejects "..", separators, NUL, leading
-# dots and anything a shell would read specially, without enumerating them.
+# The name is a path component (the node root joined with it), so it is checked
+# like one: letters, digits and -_. only, starting with a letter or digit. That
+# rejects "..", separators, NUL and shell metacharacters without listing them.
 _SERVER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
-
-# ``-Xmx`` takes a whole number and a unit. A bare number is *bytes* to the JVM
-# ("2048" is 2 KB and refuses to launch) and a fractional one is rejected
-# outright, so neither is accepted here: both would produce a declared server
-# that cannot start, discovered only on its first run.
-_MEMORY_RE = re.compile(r"^\d+[KMGkmg]$")
 
 
 class ServerCreate(BaseModel):
@@ -217,7 +247,7 @@ class ServerCreate(BaseModel):
     type: InstanceType
     version: str
     build: Optional[str] = None      # required only for software that has builds
-    memory: Optional[str] = "4G"
+    memory: Optional[str] = _MEMORY
     restart_policy: RestartPolicy = RestartPolicy.on_crash
     accept_eula: bool = False
     run_after: bool = False
@@ -236,21 +266,12 @@ class ServerCreate(BaseModel):
     @field_validator("memory")
     @classmethod
     def _check_memory(cls, value: Optional[str]) -> Optional[str]:
-        if value is None or not value.strip():
-            return None
-        value = value.strip()
-        if not _MEMORY_RE.match(value):
-            raise ValueError(
-                "memory must be a whole number with a unit, such as 4G or 6144M"
-            )
-        return value
+        return _clean_memory(value)
 
     @model_validator(mode="after")
     def _check_eula(self) -> "ServerCreate":
-        # Refused here rather than on the agent: the agent refuses it too, but
-        # by then the hub has resolved a download and declared the instance, so
-        # a missing acceptance would surface as an agent error instead of a bad
-        # request. Velocity is not Mojang's, and is never asked.
+        # Refused here as well as on the agent: by the time the agent sees it a
+        # download has been resolved and the instance declared.
         if self.type in EULA_TYPES and not self.accept_eula:
             raise ValueError(
                 f"the Minecraft EULA must be accepted to create a {self.type.value} "

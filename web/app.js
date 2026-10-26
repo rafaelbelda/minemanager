@@ -57,6 +57,9 @@ const state = {
   console: new Map(),     // instanceId -> line[]
   consoleLoaded: new Set(), // instanceIds we've backfilled history for
   consoleFailed: new Set(), // instanceIds whose history backfill failed
+  // Instances the hub is still building: 202 received, no provision.done yet.
+  // Live-only, like runState; a reload loses it.
+  provisioning: new Set(),
   sel: { type: 'hub' },
   tab: 'console',
   filter: '',
@@ -254,6 +257,23 @@ function onNodeEvent(frame, nodeId) {
       pushConsole(id, detail ? `${st} · ${detail}` : st, 'sys');
       if (st === 'stopped' || st === 'crashed') pushConsole(id, '', 'sys');  // trailing gap
       if (st === 'running') maybeLoadConsole(id);
+      render();
+      break;
+    }
+    case 'provision.done': {
+      const id = frame.instance_id;
+      state.provisioning.delete(id);
+      const { ok, name, error } = frame.data || {};
+      if (ok) {
+        toast(`${name} created and initialised`, 'ok');
+        refreshNodes({ quiet: true });        // picks up version/build and the flag
+      } else {
+        // Un-declared now, so this is the last word on that id.
+        refreshNodes({ quiet: true }).then(() => {
+          if (state.sel.instId === id) selectNode(nodeId);
+        });
+        reportProvisionFailure(name, error);
+      }
       render();
       break;
     }
@@ -643,6 +663,7 @@ function renderInstance() {
     fill($('inst-crumbs'), el('a', { onclick: selectHub }, 'Hub'));
     ['console', 'files', 'version', 'settings'].forEach((t) => show($(`pane-${t}`), false));
     show($('inst-stranded'), false);
+    show($('inst-building'), false);
     return;
   }
   const node = nodeById(inst.node_id);
@@ -689,6 +710,7 @@ function renderInstance() {
   // Only once the first load resolves; before that, offline is not known.
   show($('inst-offline'), state.loaded && !live);
   renderStranded(inst);
+  renderBuilding(inst);
   show($('pane-console'), state.tab === 'console');
   show($('pane-files'), state.tab === 'files');
   show($('pane-version'), state.tab === 'version');
@@ -697,6 +719,38 @@ function renderInstance() {
   if (state.tab === 'console') renderConsole(inst, live);
   if (state.tab === 'files') renderFiles(inst, live);
   if (state.tab === 'version') renderVersion(inst, live);
+}
+
+/**
+ * Why a creation failed. The agent appends the server's last terminal output to
+ * its reason; a toast would mangle it, so anything multi-line gets a dialog.
+ */
+function reportProvisionFailure(name, detail) {
+  const [reason, ...output] = String(detail || 'the agent gave no reason').split('\n');
+  if (!output.length) {
+    toast(`Could not create ${name}: ${reason}`, 'error');
+    return;
+  }
+  dialog({
+    title: `Could not create ${name}`,
+    description: reason,
+    detail: output.join('\n').replace(/^--- last terminal output ---\n?/, ''),
+    confirmText: 'Close',
+    cancelText: null,
+  });
+}
+
+/** An instance the hub is still building, which otherwise reads as stopped. */
+function renderBuilding(inst) {
+  const banner = $('inst-building');
+  const building = state.provisioning.has(inst.id);
+  show(banner, building);
+  if (building) {
+    banner.textContent =
+      'Setting this server up: downloading the server jar, then running it once to '
+      + 'generate its configuration. Progress appears in the console below. This '
+      + 'takes a few minutes.';
+  }
 }
 
 /**
@@ -1697,25 +1751,16 @@ async function doUpdateVersion() {
   }
 }
 
-/* --- start-command helpers (jar + memory) -------------------------------- */
+/* --- memory helpers ------------------------------------------------------- */
 
-// Each server type is launched from a conventionally-named jar.
-const JAR_FOR_TYPE = { paper: 'paper.jar', vanilla: 'server.jar', velocity: 'velocity.jar' };
-const jarForType = (type) => JAR_FOR_TYPE[type] || 'server.jar';
+// The launch line is composed hub-side (serverjar.py) for both kinds of create;
+// this side only sends `type` and `memory`.
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
 
-/** Launch command for a new instance. Servers take `nogui`; Velocity does not. */
-function buildStartCommand(type, ram) {
-  const xmx = (ram || '').trim() ? `-Xmx${ram.trim()} ` : '';
-  const gui = type === 'velocity' ? '' : ' nogui';
-  return `java ${xmx}-jar ${jarForType(type)}${gui}`;
-}
-
 /**
  * Interpret a memory string ("6G", "6144M") as a GB number for the slider.
- * The unit is required: a bare number means bytes to the JVM, so reading it as
- * gigabytes here would move the slider to a value that cannot launch.
+ * The unit is required: a bare number means bytes to the JVM.
  */
 function ramToGB(val) {
   const m = String(val || '').trim().match(/^(\d+)\s*([gGmMkK])$/);
@@ -1811,12 +1856,11 @@ const RESTART_HINT = 'Stop and Kill always work, whatever this is set to.';
 /** Software governed by Mojang's EULA; a proxy holds no world and needs none. */
 const EULA_TYPES = ['paper', 'vanilla'];
 
-/**
- * `-Xmx` takes a whole number and a unit. A bare number is *bytes* to the JVM
- * and a fractional one is refused, so both would build a start command that
- * cannot launch. Mirrors the hub's rule, to complain next to the field.
- */
+/** Mirrors the hub's rule: `-Xmx` takes a whole number and a unit. */
 const MEMORY_RE = /^\d+[KMGkmg]$/;
+
+/** Mirrors the hub's rule, so a bad name is caught next to the field. */
+const SERVER_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
 /** Pair a memory text field with a 1-32 GB slider, both editing one value. */
 function attachRamSlider(ramEl, set) {
@@ -1854,7 +1898,8 @@ async function addInstance(node) {
       { name: 'type', label: 'Type', type: 'select', value: 'paper', options: TYPE_OPTIONS },
       { name: 'version', label: 'Version', type: 'select', options: [] },
       { name: 'build', label: 'Build', type: 'select', options: [] },
-      { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival', mono: true },
+      { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival',
+        mono: true, hint: 'Must already exist on the node, with the server in it.' },
       { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true,
         hint: 'Drag the slider, or type an exact value such as 6144M.' },
       { name: 'restart_policy', label: 'If the server exits on its own', type: 'select',
@@ -1873,6 +1918,10 @@ async function addInstance(node) {
       }
       if (v.mode === 'existing') {
         return v.root_dir.trim() ? null : 'A root directory is required.';
+      }
+      if (!SERVER_NAME_RE.test(v.name.trim())) {
+        return 'A name may use letters, digits, dot, dash and underscore only, and '
+             + 'must start with a letter or digit.';
       }
       if (!hasRoot) return 'This node has no root directory configured, so it cannot host new servers.';
       if (!v.version) return 'Pick a version.';
@@ -1906,28 +1955,37 @@ async function addInstance(node) {
         show(target, isNew);
       };
 
-      const loadBuilds = async (software, version) => {
+      // Two catalog fetches can be in flight after a quick type switch; each
+      // takes a ticket and drops its result if a later one has started.
+      let fetchSeq = 0;
+
+      const loadBuilds = async (software, version, ticket) => {
         setOptions('build', [{ value: '', label: 'Loading…' }]);
         try {
           const res = await api.listSoftwareBuilds(software, version);
-          const builds = res.builds || [];
-          setOptions('build', builds.map((b) => ({ value: b.id, label: b.label })));
+          if (ticket !== fetchSeq) return;
+          setOptions('build', (res.builds || []).map((b) => ({ value: b.id, label: b.label })));
         } catch {
-          setOptions('build', [{ value: '', label: 'Could not load builds' }]);
+          if (ticket === fetchSeq) {
+            setOptions('build', [{ value: '', label: 'Could not load builds' }]);
+          }
         }
       };
 
       const loadVersions = async (software) => {
+        const ticket = ++fetchSeq;
         setOptions('version', [{ value: '', label: 'Loading…' }]);
         setOptions('build', []);
         try {
           const res = await api.listSoftwareVersions(software);
+          if (ticket !== fetchSeq) return;
           const versions = res.versions || [];
           hasBuilds = !!res.has_builds;
           setOptions('version', versions.map((v) => ({ value: v.id, label: v.label })));
           applyMode();
-          if (hasBuilds && versions.length) await loadBuilds(software, versions[0].id);
+          if (hasBuilds && versions.length) await loadBuilds(software, versions[0].id, ticket);
         } catch (err) {
+          if (ticket !== fetchSeq) return;
           setOptions('version', [{ value: '', label: 'Could not load versions' }]);
           toast(describe(err), 'error');
         }
@@ -1939,7 +1997,7 @@ async function addInstance(node) {
         loadVersions(get('type'));
       });
       input('version').addEventListener('change', () => {
-        if (hasBuilds) loadBuilds(get('type'), get('version'));
+        if (hasBuilds) loadBuilds(get('type'), get('version'), fetchSeq);
       });
 
       showTarget();
@@ -1966,27 +2024,17 @@ async function addInstance(node) {
           name,
           type: values.type,
           root_dir: values.root_dir.trim(),
-          start_command: buildStartCommand(values.type, values.ram),
+          memory: values.ram,
           restart_policy: values.restart_policy,
         });
+    // 202: the row is declared and the build continues hub-side. The outcome
+    // arrives as provision.done; until then the console carries the first run.
+    if (values.mode === 'new') state.provisioning.add(created.id);
     await refreshNodes({ quiet: true });
     selectInstance(node.id, created.id);
-    toast(values.mode === 'new' ? `${created.name} created and initialised` : `${created.name} created`, 'ok');
+    toast(values.mode === 'new' ? `Setting ${created.name} up…` : `${created.name} created`, 'ok');
   } catch (err) {
-    // A failed creation leaves no instance, so its console is the only account
-    // of why and it travels in the error. Too long for a toast that fades.
-    const [reason, ...output] = String(err?.detail || '').split('\n');
-    if (output.length) {
-      await dialog({
-        title: `Could not create ${name}`,
-        description: reason,
-        detail: output.join('\n').replace(/^--- last terminal output ---\n?/, ''),
-        confirmText: 'Close',
-        cancelText: null,
-      });
-    } else {
-      toast(describe(err), 'error');
-    }
+    toast(describe(err), 'error');
   }
 }
 

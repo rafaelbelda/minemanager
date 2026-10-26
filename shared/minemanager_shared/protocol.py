@@ -63,10 +63,9 @@ class InstanceType(str, Enum):
     velocity = "velocity"
 
 
-#: Software governed by Mojang's EULA, and so the software whose creation needs
-#: an explicit acceptance and gets an ``eula.txt``. Velocity is a proxy and
-#: holds no world. Shared so the hub rejects the request and the agent rejects
-#: the command from the same list, and so the UI can ask only when it applies.
+#: Software governed by Mojang's EULA: creation needs an explicit acceptance
+#: and writes an ``eula.txt``. Velocity is a proxy and holds no world. Shared
+#: so the hub, the agent and the UI all read one list.
 EULA_TYPES = frozenset({InstanceType.paper, InstanceType.vanilla})
 
 
@@ -141,6 +140,10 @@ class Action(str, Enum):
     ev_state_changed = "state.changed"
     ev_heartbeat = "heartbeat"
 
+    # ---- Event actions the hub itself raises ------------------------------
+    # Creation outruns its HTTP request, so the outcome comes back here.
+    ev_provision_done = "provision.done"
+
 
 # --------------------------------------------------------------------------- #
 # Frame envelopes
@@ -159,10 +162,9 @@ class Hello(BaseModel):
     hostname: str
     session_id: Optional[str] = None
     capabilities: list[str] = Field(default_factory=list)
-    # The agent's own instance root. Every instance on this node must live under
-    # it, and the agent enforces that against this local value rather than
-    # anything the hub sends. None when the node has no root configured, which
-    # disables provisioning for it.
+    # The agent's own instance root, which it enforces against this local value
+    # rather than anything the hub sends. None = none configured, which
+    # disables provisioning for the node.
     root_dir: Optional[str] = None
 
 
@@ -404,6 +406,19 @@ class StateChangedData(BaseModel):
 class HeartbeatData(BaseModel):
     uptime_s: float
     instances: dict[str, RunState] = Field(default_factory=dict)
+
+
+class ProvisionDoneData(BaseModel):
+    """Outcome of a creation, raised by the hub (not an agent).
+
+    The instance id is on the event envelope. ``ok`` false means it has been
+    un-declared, so this is the last thing said about that id; ``error`` is the
+    agent's reason, including the server's last terminal output.
+    """
+
+    ok: bool
+    name: str
+    error: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #

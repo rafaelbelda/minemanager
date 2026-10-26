@@ -10,15 +10,13 @@ which is what keeps the first run from generating a world; writing the accepted
 EULA first would let that same run carry straight on into world generation.
 Velocity has no such gate, so it is stopped once ``velocity.toml`` appears.
 
-Anything that fails leaves nothing behind: the session is killed, everything
-written into the directory is removed, and the directory itself goes too unless
-it was already there. The directory is required to be empty up front precisely
-so that "everything in it" is unambiguous.
+Anything that fails leaves nothing behind: the session is killed and the
+directory is emptied, and removed too unless it was already there. It has to be
+empty up front, which is what makes "everything in it is ours" true.
 
-A failure also carries the server's last terminal output in its message. The
-hub drops the declared instance when creation fails, so there is no console left
-to look at -- and for a launch that dies before its logger starts, a JVM version
-mismatch being the common case, the pane is the only record there ever was.
+A failure carries the server's last terminal output in its message, since the
+hub drops the declared instance and with it the console. For a launch that dies
+before its logger starts, the pane is the only record.
 """
 
 from __future__ import annotations
@@ -42,12 +40,10 @@ CONFIG_FILES = {
     "velocity": ("velocity.toml",),
 }
 
-#: Written for the platforms in ``EULA_TYPES``; see there for which, and why the
-#: list is shared with the hub rather than kept here.
+#: Written for the platforms in ``EULA_TYPES``.
 EULA_CONTENT = "eula=true\n"
 
-#: Lines of pane output attached to a failure. The interesting part of a JVM
-#: refusing to run is always the last few, and this has to fit in an HTTP error.
+#: Lines of pane output attached to a failure; it has to fit in an HTTP error.
 _ERROR_TAIL_LINES = 20
 
 FIRST_RUN_TIMEOUT_S = 240.0
@@ -97,14 +93,15 @@ async def create(
     existed = root.exists()
     if existed and not root.is_dir():
         raise ProvisionError(f"{root} exists and is not a directory")
-    # Empty is the precondition the cleanup path relies on: everything in the
-    # directory afterwards is something this flow put there.
+    # The precondition _clean_up relies on.
     if existed and any(root.iterdir()):
         raise ProvisionError(f"{root} already exists and is not empty")
 
     with sup.provisioning(spec.id):
         try:
-            root.mkdir(parents=True, exist_ok=True)
+            # No parents=True: the node root already exists and a name is one
+            # path component, so `root` is the only directory this makes.
+            root.mkdir(exist_ok=True)
             install = await updater.apply_update(
                 str(root), jar_name, download.model_dump(mode="json"), allow_create=True
             )
@@ -142,7 +139,9 @@ async def create(
 async def _generate_config(sup, spec: InstanceSpec, root: Path, kind: str) -> list[str]:
     """Run the jar once so it writes its initial configuration, then stop it."""
     expected = [root / name for name in CONFIG_FILES[kind]]
-    have_all = lambda: all(p.exists() for p in expected)  # noqa: E731
+
+    def have_all() -> bool:
+        return all(p.exists() for p in expected)
 
     result = await sup.start(spec)
     if result.get("launch_failed") and not have_all():
@@ -187,15 +186,13 @@ def _write_eula(root: Path, spec: InstanceSpec) -> bool:
 async def _clean_up(sup, spec: InstanceSpec, root: Path, *, remove: bool) -> None:
     """Leave no half-built server behind.
 
-    ``remove`` says whether the directory itself was ours to make. Its contents
-    are ours either way -- it was empty when this started -- and they always go:
-    leaving a jar, a ``server.properties`` and a half-generated world in a
-    directory the operator pre-created (to set ownership, say) would block every
-    retry on "already exists and is not empty", with no declared instance left
-    to delete it through.
+    ``remove`` says whether the directory itself was ours to make. The contents
+    are ours either way, since it was empty when this started, and always go:
+    left behind they would block every retry on "exists and is not empty".
     """
     with contextlib.suppress(Exception):
         await sup.kill(spec)
+    sup.forget(spec.id)       # the hub un-declares it; the id is finished
     if remove:
         shutil.rmtree(root, ignore_errors=True)
         return

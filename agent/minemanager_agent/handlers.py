@@ -176,8 +176,8 @@ async def handle(cmd: Command, sup: Supervisor) -> Response:
     except ValidationError as exc:
         return Response.failure(cmd.id, f"invalid payload for {cmd.action}: {_brief(exc)}")
 
-    # One gate for every instance-scoped command: the hub may only ever name a
-    # directory under this node's own root.
+    # One gate for every instance-scoped command: the hub may only name a
+    # directory under this node's root.
     spec = getattr(data, "instance", None)
     if spec is not None:
         try:

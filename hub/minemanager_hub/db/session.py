@@ -55,7 +55,7 @@ def _init() -> None:
 
 
 # Bump when a new migration is appended below.
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def _drop_columns(conn, table: str, drop: set[str]) -> None:
@@ -175,8 +175,60 @@ def _migrate_v4(conn) -> None:
         conn.execute(text("ALTER TABLE nodes ADD COLUMN root_dir VARCHAR(1024)"))
 
 
+def _dedupe_instance_names(engine: Engine) -> None:
+    """Make instance names unique per node, renaming the later duplicates.
+
+    Runs before the numbered migrations, not as one: ``_migrate_v3`` rebuilds
+    ``instances`` from the ORM metadata, which now carries the unique index, so
+    a database still holding duplicates would fail that rebuild. Idempotent.
+
+    Renamed rather than refused: the name is only a label (sessions and paths
+    key off the id and the root), and a hub that will not boot leaves no UI to
+    fix it from.
+    """
+    with engine.begin() as conn:
+        if not inspect(conn).has_table("instances"):
+            return
+        rows = conn.execute(text(
+            "SELECT id, node_id, name FROM instances ORDER BY node_id, name, created_at, id"
+        )).all()
+        seen: set[tuple[str, str]] = set()
+        for inst_id, node_id, name in rows:
+            candidate, n = name, 1
+            while (node_id, candidate) in seen:
+                n += 1
+                candidate = f"{name}-{n}"
+            if candidate != name:
+                log.warning(
+                    "two instances on node %s were both called %r; renaming one to %r",
+                    node_id, name, candidate,
+                )
+                conn.execute(
+                    text("UPDATE instances SET name = :name WHERE id = :id"),
+                    {"name": candidate, "id": inst_id},
+                )
+            seen.add((node_id, candidate))
+
+
+def _migrate_v5(conn) -> None:
+    """One instance name per node, as a unique index.
+
+    Duplicates are already gone (:func:`_dedupe_instance_names`), and a
+    database upgraded through v3 already has the index from the rebuild --
+    hence ``IF NOT EXISTS``. An index and not a table constraint because SQLite
+    cannot add one of those to an existing table.
+    """
+    conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_instance_node_name "
+        "ON instances (node_id, name)"
+    ))
+
+
 #: (version, step). Appended to, never edited: an applied migration is history.
-_MIGRATIONS = [(1, _migrate_v1), (2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4)]
+_MIGRATIONS = [
+    (1, _migrate_v1), (2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4),
+    (5, _migrate_v5),
+]
 
 
 def _read_version(engine: Engine) -> int:
@@ -210,6 +262,8 @@ def _apply_schema(engine: Engine) -> None:
 
     current = _read_version(engine)
     pending = [(v, step) for v, step in _MIGRATIONS if v > current]
+    if pending:
+        _dedupe_instance_names(engine)   # must precede v3's rebuild; see there
     for version, step in pending:
         # One transaction per step, so a failure leaves the database as it was.
         # Foreign keys stay enforced: no table references `instances`, and its

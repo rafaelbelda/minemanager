@@ -10,7 +10,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
-from minemanager_hub import roots
+from minemanager_hub import roots, serverjar
 from minemanager_hub.agents.registry import registry
 from minemanager_hub.api.schemas import (
     EnrollmentOut,
@@ -143,7 +143,9 @@ def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
             name=body.name,
             type=body.type.value,
             root_dir=root_dir,
-            start_command=body.start_command,
+            start_command=body.start_command or serverjar.build_start_command(
+                body.type.value, body.memory
+            ),
             jar_path=body.jar_path or None,
             java_home=body.java_home or None,
             restart_policy=body.restart_policy.value,

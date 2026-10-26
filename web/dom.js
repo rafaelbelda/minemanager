@@ -109,9 +109,8 @@ function optionNodes(options, selected) {
 }
 
 /**
- * `detail` is preformatted output the reader has to see verbatim (a server's
- * last terminal lines, say); `cancelText: null` drops the Cancel button, for a
- * dialog that only reports something.
+ * `detail` is preformatted output shown verbatim (a server's last terminal
+ * lines, say); `cancelText: null` drops Cancel, for a dialog that only reports.
  */
 export function dialog({
   title, description, detail, fields = [], confirmText = 'OK', cancelText = 'Cancel',
@@ -179,7 +178,7 @@ export function dialog({
 
     const error = el('div.modal-error', { role: 'alert', hidden: true });
     body.append(error);
-    // A complaint is about the values as they were; touching anything clears it.
+    // The complaint is about the values as they were; any edit clears it.
     const clearError = () => { error.hidden = true; error.textContent = ''; };
     body.addEventListener('input', clearError);
     body.addEventListener('change', clearError);
