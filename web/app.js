@@ -642,6 +642,7 @@ function renderInstance() {
     $('inst-meta').textContent = '';
     fill($('inst-crumbs'), el('a', { onclick: selectHub }, 'Hub'));
     ['console', 'files', 'version', 'settings'].forEach((t) => show($(`pane-${t}`), false));
+    show($('inst-stranded'), false);
     return;
   }
   const node = nodeById(inst.node_id);
@@ -687,6 +688,7 @@ function renderInstance() {
   });
   // Only once the first load resolves; before that, offline is not known.
   show($('inst-offline'), state.loaded && !live);
+  renderStranded(inst);
   show($('pane-console'), state.tab === 'console');
   show($('pane-files'), state.tab === 'files');
   show($('pane-version'), state.tab === 'version');
@@ -695,6 +697,20 @@ function renderInstance() {
   if (state.tab === 'console') renderConsole(inst, live);
   if (state.tab === 'files') renderFiles(inst, live);
   if (state.tab === 'version') renderVersion(inst, live);
+}
+
+/**
+ * An instance the node's root does not cover. The agent refuses every command
+ * for it, so without this the only symptom is each button failing in turn.
+ */
+function renderStranded(inst) {
+  const banner = $('inst-stranded');
+  show(banner, !!inst.outside_node_root);
+  if (!inst.outside_node_root) return;
+  banner.textContent =
+    `This server's directory is outside its node's root directory, so the agent `
+    + `refuses every action for it. Move it under the node's root and change `
+    + `"Root directory" in Settings to match, or widen MM_ROOT_DIR on the agent.`;
 }
 
 /**
@@ -1696,12 +1712,16 @@ function buildStartCommand(type, ram) {
   return `java ${xmx}-jar ${jarForType(type)}${gui}`;
 }
 
-/** Interpret a memory string ("6G", "6144M", "8") as a GB number for the slider. */
+/**
+ * Interpret a memory string ("6G", "6144M") as a GB number for the slider.
+ * The unit is required: a bare number means bytes to the JVM, so reading it as
+ * gigabytes here would move the slider to a value that cannot launch.
+ */
 function ramToGB(val) {
-  const m = String(val || '').trim().match(/^(\d+(?:\.\d+)?)\s*([gGmMkK])?$/);
+  const m = String(val || '').trim().match(/^(\d+)\s*([gGmMkK])$/);
   if (!m) return null;
   let n = parseFloat(m[1]);
-  const unit = (m[2] || 'G').toUpperCase();
+  const unit = m[2].toUpperCase();
   if (unit === 'M') n /= 1024;
   else if (unit === 'K') n /= 1024 * 1024;
   return n;
@@ -1774,64 +1794,199 @@ async function deleteNode(node) {
   }
 }
 
+const TYPE_OPTIONS = [
+  { value: 'paper', label: 'Paper' },
+  { value: 'vanilla', label: 'Vanilla' },
+  { value: 'velocity', label: 'Velocity' },
+];
+
+const RESTART_OPTIONS = [
+  { value: 'never', label: 'Leave it down' },
+  { value: 'on_crash', label: 'Restart it after a crash' },
+  { value: 'always', label: 'Always restart it' },
+];
+
+const RESTART_HINT = 'Stop and Kill always work, whatever this is set to.';
+
+/** Software governed by Mojang's EULA; a proxy holds no world and needs none. */
+const EULA_TYPES = ['paper', 'vanilla'];
+
+/**
+ * `-Xmx` takes a whole number and a unit. A bare number is *bytes* to the JVM
+ * and a fractional one is refused, so both would build a start command that
+ * cannot launch. Mirrors the hub's rule, to complain next to the field.
+ */
+const MEMORY_RE = /^\d+[KMGkmg]$/;
+
+/** Pair a memory text field with a 1-32 GB slider, both editing one value. */
+function attachRamSlider(ramEl, set) {
+  ramEl.classList.add('ram-value');
+  const slider = el('input.ram-slider', { type: 'range', min: '1', max: '32', step: '1' });
+  const row = el('div.ram-row');
+  ramEl.parentNode.insertBefore(row, ramEl);
+  row.append(slider, ramEl);
+
+  const syncFromText = () => {
+    const gb = ramToGB(ramEl.value);
+    if (gb != null) slider.value = String(clamp(Math.round(gb), 1, 32));
+  };
+  syncFromText();
+  slider.addEventListener('input', () => set('ram', `${slider.value}G`));
+  ramEl.addEventListener('input', syncFromText);
+}
+
+/**
+ * Add an instance: either provision a new server or declare one already on the
+ * node. One dialog, one pill selector, the fields of the chosen mode shown.
+ */
 async function addInstance(node) {
-  // Type and memory only; the launch command is built from them and can be
-  // edited later in Settings.
+  const hasRoot = !!node.root_dir;
   const values = await dialog({
     title: `Add instance on ${node.name}`,
-    description: 'The directory must already exist on the node.',
+    confirmText: 'Create',
     fields: [
-      { name: 'name', label: 'Name', placeholder: 'survival' },
-      { name: 'type', label: 'Type', type: 'select', value: 'paper',
-        options: [{ value: 'paper', label: 'Paper' }, { value: 'vanilla', label: 'Vanilla' },
-                  { value: 'velocity', label: 'Velocity' }] },
-      { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival', mono: true },
-      { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true, hint: 'Drag the slider, or type an exact value such as 6144M.' },
-      { name: 'restart_policy', label: 'If the server exits on its own', type: 'select', value: 'on_crash',
+      { name: 'mode', label: 'Mode', type: 'segmented', value: hasRoot ? 'new' : 'existing',
         options: [
-          { value: 'never', label: 'Leave it down' },
-          { value: 'on_crash', label: 'Restart it after a crash' },
-          { value: 'always', label: 'Always restart it' },
-        ],
-        hint: 'Stop and Kill always work, whatever this is set to.' },
+          { value: 'new', label: 'Create new server' },
+          { value: 'existing', label: 'Add existing server' },
+        ] },
+      { name: 'name', label: 'Name', placeholder: 'survival' },
+      { name: 'type', label: 'Type', type: 'select', value: 'paper', options: TYPE_OPTIONS },
+      { name: 'version', label: 'Version', type: 'select', options: [] },
+      { name: 'build', label: 'Build', type: 'select', options: [] },
+      { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival', mono: true },
+      { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true,
+        hint: 'Drag the slider, or type an exact value such as 6144M.' },
+      { name: 'restart_policy', label: 'If the server exits on its own', type: 'select',
+        value: 'on_crash', options: RESTART_OPTIONS, hint: RESTART_HINT },
+      { name: 'accept_eula', label: 'I accept the Minecraft EULA', type: 'toggle', value: false,
+        hint: 'Required for a Minecraft server. Writes eula=true into the new '
+            + 'server directory.' },
+      { name: 'run_after', label: 'Run server immediately', type: 'toggle', value: false,
+        hint: 'Off by default: the server is left with its generated configuration, '
+            + 'before any world is created.' },
     ],
-    confirmText: 'Create instance',
-    onMount: ({ set, input }) => {
-      // Slider (1-32 GB) and text field edit the same value, kept in sync.
-      const ramEl = input('ram');
-      ramEl.classList.add('ram-value');
-      const slider = el('input.ram-slider', { type: 'range', min: '1', max: '32', step: '1' });
-      const row = el('div.ram-row');
-      ramEl.parentNode.insertBefore(row, ramEl);
-      row.append(slider, ramEl);
+    validate: (v) => {
+      if (!v.name.trim()) return 'A name is required.';
+      if (!MEMORY_RE.test(v.ram.trim())) {
+        return 'Max memory must be a whole number with a unit, such as 4G or 6144M.';
+      }
+      if (v.mode === 'existing') {
+        return v.root_dir.trim() ? null : 'A root directory is required.';
+      }
+      if (!hasRoot) return 'This node has no root directory configured, so it cannot host new servers.';
+      if (!v.version) return 'Pick a version.';
+      if (EULA_TYPES.includes(v.type) && !v.accept_eula) {
+        return 'The Minecraft EULA must be accepted before a server can be created.';
+      }
+      return null;
+    },
+    onMount: ({ get, set, setOptions, input, row }) => {
+      attachRamSlider(input('ram'), set);
 
-      const syncSliderFromText = () => {
-        const gb = ramToGB(ramEl.value);
-        if (gb != null) slider.value = String(clamp(Math.round(gb), 1, 32));
+      const target = el('div.field-note');
+      row('name').append(target);
+      const showTarget = () => {
+        const name = get('name').trim();
+        target.textContent = hasRoot && name
+          ? `Created in ${node.root_dir}/${name}`
+          : hasRoot ? `Created under ${node.root_dir}` : '';
       };
-      syncSliderFromText();
-      slider.addEventListener('input', () => set('ram', `${slider.value}G`));
-      ramEl.addEventListener('input', syncSliderFromText);
+      input('name').addEventListener('input', showTarget);
+
+      let hasBuilds = false;
+      const newOnly = ['version', 'build', 'accept_eula', 'run_after'];
+
+      const applyMode = () => {
+        const isNew = get('mode') === 'new';
+        for (const f of newOnly) show(row(f), isNew);
+        show(row('build'), isNew && hasBuilds);
+        show(row('accept_eula'), isNew && EULA_TYPES.includes(get('type')));
+        show(row('root_dir'), !isNew);
+        show(target, isNew);
+      };
+
+      const loadBuilds = async (software, version) => {
+        setOptions('build', [{ value: '', label: 'Loading…' }]);
+        try {
+          const res = await api.listSoftwareBuilds(software, version);
+          const builds = res.builds || [];
+          setOptions('build', builds.map((b) => ({ value: b.id, label: b.label })));
+        } catch {
+          setOptions('build', [{ value: '', label: 'Could not load builds' }]);
+        }
+      };
+
+      const loadVersions = async (software) => {
+        setOptions('version', [{ value: '', label: 'Loading…' }]);
+        setOptions('build', []);
+        try {
+          const res = await api.listSoftwareVersions(software);
+          const versions = res.versions || [];
+          hasBuilds = !!res.has_builds;
+          setOptions('version', versions.map((v) => ({ value: v.id, label: v.label })));
+          applyMode();
+          if (hasBuilds && versions.length) await loadBuilds(software, versions[0].id);
+        } catch (err) {
+          setOptions('version', [{ value: '', label: 'Could not load versions' }]);
+          toast(describe(err), 'error');
+        }
+      };
+
+      input('mode').addEventListener('change', applyMode);
+      input('type').addEventListener('change', () => {
+        applyMode();                 // the EULA question is per type; answer now
+        loadVersions(get('type'));
+      });
+      input('version').addEventListener('change', () => {
+        if (hasBuilds) loadBuilds(get('type'), get('version'));
+      });
+
+      showTarget();
+      applyMode();
+      if (hasRoot) loadVersions(get('type'));
     },
   });
   if (!values) return;
-  if (!values.name.trim() || !values.root_dir.trim()) {
-    toast('Name and root directory are both required.', 'error');
-    return;
-  }
+
+  const name = values.name.trim();
   try {
-    const created = await api.createInstance(node.id, {
-      name: values.name.trim(),
-      type: values.type,
-      root_dir: values.root_dir.trim(),
-      start_command: buildStartCommand(values.type, values.ram),
-      restart_policy: values.restart_policy,
-    });
+    const created = values.mode === 'new'
+      ? await api.createServer(node.id, {
+          name,
+          type: values.type,
+          version: values.version,
+          build: values.build || null,
+          memory: values.ram,
+          restart_policy: values.restart_policy,
+          accept_eula: values.accept_eula,
+          run_after: values.run_after,
+        })
+      : await api.createInstance(node.id, {
+          name,
+          type: values.type,
+          root_dir: values.root_dir.trim(),
+          start_command: buildStartCommand(values.type, values.ram),
+          restart_policy: values.restart_policy,
+        });
     await refreshNodes({ quiet: true });
     selectInstance(node.id, created.id);
-    toast(`${created.name} created`, 'ok');
+    toast(values.mode === 'new' ? `${created.name} created and initialised` : `${created.name} created`, 'ok');
   } catch (err) {
-    toast(describe(err), 'error');
+    // A failed creation leaves no instance, so its console is the only account
+    // of why and it travels in the error. Too long for a toast that fades.
+    const [reason, ...output] = String(err?.detail || '').split('\n');
+    if (output.length) {
+      await dialog({
+        title: `Could not create ${name}`,
+        description: reason,
+        detail: output.join('\n').replace(/^--- last terminal output ---\n?/, ''),
+        confirmText: 'Close',
+        cancelText: null,
+      });
+    } else {
+      toast(describe(err), 'error');
+    }
   }
 }
 

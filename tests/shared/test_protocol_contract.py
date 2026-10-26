@@ -35,6 +35,7 @@ class FakeSupervisor:
     """Enough surface for the handlers under test; no tmux involved."""
 
     identity = None
+    node_root = None        # no node root configured: isolation is not enforced
 
     async def start(self, spec):
         return {"state": "starting"}

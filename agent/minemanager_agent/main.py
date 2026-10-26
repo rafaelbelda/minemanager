@@ -54,6 +54,7 @@ async def _warn_about_orphans() -> None:
 async def _amain() -> None:
     config = AgentConfig()
     config.ensure_dirs()
+    config.ensure_root()
     config.check_transport_security()   # exits on plaintext to a remote hub
     config.log_resolved()
     await _warn_about_orphans()

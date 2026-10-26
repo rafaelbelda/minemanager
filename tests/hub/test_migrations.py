@@ -94,6 +94,17 @@ class TestUpgradeFromV1:
         columns = {c["name"] for c in inspect(upgraded._engine).get_columns("nodes")}
         assert "agent_session_id" in columns
 
+    def test_the_node_root_column_is_added(self, upgraded):
+        columns = {c["name"] for c in inspect(upgraded._engine).get_columns("nodes")}
+        assert "root_dir" in columns
+
+    def test_the_node_root_starts_null_until_the_agent_reports_one(self, upgraded):
+        # Null means "no root configured", which leaves an upgraded node working
+        # exactly as before until its agent says otherwise.
+        with upgraded._engine.connect() as conn:
+            value = conn.execute(text("SELECT root_dir FROM nodes WHERE id='n1'")).scalar()
+        assert value is None
+
     def test_it_starts_null_so_the_first_handshake_restores(self, upgraded):
         # Null reads as "we have never seen this agent process", so an existing
         # node restores once on the first connect after the upgrade and not on

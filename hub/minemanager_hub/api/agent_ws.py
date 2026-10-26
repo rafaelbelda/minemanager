@@ -17,14 +17,16 @@ Flow per connection:
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from minemanager_hub import roots
 from minemanager_hub.agents.registry import AgentConnection, registry
 from minemanager_hub.api import reconcile
-from minemanager_hub.db.models import Node
+from minemanager_hub.db.models import Instance, Node
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import tokens
 from minemanager_shared.protocol import (
@@ -35,6 +37,8 @@ from minemanager_shared.protocol import (
     parse_frame,
 )
 from minemanager_shared.version import PROTOCOL_VERSION
+
+log = logging.getLogger("minemanager.hub")
 
 router = APIRouter()
 
@@ -67,6 +71,7 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
                 node.enroll_expires_at = None
                 node.agent_version = hello.agent_version
                 node.hostname = hello.hostname
+                node.root_dir = hello.root_dir
                 return node.id, credential, None
 
         # 2. Otherwise (or if the token was unusable) the stored identity.
@@ -75,6 +80,9 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
             if node and tokens.verify_token(hello.credential, node.credential_hash):
                 node.agent_version = hello.agent_version
                 node.hostname = hello.hostname or node.hostname
+                # Mirrored every handshake: the agent may be reconfigured, and
+                # the hub must never hold a root the agent no longer enforces.
+                node.root_dir = hello.root_dir
                 return node.id, None, None
             detail = f" ({enroll_error})" if enroll_error else ""
             return None, None, (
@@ -85,6 +93,34 @@ def _authenticate(hello: Hello) -> tuple[str | None, str | None, str | None]:
     if enroll_error:
         return None, None, enroll_error
     return None, None, "no enrollment token and no stored identity - set MM_ENROLL_TOKEN"
+
+
+def _warn_about_stranded_instances(node_id: str) -> None:
+    """Say which declared instances this node's root does not cover.
+
+    The agent refuses every instance-scoped command for a root outside its own,
+    so an operator who sets MM_ROOT_DIR on a node that already has servers
+    elsewhere silently loses power, console and files for them. The REST layer
+    reports it per instance (``InstanceOut.outside_node_root``); this is the
+    line in the journal at the moment it starts being true.
+    """
+    with session_scope() as db:
+        node = db.get(Node, node_id)
+        if node is None or not node.root_dir:
+            return                      # no root: nothing is enforced anywhere
+        node_root = node.root_dir
+        stranded = sorted(
+            i.name for i in db.query(Instance).filter(Instance.node_id == node_id)
+            if roots.is_stranded(node_root, i.root_dir)
+        )
+    if stranded:
+        log.warning(
+            "node %s reports root %s, which does not contain %s. The agent will refuse "
+            "every command for %s until each one's root directory is moved under %s or "
+            "MM_ROOT_DIR is widened.",
+            node_id, node_root, ", ".join(stranded),
+            "it" if len(stranded) == 1 else "them", node_root,
+        )
 
 
 def _claim_agent_session(node_id: str, session_id: str | None) -> bool:
@@ -136,6 +172,9 @@ async def agent_endpoint(ws: WebSocket) -> None:
     )
 
     restarted = _claim_agent_session(node_id, frame.session_id)
+    # After the root has been mirrored onto the node, so it reflects what this
+    # agent just said it will enforce.
+    _warn_about_stranded_instances(node_id)
 
     conn = AgentConnection(node_id=node_id, send=ws.send_json)
     registry.register(conn)

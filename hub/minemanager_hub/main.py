@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from minemanager_hub import __version__
-from minemanager_hub.api import agent_ws, control, nodes, transfers, versions
+from minemanager_hub.api import agent_ws, control, nodes, servers, transfers, versions
 from minemanager_hub.config import get_settings
 from minemanager_hub.db.session import init_db
 from minemanager_hub.providers.http import aclose as close_provider_http
@@ -120,6 +120,7 @@ app.include_router(agent_ws.router, prefix="/ws")
 app.include_router(nodes.router)
 app.include_router(control.router)
 app.include_router(versions.router)
+app.include_router(servers.router)
 app.include_router(transfers.router)
 
 

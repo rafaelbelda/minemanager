@@ -16,6 +16,7 @@ class StubSupervisor:
     """Records what it was asked to do; returns plausible payloads."""
 
     identity = None
+    node_root = None        # no node root configured: isolation is not enforced
 
     def __init__(self):
         self.calls = []

@@ -57,6 +57,12 @@ class Node(Base):
 
     agent_version: Mapped[str] = mapped_column(String(32), default="")
 
+    # The directory this node's servers live under, reported by the agent at
+    # every handshake. The agent owns it; the hub only mirrors it so the UI can
+    # show it and routes can reject an instance root outside it. NULL means the
+    # agent has no root configured, which disables provisioning for this node.
+    root_dir: Mapped[str | None] = mapped_column(String(1024), default=None)
+
     # The agent process we last completed a handshake with. Persisted, not held
     # in memory, so it survives a *hub* restart too: without that, restarting
     # the hub makes every agent redial and would look exactly like every node

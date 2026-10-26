@@ -17,6 +17,7 @@ import os
 import re
 import shlex
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -149,13 +150,16 @@ def launch_command(spec: InstanceSpec) -> str:
 
 
 class Supervisor:
-    def __init__(self, emit: EmitFn, pty_dir: Path | None = None):
+    def __init__(self, emit: EmitFn, pty_dir: Path | None = None,
+                 node_root: Path | None = None):
         self._emit = emit
         self._pty_dir = pty_dir
+        self.node_root = node_root        # every instance must live under this
         self._instances: dict[str, ManagedInstance] = {}
         self._monitor: asyncio.Task | None = None
         self._started_at = time.monotonic()
         self._updating: set[str] = set()  # instance ids with an update in progress
+        self._provisioning: set[str] = set()  # ids being created right now
         self._shutting_down = False       # set by shutdown_all; freezes restart policy
         self.identity = None              # set by the connection after handshake
                                           # (node_id, credential, http_base) for transfers
@@ -337,6 +341,19 @@ class Supervisor:
     def is_updating(self, instance_id: str) -> bool:
         return instance_id in self._updating
 
+    @contextmanager
+    def provisioning(self, instance_id: str):
+        """Hold an instance out of the restart policy while it is being created.
+
+        The configuration run ends with the server exiting by itself, which the
+        monitor would otherwise read as a launch failure and retry.
+        """
+        self._provisioning.add(instance_id)
+        try:
+            yield
+        finally:
+            self._provisioning.discard(instance_id)
+
     # -- console tailing -----------------------------------------------------
     def _ensure_tail(self, mi: ManagedInstance) -> None:
         if mi.tail_task and not mi.tail_task.done():
@@ -470,6 +487,19 @@ class Supervisor:
         lines = (ln.rstrip("\r") for ln in text.split("\n"))
         return [ln for ln in lines if ln.strip()][-_PTY_TAIL_LINES:]
 
+    async def pty_tail(self, instance_id: str) -> list[str]:
+        """The tail of an instance's raw pane, for a caller with no console.
+
+        :meth:`_replay_pty` pushes this onto the console, which is the right
+        place for a crash the hub will keep the instance for. A failed creation
+        is the case where there will be no instance: see
+        :mod:`minemanager_agent.provision`.
+        """
+        mi = self._instances.get(instance_id)
+        if mi is None:
+            return []
+        return await asyncio.to_thread(self._read_pty_tail, mi)
+
     async def _attach_pty_mirror(self, mi: ManagedInstance) -> None:
         """Mirror an adopted session, so a later crash is still explained.
 
@@ -508,8 +538,8 @@ class Supervisor:
     async def _check_one(self, mi: ManagedInstance) -> None:
         if self._shutting_down:
             return  # a shutdown is in progress: sessions vanishing is expected
-        if mi.spec.id in self._updating:
-            return  # never treat a mid-update instance as crashed
+        if mi.spec.id in self._updating or mi.spec.id in self._provisioning:
+            return  # an instance mid-update or mid-creation is not crashed
         alive = await tmux.has_session(mi.session)
         if alive:
             if not mi.ready:

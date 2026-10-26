@@ -12,4 +12,8 @@ __version__ = "0.1.1"
 # 2: InstanceSpec.auto_restart became restart_policy, a three-valued enum.
 #    Breaks silently if unchecked (an old agent falls back to the default), so
 #    the handshake's major check refuses the mismatch instead.
-PROTOCOL_VERSION = "2"
+#
+# 3: Hello.root_dir, and instance.create. The hub now relies on the agent to
+#    enforce node-root isolation, which an older agent does not do and the hub
+#    cannot detect, so the two must be upgraded together.
+PROTOCOL_VERSION = "3"

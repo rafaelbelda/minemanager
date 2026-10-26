@@ -42,6 +42,13 @@ class AgentConfig:
     enroll_token: str | None = field(default_factory=lambda: env_opt("MM_ENROLL_TOKEN"))
     # Permit a plaintext ws:// hub URL to a non-loopback host. Off by default.
     allow_insecure: bool = field(default_factory=lambda: env_bool("MM_ALLOW_INSECURE"))
+    # Directory every instance on this node must live under. Local configuration,
+    # never taken from the hub, so it is the agent's own boundary. Unset means no
+    # isolation is enforced and new servers cannot be provisioned here.
+    root_dir: Path | None = field(
+        default_factory=lambda: Path(env_opt("MM_ROOT_DIR")).expanduser()
+        if env_opt("MM_ROOT_DIR") else None
+    )
 
     reconnect_min_s: float = 1.0
     reconnect_max_s: float = 30.0
@@ -61,6 +68,28 @@ class AgentConfig:
     @property
     def pty_dir(self) -> Path:
         return self.data_dir / "pty"
+
+    @property
+    def resolved_root(self) -> Path | None:
+        """The node root as an absolute, symlink-free path, or None if unset."""
+        return self.root_dir.resolve() if self.root_dir else None
+
+    def ensure_root(self) -> None:
+        """Create the node root if one is configured, or exit explaining why not."""
+        if self.root_dir is None:
+            log.warning(
+                "MM_ROOT_DIR is not set: new servers cannot be created on this node and "
+                "instance roots are not confined to a directory. Set it to the directory "
+                "that holds this node's servers, e.g. /srv/minecraft."
+            )
+            return
+        try:
+            self.root_dir.mkdir(parents=True, exist_ok=True)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(
+                f"cannot create the node root {self.root_dir} ({exc}). Set MM_ROOT_DIR to a "
+                f"directory this agent's user may write to."
+            ) from None
 
     def ensure_dirs(self) -> None:
         """Create the data dir, or exit saying what to do about it."""
@@ -121,9 +150,10 @@ class AgentConfig:
         """Log the configuration in effect."""
         node_id, _ = self.load_identity()
         log.info(
-            "loaded config: hub_url=%s | data_dir=%s | identity=%s",
+            "loaded config: hub_url=%s | data_dir=%s | root=%s | identity=%s",
             self.hub_url,
             self.data_dir,
+            self.root_dir or "unset (no provisioning, no root isolation)",
             f"node {node_id} ({self.identity_file})" if node_id else "none; will enroll",
         )
         if self.enroll_token and node_id:

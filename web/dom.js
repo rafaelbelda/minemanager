@@ -100,7 +100,23 @@ export function toast(message, kind = 'info', ttl = 5200) {
  * one field to another. Programmatic `set` fires no input event, so cross-field
  * updates cannot loop.
  */
-export function dialog({ title, description, fields = [], confirmText = 'OK', danger = false, onMount }) {
+function optionNodes(options, selected) {
+  // An option is a bare string (value doubles as label) or { value, label }.
+  return (options || []).map((o) => {
+    const value = o.value ?? o;
+    return el('option', { value, selected: value === selected }, o.label ?? o);
+  });
+}
+
+/**
+ * `detail` is preformatted output the reader has to see verbatim (a server's
+ * last terminal lines, say); `cancelText: null` drops the Cancel button, for a
+ * dialog that only reports something.
+ */
+export function dialog({
+  title, description, detail, fields = [], confirmText = 'OK', cancelText = 'Cancel',
+  danger = false, onMount, validate,
+}) {
   return new Promise((resolve) => {
     const inputs = new Map();
 
@@ -108,12 +124,25 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
     for (const f of fields) {
       let input;
       if (f.type === 'select') {
-        // An option is a bare string (value doubles as label) or { value, label }.
-        input = el('select.input', { id: `dlg-${f.name}` },
-          f.options.map((o) => {
-            const value = o.value ?? o;
-            return el('option', { value, selected: value === f.value }, o.label ?? o);
-          }));
+        input = el('select.input', { id: `dlg-${f.name}` }, optionNodes(f.options, f.value));
+      } else if (f.type === 'segmented') {
+        // A pill selector: one button per option, the selected one pressed.
+        input = el('div.segmented', { role: 'tablist', 'aria-label': f.label });
+        input.dataset.value = f.value ?? (f.options[0].value ?? f.options[0]);
+        for (const o of f.options) {
+          const value = o.value ?? o;
+          input.append(el('button.segment', {
+            type: 'button', role: 'tab', dataset: { value },
+            'aria-selected': value === input.dataset.value ? 'true' : 'false',
+            onclick: () => {
+              input.dataset.value = value;
+              for (const b of input.children) {
+                b.setAttribute('aria-selected', b.dataset.value === value ? 'true' : 'false');
+              }
+              input.dispatchEvent(new Event('change', { bubbles: true }));
+            },
+          }, o.label ?? o));
+        }
       } else if (f.type === 'toggle') {
         input = el('button.toggle' + (f.value ? '.on' : ''), {
           type: 'button', role: 'switch', 'aria-checked': f.value ? 'true' : 'false',
@@ -121,6 +150,7 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
           onclick: () => {
             const on = input.classList.toggle('on');
             input.setAttribute('aria-checked', on ? 'true' : 'false');
+            input.dispatchEvent(new Event('change', { bubbles: true }));
           },
         }, el('span.knob'));
       } else {
@@ -129,19 +159,30 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
           placeholder: f.placeholder || '', autocomplete: 'off', spellcheck: 'false',
         });
       }
-      inputs.set(f.name, { field: f, input });
 
+      let row;
       if (f.type === 'toggle') {
-        body.append(el('div.switch-row', {},
+        row = el('div.switch-row', {},
           el('div', {}, el('div.t', { text: f.label }), f.hint && el('div.d', { text: f.hint })),
-          input));
+          input);
+      } else if (f.type === 'segmented') {
+        row = el('div', {}, input);
       } else {
-        body.append(el('div', {},
+        row = el('div', {},
           el('label.field-label', { for: `dlg-${f.name}`, text: f.label }),
           input,
-          f.hint && el('div', { style: 'font-size:11px;color:var(--dim-2);margin-top:6px', text: f.hint })));
+          f.hint && el('div.field-note', { text: f.hint }));
       }
+      inputs.set(f.name, { field: f, input, row });
+      body.append(row);
     }
+
+    const error = el('div.modal-error', { role: 'alert', hidden: true });
+    body.append(error);
+    // A complaint is about the values as they were; touching anything clears it.
+    const clearError = () => { error.hidden = true; error.textContent = ''; };
+    body.addEventListener('input', clearError);
+    body.addEventListener('change', clearError);
 
     const opener = document.activeElement;
     const finish = (value) => {
@@ -152,11 +193,20 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
       resolve(value);
     };
 
+    const valueOf = ({ field, input }) =>
+      field.type === 'toggle' ? input.classList.contains('on')
+        : field.type === 'segmented' ? input.dataset.value
+        : input.value;
+
     const submit = () => {
       const out = {};
-      for (const [name, { field, input }] of inputs) {
-        out[name] = field.type === 'toggle' ? input.classList.contains('on') : input.value;
-      }
+      for (const [name, rec] of inputs) out[name] = valueOf(rec);
+      // A validator keeps the dialog open and says why, so the Enter key and
+      // the button behave the same.
+      const problem = validate ? validate(out) : null;
+      error.textContent = problem || '';
+      error.hidden = !problem;
+      if (problem) return;
       finish(out);
     };
 
@@ -170,10 +220,11 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
     }, el('div.modal', { role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
       el('div.modal-head', {},
         el('h2.modal-title', { text: title }),
-        description && el('div.modal-desc', { text: description })),
+        description && el('div.modal-desc', { text: description }),
+        detail && el('pre.modal-output', { text: detail })),
       fields.length ? body : el('div', { style: 'height:16px' }),
       el('div.modal-foot', {},
-        el('button.btn', { onclick: () => finish(null) }, 'Cancel'),
+        cancelText && el('button.btn', { onclick: () => finish(null) }, cancelText),
         el(`button.btn.${danger ? 'btn-danger' : 'btn-primary'}`, { onclick: submit }, confirmText))));
 
     document.addEventListener('keydown', onKey, true);
@@ -183,8 +234,7 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
       const rec = (name) => inputs.get(name);
       const get = (name) => {
         const r = rec(name);
-        if (!r) return undefined;
-        return r.field.type === 'toggle' ? r.input.classList.contains('on') : r.input.value;
+        return r ? valueOf(r) : undefined;
       };
       const set = (name, value) => {
         const r = rec(name);
@@ -192,13 +242,28 @@ export function dialog({ title, description, fields = [], confirmText = 'OK', da
         if (r.field.type === 'toggle') {
           r.input.classList.toggle('on', !!value);
           r.input.setAttribute('aria-checked', value ? 'true' : 'false');
-        }
-        else r.input.value = value ?? '';
+        } else if (r.field.type === 'segmented') {
+          r.input.dataset.value = value;
+          for (const b of r.input.children) {
+            b.setAttribute('aria-selected', b.dataset.value === value ? 'true' : 'false');
+          }
+        } else r.input.value = value ?? '';
       };
-      onMount({ get, set, input: (name) => rec(name)?.input });
+      const setOptions = (name, options, selected) => {
+        const r = rec(name);
+        if (!r || r.field.type !== 'select') return;
+        fill(r.input, optionNodes(options, selected));
+        if (selected != null) r.input.value = selected;
+      };
+      onMount({
+        get, set, setOptions,
+        input: (name) => rec(name)?.input,
+        row: (name) => rec(name)?.row,
+      });
     }
 
-    const first = [...inputs.values()].find((i) => i.field.type !== 'toggle');
+    const first = [...inputs.values()].find(
+      (i) => i.field.type !== 'toggle' && i.field.type !== 'segmented');
     if (first) { first.input.focus(); first.input.select?.(); }
     // A fieldless confirmation still needs focus inside the dialog.
     else backdrop.querySelector('.modal-foot .btn:last-child')?.focus();

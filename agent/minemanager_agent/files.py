@@ -67,6 +67,36 @@ def resolve_within(root: str | Path, rel: str) -> Path:
     return candidate
 
 
+def resolve_instance_root(node_root: str | Path | None, instance_root: str) -> Path:
+    """Check an instance root against the node root and return it resolved.
+
+    The outer half of the jail: ``resolve_within`` keeps a file operation inside
+    one instance, this keeps the instance itself inside the node's directory.
+    The hub validates the same thing, but only this check runs on the machine
+    that holds the files, so it is the one that has to hold.
+
+    ``node_root`` of None means no root is configured and nothing is enforced.
+    """
+    # os.path.isabs, not Path.is_absolute: nodes are POSIX, and a leading "/" is
+    # absolute there even when the tests run on Windows.
+    if not os.path.isabs(instance_root or ""):
+        raise JailError(f"instance root must be an absolute path: {instance_root!r}")
+    candidate = Path(instance_root).expanduser()
+
+    # Resolve symlinks and ".." before comparing, so neither can walk out. The
+    # path need not exist yet; a new server's directory is created later.
+    resolved = candidate.resolve()
+    if node_root is None:
+        return resolved
+
+    # Strictly below: an instance rooted at the node root itself would see every
+    # other server on the node through its own file browser.
+    root = Path(node_root).expanduser().resolve()
+    if root not in resolved.parents:
+        raise JailError(f"instance root is outside the node root {root}: {instance_root!r}")
+    return resolved
+
+
 def list_dir(root: str | Path, rel: str = ".") -> list[dict]:
     target = resolve_within(root, rel)
     if not target.is_dir():

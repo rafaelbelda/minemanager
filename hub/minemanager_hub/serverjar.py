@@ -112,3 +112,22 @@ CANNOT_RESOLVE_DETAIL = (
     "example 'paper.jar', and retry. Guessing would leave the server running its old "
     "binary while reporting success."
 )
+
+
+# --- New servers -----------------------------------------------------------
+#: The jar a freshly provisioned server of each type is installed as.
+JAR_FOR_TYPE = {"paper": "paper.jar", "vanilla": "server.jar", "velocity": "velocity.jar"}
+
+#: Velocity is a proxy and takes no ``nogui``.
+_GUI_FLAG = {"paper": " nogui", "vanilla": " nogui", "velocity": ""}
+
+
+def jar_for_type(software: str) -> str:
+    """Install filename for a new server of this type."""
+    return JAR_FOR_TYPE.get(software, "server.jar")
+
+
+def build_start_command(software: str, memory: str | None = None) -> str:
+    """The launch line a new server starts with. Editable afterwards in Settings."""
+    xmx = f"-Xmx{memory.strip()} " if memory and memory.strip() else ""
+    return f"java {xmx}-jar {jar_for_type(software)}{_GUI_FLAG.get(software, ' nogui')}"

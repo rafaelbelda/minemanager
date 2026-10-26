@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 
 from pydantic import BaseModel, ValidationError
 
-from minemanager_agent import archive, files, transfer
+from minemanager_agent import archive, files, provision, transfer
 from minemanager_agent.supervisor import Supervisor
 from minemanager_shared.protocol import (
     Action,
@@ -31,6 +31,7 @@ from minemanager_shared.protocol import (
     FilesRenameData,
     FilesUploadData,
     FilesWriteData,
+    InstanceCreateData,
     InstanceStatesData,
     LogsTailData,
     PowerData,
@@ -116,6 +117,13 @@ async def _update_apply(d: UpdateApplyData, sup: Supervisor) -> dict:
     )
 
 
+async def _instance_create(d: InstanceCreateData, sup: Supervisor) -> dict:
+    return await provision.create(
+        sup, d.instance, d.jar_name, d.download,
+        accept_eula=d.accept_eula, run_after=d.run_after,
+    )
+
+
 async def _transfer_start(d: TransferStartData, sup: Supervisor) -> dict:
     if sup.identity is None:
         raise RuntimeError("agent identity not ready for transfers")
@@ -143,6 +151,7 @@ _HANDLERS: dict[str, tuple[type[BaseModel], Handler]] = {
     Action.files_rename.value: (FilesRenameData, _files_rename),
     Action.files_extract.value: (FilesExtractData, _files_extract),
     Action.update_apply.value: (UpdateApplyData, _update_apply),
+    Action.instance_create.value: (InstanceCreateData, _instance_create),
     Action.transfer_start.value: (TransferStartData, _transfer_start),
     Action.instance_states.value: (InstanceStatesData, _instance_states),
 }
@@ -167,6 +176,15 @@ async def handle(cmd: Command, sup: Supervisor) -> Response:
     except ValidationError as exc:
         return Response.failure(cmd.id, f"invalid payload for {cmd.action}: {_brief(exc)}")
 
+    # One gate for every instance-scoped command: the hub may only ever name a
+    # directory under this node's own root.
+    spec = getattr(data, "instance", None)
+    if spec is not None:
+        try:
+            files.resolve_instance_root(sup.node_root, spec.root_dir)
+        except files.JailError as exc:
+            return Response.failure(cmd.id, f"path rejected: {exc}")
+
     try:
         return Response.success(cmd.id, await handler(data, sup))
     except FileNotFoundError as exc:
@@ -174,6 +192,8 @@ async def handle(cmd: Command, sup: Supervisor) -> Response:
     except files.JailError as exc:
         return Response.failure(cmd.id, f"path rejected: {exc}")
     except archive.UnsupportedArchive as exc:
+        return Response.failure(cmd.id, str(exc))
+    except provision.ProvisionError as exc:
         return Response.failure(cmd.id, str(exc))
     except Exception as exc:  # noqa: BLE001 - surface any handler error to the hub
         return Response.failure(cmd.id, f"{type(exc).__name__}: {exc}")

@@ -63,6 +63,13 @@ class InstanceType(str, Enum):
     velocity = "velocity"
 
 
+#: Software governed by Mojang's EULA, and so the software whose creation needs
+#: an explicit acceptance and gets an ``eula.txt``. Velocity is a proxy and
+#: holds no world. Shared so the hub rejects the request and the agent rejects
+#: the command from the same list, and so the UI can ask only when it applies.
+EULA_TYPES = frozenset({InstanceType.paper, InstanceType.vanilla})
+
+
 class RestartPolicy(str, Enum):
     """What the agent does when an instance's session ends by itself.
 
@@ -120,6 +127,9 @@ class Action(str, Enum):
     # Version / build updater -----------------------------------------------
     update_apply = "update.apply"   # transactionally replace the server jar
 
+    # Provisioning ----------------------------------------------------------
+    instance_create = "instance.create"   # make a new server under the node root
+
     # Large-file streaming transfers ----------------------------------------
     transfer_start = "transfer.start"   # hub tells agent to open a data connection
 
@@ -149,6 +159,11 @@ class Hello(BaseModel):
     hostname: str
     session_id: Optional[str] = None
     capabilities: list[str] = Field(default_factory=list)
+    # The agent's own instance root. Every instance on this node must live under
+    # it, and the agent enforces that against this local value rather than
+    # anything the hub sends. None when the node has no root configured, which
+    # disables provisioning for it.
+    root_dir: Optional[str] = None
 
 
 class Welcome(BaseModel):
@@ -256,6 +271,24 @@ class UpdateApplyData(BaseModel):
     # mis-parsed one fails loudly.
     allow_create: bool = False
     download: UpdateDownload
+
+
+class InstanceCreateData(BaseModel):
+    """Payload for the ``instance.create`` command (hub -> agent).
+
+    Provisions a brand-new server in ``instance.root_dir``, which the agent
+    re-checks against its own node root before touching anything. Declared here
+    because it needs :class:`UpdateDownload`.
+    """
+
+    instance: "InstanceSpec"
+    jar_name: str                    # where the download lands, relative to root
+    download: UpdateDownload
+    # The operator accepted Mojang's EULA in the UI. Without it the agent
+    # refuses, and no ``eula.txt`` is written.
+    accept_eula: bool = False
+    # Start the server again once its configuration has been generated.
+    run_after: bool = False
 
 
 # --------------------------------------------------------------------------- #

@@ -55,7 +55,7 @@ def _init() -> None:
 
 
 # Bump when a new migration is appended below.
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def _drop_columns(conn, table: str, drop: set[str]) -> None:
@@ -165,8 +165,18 @@ def _migrate_v3(conn) -> None:
         _drop_columns(conn, "instances", {"auto_restart", "restart_on_crash"})
 
 
+def _migrate_v4(conn) -> None:
+    """``nodes.root_dir``: the directory a node's servers live under.
+
+    Null until the agent reports one, which it does on its next handshake.
+    """
+    existing = {c["name"] for c in inspect(conn).get_columns("nodes")}
+    if "root_dir" not in existing:
+        conn.execute(text("ALTER TABLE nodes ADD COLUMN root_dir VARCHAR(1024)"))
+
+
 #: (version, step). Appended to, never edited: an applied migration is history.
-_MIGRATIONS = [(1, _migrate_v1), (2, _migrate_v2), (3, _migrate_v3)]
+_MIGRATIONS = [(1, _migrate_v1), (2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4)]
 
 
 def _read_version(engine: Engine) -> int:

@@ -109,6 +109,8 @@ export const api = {
   listInstances: (nodeId) => get(`/api/nodes/${nodeId}/instances`),
   nodeInstanceStates: (nodeId) => get(`/api/nodes/${nodeId}/instance-states`),
   createInstance: (nodeId, spec) => post(`/api/nodes/${nodeId}/instances`, spec),
+  // Provision a new server: download, install and first run happen on the agent.
+  createServer: (nodeId, spec) => post(`/api/nodes/${nodeId}/servers`, spec),
   updateInstance: (id, changes) => patch(`/api/instances/${id}`, changes),
   deleteInstance: (id) => del(`/api/instances/${id}`),
 

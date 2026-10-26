@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
-from minemanager_shared.protocol import InstanceType, RestartPolicy
+from minemanager_shared.protocol import EULA_TYPES, InstanceType, RestartPolicy
 
 
 # --- Nodes -----------------------------------------------------------------
@@ -24,6 +25,9 @@ class NodeOut(BaseModel):
     online: bool
     last_seen: Optional[datetime] = None
     enrolled: bool
+    # Reported by the agent. None means it has no root configured, so new
+    # servers cannot be created on this node.
+    root_dir: Optional[str] = None
 
 
 class EnrollmentOut(BaseModel):
@@ -155,6 +159,11 @@ class InstanceOut(BaseModel):
     restart_policy: str
     version: Optional[str] = None    # installed server version (updater / detector)
     build: Optional[str] = None      # installed build, when applicable
+    # This instance's root is not under its node's root, so the agent refuses
+    # every command for it. Set when a node gained an MM_ROOT_DIR that does not
+    # cover a server declared before it; surfaced rather than hidden, because
+    # the only other symptom is every action failing with "path rejected".
+    outside_node_root: bool = False
 
 
 # --- Control ---------------------------------------------------------------
@@ -185,3 +194,66 @@ class FileExtract(BaseModel):
 class UpdateRequest(BaseModel):
     version: str
     build: Optional[str] = None   # required only for software that has builds
+
+
+# --- New servers -----------------------------------------------------------
+# A new server's directory is the node root joined with its name, so the name is
+# a path component and is checked like one. Letters, digits and -_. only, and it
+# must start with a letter or digit: that rejects "..", separators, NUL, leading
+# dots and anything a shell would read specially, without enumerating them.
+_SERVER_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$")
+
+# ``-Xmx`` takes a whole number and a unit. A bare number is *bytes* to the JVM
+# ("2048" is 2 KB and refuses to launch) and a fractional one is rejected
+# outright, so neither is accepted here: both would produce a declared server
+# that cannot start, discovered only on its first run.
+_MEMORY_RE = re.compile(r"^\d+[KMGkmg]$")
+
+
+class ServerCreate(BaseModel):
+    """Create a brand-new server under the node's root."""
+
+    name: str
+    type: InstanceType
+    version: str
+    build: Optional[str] = None      # required only for software that has builds
+    memory: Optional[str] = "4G"
+    restart_policy: RestartPolicy = RestartPolicy.on_crash
+    accept_eula: bool = False
+    run_after: bool = False
+
+    @field_validator("name")
+    @classmethod
+    def _check_name(cls, value: str) -> str:
+        value = _require_value(value).strip()
+        if not _SERVER_NAME_RE.match(value):
+            raise ValueError(
+                "name must be 1-64 characters of letters, digits, dot, dash or "
+                "underscore, and start with a letter or digit"
+            )
+        return value
+
+    @field_validator("memory")
+    @classmethod
+    def _check_memory(cls, value: Optional[str]) -> Optional[str]:
+        if value is None or not value.strip():
+            return None
+        value = value.strip()
+        if not _MEMORY_RE.match(value):
+            raise ValueError(
+                "memory must be a whole number with a unit, such as 4G or 6144M"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def _check_eula(self) -> "ServerCreate":
+        # Refused here rather than on the agent: the agent refuses it too, but
+        # by then the hub has resolved a download and declared the instance, so
+        # a missing acceptance would surface as an agent error instead of a bad
+        # request. Velocity is not Mojang's, and is never asked.
+        if self.type in EULA_TYPES and not self.accept_eula:
+            raise ValueError(
+                f"the Minecraft EULA must be accepted to create a {self.type.value} "
+                "server; set accept_eula"
+            )
+        return self

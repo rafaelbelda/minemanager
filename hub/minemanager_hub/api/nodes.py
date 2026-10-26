@@ -10,6 +10,7 @@ import time
 
 from fastapi import APIRouter, HTTPException
 
+from minemanager_hub import roots
 from minemanager_hub.agents.registry import registry
 from minemanager_hub.api.schemas import (
     EnrollmentOut,
@@ -36,10 +37,11 @@ def _node_out(node: Node) -> NodeOut:
         online=registry.is_online(node.id),
         last_seen=node.last_seen,
         enrolled=node.credential_hash is not None,
+        root_dir=node.root_dir,
     )
 
 
-def _instance_out(inst: Instance) -> InstanceOut:
+def instance_out(inst: Instance) -> InstanceOut:
     return InstanceOut(
         id=inst.id,
         node_id=inst.node_id,
@@ -53,6 +55,7 @@ def _instance_out(inst: Instance) -> InstanceOut:
         restart_policy=inst.restart_policy,
         version=inst.version,
         build=inst.build,
+        outside_node_root=roots.is_stranded(inst.node.root_dir, inst.root_dir),
     )
 
 
@@ -109,6 +112,14 @@ def delete_node(node_id: str) -> None:
         db.delete(node)
 
 
+def _checked_root(node_root: str | None, instance_root: str) -> str:
+    """Keep a declared instance inside its node's root, when it has one."""
+    try:
+        return roots.check_under(node_root, instance_root)
+    except roots.RootError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 # --- Instances -------------------------------------------------------------
 @router.get("/nodes/{node_id}/instances", response_model=list[InstanceOut])
 def list_instances(node_id: str) -> list[InstanceOut]:
@@ -116,19 +127,22 @@ def list_instances(node_id: str) -> list[InstanceOut]:
         if db.get(Node, node_id) is None:
             raise HTTPException(404, "node not found")
         rows = db.query(Instance).filter(Instance.node_id == node_id).all()
-        return [_instance_out(i) for i in rows]
+        return [instance_out(i) for i in rows]
 
 
 @router.post("/nodes/{node_id}/instances", response_model=InstanceOut, status_code=201)
 def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
+    """Declare an instance that already exists on the node."""
     with session_scope() as db:
-        if db.get(Node, node_id) is None:
+        node = db.get(Node, node_id)
+        if node is None:
             raise HTTPException(404, "node not found")
+        root_dir = _checked_root(node.root_dir, body.root_dir)
         inst = Instance(
             node_id=node_id,
             name=body.name,
             type=body.type.value,
-            root_dir=body.root_dir,
+            root_dir=root_dir,
             start_command=body.start_command,
             jar_path=body.jar_path or None,
             java_home=body.java_home or None,
@@ -136,7 +150,7 @@ def create_instance(node_id: str, body: InstanceCreate) -> InstanceOut:
         )
         db.add(inst)
         db.flush()
-        return _instance_out(inst)
+        return instance_out(inst)
 
 
 @router.patch("/instances/{instance_id}", response_model=InstanceOut)
@@ -148,10 +162,12 @@ def update_instance(instance_id: str, body: InstanceUpdate) -> InstanceOut:
         inst = db.get(Instance, instance_id)
         if inst is None:
             raise HTTPException(404, "instance not found")
+        if "root_dir" in changes:
+            changes["root_dir"] = _checked_root(inst.node.root_dir, changes["root_dir"])
         for field, value in changes.items():
             setattr(inst, field, value)
         db.flush()
-        return _instance_out(inst)
+        return instance_out(inst)
 
 
 @router.delete("/instances/{instance_id}", status_code=204)
