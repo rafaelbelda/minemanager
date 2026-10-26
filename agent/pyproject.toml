@@ -1,6 +1,6 @@
 [project]
 name = "minemanager-agent"
-version = "0.1.1"
+version = "26.10.26"
 description = "MineManager agent — per-node daemon that supervises Minecraft servers"
 requires-python = ">=3.11"
 dependencies = [

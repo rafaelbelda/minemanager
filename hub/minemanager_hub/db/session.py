@@ -6,12 +6,12 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import DateTime, create_engine, event, func, inspect, select, text
+from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from minemanager_hub.config import get_settings
-from minemanager_hub.db.models import Base, Node, SchemaMeta
+from minemanager_hub.db.models import Base, Node
 
 log = logging.getLogger("minemanager.hub")
 
@@ -40,7 +40,7 @@ def _init() -> None:
         cur.execute("PRAGMA busy_timeout=5000")
         cur.close()
 
-    _apply_schema(_engine)
+    Base.metadata.create_all(_engine)
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
 
     with _engine.connect() as conn:
@@ -52,227 +52,6 @@ def _init() -> None:
             "data dir means a different database, and agents will be rejected",
             settings.db_path,
         )
-
-
-# Bump when a new migration is appended below.
-SCHEMA_VERSION = 5
-
-
-def _drop_columns(conn, table: str, drop: set[str]) -> None:
-    """Remove columns by rebuilding the table.
-
-    ``ALTER TABLE ... DROP COLUMN`` needs SQLite 3.35, newer than Ubuntu 20.04
-    ships. Rebuilding from the ORM definition works on every version.
-    """
-    existing = {c["name"] for c in inspect(conn).get_columns(table)}
-    if not (drop & existing):
-        return
-    model = Base.metadata.tables[table]
-    keep = [c for c in model.columns if c.name in existing and c.name not in drop]
-    names = ", ".join(c.name for c in keep)
-    sources = ", ".join(_carry_over(c) for c in keep)
-    conn.execute(text(f"ALTER TABLE {table} RENAME TO {table}_old"))
-    model.create(conn)
-    conn.execute(text(f"INSERT INTO {table} ({names}) SELECT {sources} FROM {table}_old"))
-    conn.execute(text(f"DROP TABLE {table}_old"))
-
-
-def _carry_over(col) -> str:
-    """How to read a column out of the old table.
-
-    A rebuild copies into the current schema, which may declare NOT NULL where
-    the old one did not, so a stale NULL is filled from the model's default.
-    """
-    if col.nullable:
-        return col.name
-    default = getattr(col.default, "arg", None) if col.default is not None else None
-    if isinstance(default, bool):
-        return f"COALESCE({col.name}, {int(default)})"
-    if isinstance(default, (int, float)):
-        return f"COALESCE({col.name}, {default})"
-    if isinstance(default, str):
-        escaped = default.replace("'", "''")
-        return f"COALESCE({col.name}, '{escaped}')"
-    if isinstance(col.type, DateTime):          # created_at and friends
-        return f"COALESCE({col.name}, CURRENT_TIMESTAMP)"
-    return col.name
-
-
-def _migrate_v1(conn) -> None:
-    """Columns added, and RCON removed, before schema versioning existed.
-
-    Must stay idempotent: a database predating ``schema_meta`` may already have
-    these applied, and runs the step once more to get stamped.
-    """
-    added = {
-        "version": "VARCHAR(64)",
-        "build": "VARCHAR(32)",
-        "jar_path": "VARCHAR(1024)",
-        "java_home": "VARCHAR(1024)",
-    }
-    existing = {c["name"] for c in inspect(conn).get_columns("instances")}
-    for name, ddl in added.items():
-        if name not in existing:
-            conn.execute(text(f"ALTER TABLE instances ADD COLUMN {name} {ddl}"))
-    _drop_columns(conn, "instances", {"rcon_host", "rcon_port"})
-
-
-def _migrate_v2(conn) -> None:
-    """``nodes.agent_session_id``: which agent process we last shook hands with.
-
-    Null on every existing row, which reads as "unknown", so the first handshake
-    after this migration counts as a new process and restores that node's
-    declared run state once.
-    """
-    existing = {c["name"] for c in inspect(conn).get_columns("nodes")}
-    if "agent_session_id" not in existing:
-        conn.execute(text("ALTER TABLE nodes ADD COLUMN agent_session_id VARCHAR(32)"))
-
-
-def _migrate_v3(conn) -> None:
-    """Name both lifecycle flags for their trigger, and make the restart one a policy.
-
-    ``desired_running`` -> ``start_with_node``, and ``auto_restart`` -> a
-    three-valued ``restart_policy``. The names say *when* a flag applies.
-
-    Tolerant about its source column: a database may carry either
-    ``auto_restart`` or the intermediate ``restart_on_crash``.
-
-    ``RENAME COLUMN`` needs SQLite 3.25, which every target ships. A rename
-    preserves every row, so an instance stays armed across the upgrade.
-    """
-    columns = {c["name"] for c in inspect(conn).get_columns("instances")}
-
-    if "desired_running" in columns and "start_with_node" not in columns:
-        conn.execute(text(
-            "ALTER TABLE instances RENAME COLUMN desired_running TO start_with_node"
-        ))
-
-    if "restart_policy" in columns:
-        return
-    # True kept its meaning ("put it back when it dies"); False becomes the
-    # explicit "never", so no instance changes behaviour across the upgrade.
-    source = next((c for c in ("auto_restart", "restart_on_crash") if c in columns), None)
-    conn.execute(text(
-        "ALTER TABLE instances ADD COLUMN restart_policy VARCHAR(16) "
-        "NOT NULL DEFAULT 'on_crash'"
-    ))
-    if source is not None:
-        conn.execute(text(
-            f"UPDATE instances SET restart_policy = "
-            f"CASE WHEN {source} THEN 'on_crash' ELSE 'never' END"
-        ))
-        _drop_columns(conn, "instances", {"auto_restart", "restart_on_crash"})
-
-
-def _migrate_v4(conn) -> None:
-    """``nodes.root_dir``: the directory a node's servers live under.
-
-    Null until the agent reports one, which it does on its next handshake.
-    """
-    existing = {c["name"] for c in inspect(conn).get_columns("nodes")}
-    if "root_dir" not in existing:
-        conn.execute(text("ALTER TABLE nodes ADD COLUMN root_dir VARCHAR(1024)"))
-
-
-def _dedupe_instance_names(engine: Engine) -> None:
-    """Make instance names unique per node, renaming the later duplicates.
-
-    Runs before the numbered migrations, not as one: ``_migrate_v3`` rebuilds
-    ``instances`` from the ORM metadata, which now carries the unique index, so
-    a database still holding duplicates would fail that rebuild. Idempotent.
-
-    Renamed rather than refused: the name is only a label (sessions and paths
-    key off the id and the root), and a hub that will not boot leaves no UI to
-    fix it from.
-    """
-    with engine.begin() as conn:
-        if not inspect(conn).has_table("instances"):
-            return
-        rows = conn.execute(text(
-            "SELECT id, node_id, name FROM instances ORDER BY node_id, name, created_at, id"
-        )).all()
-        seen: set[tuple[str, str]] = set()
-        for inst_id, node_id, name in rows:
-            candidate, n = name, 1
-            while (node_id, candidate) in seen:
-                n += 1
-                candidate = f"{name}-{n}"
-            if candidate != name:
-                log.warning(
-                    "two instances on node %s were both called %r; renaming one to %r",
-                    node_id, name, candidate,
-                )
-                conn.execute(
-                    text("UPDATE instances SET name = :name WHERE id = :id"),
-                    {"name": candidate, "id": inst_id},
-                )
-            seen.add((node_id, candidate))
-
-
-def _migrate_v5(conn) -> None:
-    """One instance name per node, as a unique index.
-
-    Duplicates are already gone (:func:`_dedupe_instance_names`), and a
-    database upgraded through v3 already has the index from the rebuild --
-    hence ``IF NOT EXISTS``. An index and not a table constraint because SQLite
-    cannot add one of those to an existing table.
-    """
-    conn.execute(text(
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_instance_node_name "
-        "ON instances (node_id, name)"
-    ))
-
-
-#: (version, step). Appended to, never edited: an applied migration is history.
-_MIGRATIONS = [
-    (1, _migrate_v1), (2, _migrate_v2), (3, _migrate_v3), (4, _migrate_v4),
-    (5, _migrate_v5),
-]
-
-
-def _read_version(engine: Engine) -> int:
-    with engine.connect() as conn:
-        if not inspect(conn).has_table(SchemaMeta.__tablename__):
-            return 0
-        row = conn.execute(text("SELECT version FROM schema_meta WHERE id = 1")).scalar()
-    return int(row or 0)
-
-
-def _stamp_version(engine: Engine, version: int) -> None:
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM schema_meta"))
-        conn.execute(text("INSERT INTO schema_meta (id, version) VALUES (1, :v)"), {"v": version})
-
-
-def _apply_schema(engine: Engine) -> None:
-    """Create missing tables, then run only the migrations this database lacks.
-
-    A database with no ``nodes`` table is brand new: ``create_all`` has just
-    produced the current schema, so it is stamped as current rather than being
-    walked through migrations that describe changes it never needed.
-    """
-    fresh = not inspect(engine).has_table("nodes")
-    Base.metadata.create_all(engine)
-
-    if fresh:
-        _stamp_version(engine, SCHEMA_VERSION)
-        log.info("database initialised at schema v%d", SCHEMA_VERSION)
-        return
-
-    current = _read_version(engine)
-    pending = [(v, step) for v, step in _MIGRATIONS if v > current]
-    if pending:
-        _dedupe_instance_names(engine)   # must precede v3's rebuild; see there
-    for version, step in pending:
-        # One transaction per step, so a failure leaves the database as it was.
-        # Foreign keys stay enforced: no table references `instances`, and its
-        # rows already satisfied the same constraint before the rebuild.
-        with engine.begin() as conn:
-            step(conn)
-        log.info("applied schema migration v%d", version)
-    if current < SCHEMA_VERSION:
-        _stamp_version(engine, SCHEMA_VERSION)
 
 
 def init_db() -> None:

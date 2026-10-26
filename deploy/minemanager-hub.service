@@ -28,7 +28,7 @@ Type=simple
 User=minemanager-hub
 Group=minemanager-hub
 
-# Holds MM_SECRET_KEY. Keep it 0640 root:minemanager so the mc user cannot read it.
+# Keep it 0640 root:minemanager so the mc user cannot read it.
 EnvironmentFile=/etc/minemanager/hub.env
 
 ExecStart=/opt/minemanager/venv/bin/minemanager-hub

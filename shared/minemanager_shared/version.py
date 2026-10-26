@@ -1,19 +1,13 @@
 """Version constants for the MineManager shared library.
 
-``PROTOCOL_VERSION`` is bumped whenever the wire contract in ``protocol.py``
-changes in a way that is not backward compatible. Hub and agent exchange it
-during the handshake and refuse to talk across a major mismatch.
+``__version__`` is the release, dated ``YY.MM.DD``.
+
+``PROTOCOL_VERSION`` is the wire contract in ``protocol.py``. Hub and agent
+exchange it during the handshake and refuse to talk across a major mismatch,
+which is what catches a half-finished upgrade: the two sides are installed from
+the same source and are expected to move together.
 """
 
-__version__ = "0.1.1"
+__version__ = "26.10.26"
 
-# Wire-protocol version. Bump the major on breaking envelope/frame changes.
-#
-# 2: InstanceSpec.auto_restart became restart_policy, a three-valued enum.
-#    Breaks silently if unchecked (an old agent falls back to the default), so
-#    the handshake's major check refuses the mismatch instead.
-#
-# 3: Hello.root_dir, and instance.create. The hub now relies on the agent to
-#    enforce node-root isolation, which an older agent does not do and the hub
-#    cannot detect, so the two must be upgraded together.
-PROTOCOL_VERSION = "3"
+PROTOCOL_VERSION = "1"

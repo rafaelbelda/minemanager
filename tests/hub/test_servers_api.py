@@ -406,7 +406,7 @@ class TestHandshakeReportsTheRoot:
     def test_the_agent_root_is_mirrored_onto_the_node(self, client, node_id):
         token = client.post(f"/api/nodes/{node_id}/reenroll").json()["enrollment_token"]
         hello = Hello(
-            agent_version="0.1.1", hostname="box-a", enrollment_token=token,
+            agent_version="26.10.26", hostname="box-a", enrollment_token=token,
             root_dir="/srv/minecraft", session_id="s1",
         )
         resolved, _, error = agent_ws._authenticate(hello)
@@ -416,7 +416,7 @@ class TestHandshakeReportsTheRoot:
     def test_an_agent_that_drops_its_root_clears_the_node(self, client, node_id):
         set_root(node_id, "/srv/minecraft")
         token = client.post(f"/api/nodes/{node_id}/reenroll").json()["enrollment_token"]
-        hello = Hello(agent_version="0.1.1", hostname="box-a", enrollment_token=token)
+        hello = Hello(agent_version="26.10.26", hostname="box-a", enrollment_token=token)
         agent_ws._authenticate(hello)
         assert client.get("/api/nodes").json()[0]["root_dir"] is None
         with session_scope() as db:

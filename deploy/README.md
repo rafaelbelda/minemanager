@@ -95,8 +95,9 @@ to the same account and give it both data directories.
 ## Notes
 
 - **Do not create per-server systemd units.** The agent supervises the servers.
-- **Back up `/var/lib/minemanager/minemanager.db`** before upgrading. Schema
-  migrations run at startup and are not reversible.
+- **Back up `/var/lib/minemanager/minemanager.db`** before upgrading. There are
+  no schema migrations: the hub creates whatever tables are missing and nothing
+  rewrites an existing one, so a database from an older release may not load.
 - Attach to a server console directly:
   `sudo -u minemanager-agent tmux -L minemanager attach -t mm-<instance_id>`
 
