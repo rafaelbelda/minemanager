@@ -8,8 +8,19 @@
 # This file is the access control. Agent paths bypass Authelia (agents use
 # their node credential); everything else gets Authelia, then the proxy secret.
 #
+#   - agents, on /ws/agent and /api/internal/transfer/*. They cannot pass an
+#     interactive login and authenticate to the hub with their node
+#     credential, so they bypass Authelia.
+#   - everything else (UI, API, UI WebSockets): Authelia first, and only then
+#     the proxy secret, which is how the hub knows the request was checked.
+#
+# The secret must match MM_PROXY_SECRET in /etc/minemanager/hub.env.
+#
+# (install.sh writes proxy.env, root-only, next to hub.env).
+
+
 # MM_PROXY_SECRET comes from Caddy's environment: `sudo systemctl edit caddy`,
-# add `[Service]` / `EnvironmentFile=/etc/minemanager/proxy.env`.
+# add `[Service]` / `EnvironmentFile=/etc/minemanager/proxy.env` or adapt a existing Caddyfile to this format.
 
 minemanager.example.internal {          # must match MM_ALLOWED_HOSTS
 	@agent path /ws/agent /api/internal/transfer/*
