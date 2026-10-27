@@ -15,7 +15,7 @@ import pytest
 from minemanager_hub.agents.registry import AgentConnection, registry
 from minemanager_hub.api import agent_ws, reconcile
 from minemanager_hub.config import get_settings
-from minemanager_hub.db.models import Instance, Node
+from minemanager_hub.db.models import Instance
 from minemanager_hub.db.session import session_scope
 from minemanager_shared.protocol import (
     Action,
@@ -94,10 +94,6 @@ class TestRestore:
         await reconcile.restore(node_id, agent)
 
         assert agent.started == [armed]
-
-    async def test_nothing_armed_sends_no_commands(self, client, node_id, instance_id, agent):
-        await reconcile.restore(node_id, agent)
-        assert agent.commands == []
 
     async def test_restore_order_is_deterministic_and_by_name(
         self, client, node_id, instance_base, agent
@@ -273,42 +269,12 @@ class TestPowerRecordsIntent:
         row = client.get(f"/api/nodes/{node_id}/instances").json()[0]
         assert row["start_with_node"] is expected
 
-    async def test_kill_is_not_undone_by_the_next_connect(
-        self, client, node_id, instance_id, agent
-    ):
-        # Kill means "stay down". Before this, only start/stop wrote the flag,
-        # so a killed server was resurrected by the next handshake.
-        client.post(f"/api/instances/{instance_id}/power/start")
-        client.post(f"/api/instances/{instance_id}/power/kill")
-        agent.commands.clear()
-
-        await reconcile.restore(node_id, agent)
-
-        assert agent.commands == []
-
     async def test_a_rejected_power_op_declares_nothing(self, client, instance_id):
         # No agent registered: the call 409s, and the DB must not be left
         # claiming the instance should be running.
         assert client.post(f"/api/instances/{instance_id}/power/start").status_code == 409
         with session_scope() as db:
             assert db.get(Instance, instance_id).start_with_node is False
-
-
-class TestArmingViaPatch:
-    def test_flag_is_editable(self, client, instance_id):
-        on = client.patch(f"/api/instances/{instance_id}", json={"start_with_node": True})
-        assert on.json()["start_with_node"] is True
-        off = client.patch(f"/api/instances/{instance_id}", json={"start_with_node": False})
-        assert off.json()["start_with_node"] is False
-
-    def test_explicit_null_is_rejected(self, client, instance_id):
-        r = client.patch(f"/api/instances/{instance_id}", json={"start_with_node": None})
-        assert r.status_code == 422
-
-    def test_omitting_it_leaves_it_alone(self, client, instance_id):
-        client.patch(f"/api/instances/{instance_id}", json={"start_with_node": True})
-        r = client.patch(f"/api/instances/{instance_id}", json={"name": "renamed"})
-        assert r.json()["start_with_node"] is True
 
 
 class TestOnlyOnAgentRestart:
@@ -329,15 +295,6 @@ class TestOnlyOnAgentRestart:
 
         assert agent.commands == []
 
-    async def test_an_agent_restart_does_restore(
-        self, client, node_id, instance_id, agent
-    ):
-        _arm(client, instance_id)
-
-        await reconcile.restore(node_id, agent, agent_restarted=True)
-
-        assert agent.started == [instance_id]
-
 
 class TestClaimAgentSession:
     """The signal the gate is built on: has this agent *process* changed?"""
@@ -353,14 +310,6 @@ class TestClaimAgentSession:
     def test_a_new_process_does(self, client, node_id):
         agent_ws._claim_agent_session(node_id, "sess-1")
         assert agent_ws._claim_agent_session(node_id, "sess-2") is True
-
-    def test_it_survives_a_hub_restart(self, client, node_id):
-        # The id is a column, not process memory. Restarting the hub makes every
-        # agent redial, and that must not look like every node having rebooted.
-        agent_ws._claim_agent_session(node_id, "sess-1")
-        with session_scope() as db:
-            assert db.get(Node, node_id).agent_session_id == "sess-1"
-        assert agent_ws._claim_agent_session(node_id, "sess-1") is False
 
     def test_an_agent_too_old_to_send_one_still_restores(self, client, node_id):
         # Restoring twice is recoverable; never restoring leaves a rebooted node

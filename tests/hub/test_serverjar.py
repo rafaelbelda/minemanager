@@ -65,15 +65,26 @@ class TestRefusesToGuess:
 
 
 def test_update_refuses_when_the_jar_cannot_be_identified(client, node_id):
-    """The refusal reaches the API, not just the resolver."""
+    """The refusal reaches the API, and nothing is sent to the agent."""
+    from minemanager_hub.agents.registry import AgentConnection, registry
+
+    sent: list[dict] = []
+
+    async def record(frame: dict) -> None:
+        sent.append(frame)
+
     inst = client.post(f"/api/nodes/{node_id}/instances", json={
         "name": "wrapped", "type": "paper", "root_dir": "/srv/mc",
         "start_command": "./start.sh",
     }).json()["id"]
-    r = client.post(f"/api/instances/{inst}/update", json={"version": "1.21.8"})
-    assert r.status_code in (400, 409)      # 400 unresolvable, 409 if agent offline first
-    if r.status_code == 400:
-        assert "jar" in r.json()["detail"].lower()
+    registry.register(AgentConnection(node_id, send=record))
+    try:
+        r = client.post(f"/api/instances/{inst}/update", json={"version": "1.21.8"})
+    finally:
+        registry.unregister(node_id)
+    assert r.status_code == 400
+    assert "jar path" in r.json()["detail"].lower()
+    assert sent == []
 
 
 class TestTheLaunchConventionForNewServers:

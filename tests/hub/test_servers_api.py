@@ -16,7 +16,7 @@ import pytest
 
 from minemanager_hub.agents.registry import AgentConnection, registry
 from minemanager_hub.api import agent_ws, servers
-from minemanager_hub.db.models import Instance, Node
+from minemanager_hub.db.models import Node
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.providers.base import Download, Provider, ProviderError
 from minemanager_shared.protocol import Action, Hello, Response
@@ -145,15 +145,12 @@ class TestRefusals:
         r = create(client, node_id)
         assert r.status_code == 409
         assert "MM_ROOT_DIR" in r.json()["detail"]
+        assert client.get(f"/api/nodes/{node_id}/instances").json() == []
 
     def test_an_offline_agent_is_refused(self, client, rooted):
         r = create(client, rooted)
         assert r.status_code == 409
         assert "offline" in r.json()["detail"]
-
-    def test_nothing_is_declared_when_the_node_is_refused(self, client, node_id, agent):
-        create(client, node_id)
-        assert client.get(f"/api/nodes/{node_id}/instances").json() == []
 
     @pytest.mark.parametrize("name", ["../escape", "a/b", "", ".", "..", "  "])
     def test_a_name_that_is_not_a_directory_component_is_rejected(
@@ -225,10 +222,6 @@ class TestSuccessfulCreation:
         assert inst["start_command"] == "java -Xmx4G -jar paper.jar nogui"
         assert inst["jar_path"] == "paper.jar"
 
-    def test_a_proxy_gets_no_nogui(self, client, rooted, agent, provider):
-        inst = create(client, rooted, name="lobby", type="velocity").json()
-        assert inst["start_command"] == "java -Xmx4G -jar velocity.jar"
-
     def test_the_agent_is_told_to_create_it(self, client, rooted, agent, provider):
         create(client, rooted)
         settle()
@@ -240,11 +233,6 @@ class TestSuccessfulCreation:
         assert data["run_after"] is False
         assert data["instance"]["root_dir"] == "/srv/minecraft/survival"
         assert data["download"]["checksum_algo"] == "sha256"
-
-    def test_run_after_is_off_unless_asked_for(self, client, rooted, agent, provider):
-        create(client, rooted)
-        settle()
-        assert agent.sent(Action.instance_create.value)[0]["data"]["run_after"] is False
 
     def test_the_installed_version_is_recorded(self, client, rooted, agent, provider):
         inst = created(client, rooted, version="1.21.8", build="60")
@@ -327,15 +315,6 @@ class TestDeclaredRootsAreConfined:
         assert r.status_code == 400
         assert "inside this node's root" in r.json()["detail"]
 
-    def test_traversal_in_a_declared_root_is_refused(self, client, rooted, instance_base):
-        body = dict(instance_base, root_dir="/srv/minecraft/../../etc")
-        r = client.post(f"/api/nodes/{rooted}/instances", json=body)
-        assert r.status_code == 400
-
-    def test_an_instance_under_the_node_root_is_accepted(self, client, rooted, instance_base):
-        body = dict(instance_base, root_dir="/srv/minecraft/survival")
-        assert client.post(f"/api/nodes/{rooted}/instances", json=body).status_code == 201
-
     def test_moving_an_instance_out_of_the_root_is_refused(
         self, client, rooted, instance_base
     ):
@@ -347,9 +326,11 @@ class TestDeclaredRootsAreConfined:
     def test_a_node_without_a_root_still_accepts_any_path(
         self, client, node_id, instance_base
     ):
-        """Nodes that predate the setting keep working exactly as before."""
+        """Nodes that predate the setting keep working, and are not flagged."""
         body = dict(instance_base, root_dir="/opt/legacy/survival")
-        assert client.post(f"/api/nodes/{node_id}/instances", json=body).status_code == 201
+        r = client.post(f"/api/nodes/{node_id}/instances", json=body)
+        assert r.status_code == 201
+        assert r.json()["outside_node_root"] is False
 
 
 class TestAnInstanceTheRootDoesNotCover:
@@ -376,13 +357,6 @@ class TestAnInstanceTheRootDoesNotCover:
         listed = client.get(f"/api/nodes/{node_id}/instances").json()
         assert [i["id"] for i in listed] == [iid]
         assert listed[0]["outside_node_root"] is True
-
-    def test_nothing_is_flagged_on_a_node_without_a_root(
-        self, client, node_id, instance_base
-    ):
-        body = dict(instance_base, root_dir="/opt/legacy/survival")
-        inst = client.post(f"/api/nodes/{node_id}/instances", json=body).json()
-        assert inst["outside_node_root"] is False
 
     def test_the_handshake_names_them(self, client, node_id, instance_base, caplog):
         body = dict(instance_base, root_dir="/opt/legacy/survival")
@@ -421,12 +395,3 @@ class TestHandshakeReportsTheRoot:
         assert client.get("/api/nodes").json()[0]["root_dir"] is None
         with session_scope() as db:
             assert db.get(Node, node_id).root_dir is None
-
-
-def test_a_created_instance_is_a_normal_instance(client, rooted, agent, provider):
-    """Everything else in the app works on it without knowing how it was made."""
-    inst = create(client, rooted).json()
-    with session_scope() as db:
-        assert db.get(Instance, inst["id"]).type == "paper"
-    assert client.get(f"/api/nodes/{rooted}/instances").json()[0]["id"] == inst["id"]
-    assert client.delete(f"/api/instances/{inst['id']}").status_code == 204

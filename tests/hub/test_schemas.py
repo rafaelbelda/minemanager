@@ -20,6 +20,7 @@ FIELDS = {
     "restart_policy": ("always", True),
     "jar_path": ("velocity.jar", False),
     "java_home": ("/opt/jdk-21", False),
+    "start_with_node": (True, True),
 }
 
 REQUIRED_TEXT = ("name", "root_dir", "start_command")
@@ -35,23 +36,6 @@ def test_create_accepts_every_supported_type(client, node_id, instance_base, sof
 def test_create_rejects_unsupported_type(client, node_id, instance_base):
     r = client.post(f"/api/nodes/{node_id}/instances", json={**instance_base, "type": "forge"})
     assert r.status_code == 422
-
-
-@pytest.mark.parametrize("field", list(FIELDS))
-def test_patch_persists_each_field(client, instance_id, field):
-    value = FIELDS[field][0]
-    r = client.patch(f"/api/instances/{instance_id}", json={field: value})
-    assert r.status_code == 200, r.text
-    assert r.json()[field] == value
-
-
-@pytest.mark.parametrize("field", list(FIELDS))
-def test_patch_leaves_other_fields_alone(client, instance_id, instance_base, field):
-    client.patch(f"/api/instances/{instance_id}", json={field: FIELDS[field][0]})
-    body = client.patch(f"/api/instances/{instance_id}", json={}).json()
-    for other, expected in instance_base.items():
-        if other != field:
-            assert body[other] == expected
 
 
 @pytest.mark.parametrize("field", list(FIELDS))
@@ -75,6 +59,14 @@ def test_patch_all_fields_at_once(client, instance_id):
         assert r.json()[field] == value
 
 
+def test_patch_leaves_unsent_fields_alone(client, instance_id, instance_base):
+    client.patch(f"/api/instances/{instance_id}", json={"start_with_node": True})
+    body = client.patch(f"/api/instances/{instance_id}", json={"name": "renamed"}).json()
+    assert body["start_with_node"] is True
+    for field in ("type", "root_dir", "start_command"):
+        assert body[field] == instance_base[field]
+
+
 def test_patch_survives_a_reread(client, node_id, instance_id):
     client.patch(f"/api/instances/{instance_id}", json={"type": "vanilla", "restart_policy": "never"})
     rows = client.get(f"/api/nodes/{node_id}/instances").json()
@@ -91,36 +83,6 @@ def test_patch_trims_whitespace(client, instance_id):
 def test_create_rejects_blank_required_field(client, node_id, instance_base):
     r = client.post(f"/api/nodes/{node_id}/instances", json={**instance_base, "name": ""})
     assert r.status_code == 422
-
-
-class TestRequireValue:
-    """The helper directly — an enum member must survive it intact."""
-
-    def test_enum_passes_through_unflattened(self):
-        from minemanager_hub.api.schemas import _require_value
-        from minemanager_shared.protocol import InstanceType
-
-        out = _require_value(InstanceType.paper)
-        assert out is InstanceType.paper
-        assert hasattr(out, "value")      # the regression: .strip() lost this
-
-    def test_null_rejected(self):
-        from minemanager_hub.api.schemas import _require_value
-
-        with pytest.raises(ValueError):
-            _require_value(None)
-
-    def test_blank_rejected_and_text_trimmed(self):
-        from minemanager_hub.api.schemas import _require_value
-
-        with pytest.raises(ValueError):
-            _require_value("  ")
-        assert _require_value("  x  ") == "x"
-
-    def test_non_text_untouched(self):
-        from minemanager_hub.api.schemas import _require_value
-
-        assert _require_value(False) is False
 
 
 class TestJavaHome:

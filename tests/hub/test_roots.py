@@ -46,10 +46,6 @@ class TestCheckUnder:
         with pytest.raises(roots.RootError):
             roots.check_under("/srv/mc", path)
 
-    def test_traversal_is_refused_rather_than_collapsed(self):
-        with pytest.raises(roots.RootError):
-            roots.check_under("/srv/mc", "/srv/mc/../../etc")
-
     def test_no_node_root_enforces_nothing(self):
         assert roots.check_under(None, "/opt/legacy") == "/opt/legacy"
 

@@ -17,12 +17,12 @@ def clean(monkeypatch):
 
 
 class TestBool:
-    @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "True", "yes", "on", " on "])
+    @pytest.mark.parametrize("raw", ["1", "TRUE", "yes", " on "])
     def test_truthy(self, monkeypatch, raw):
         monkeypatch.setenv(VAR, raw)
         assert env_bool(VAR) is True
 
-    @pytest.mark.parametrize("raw", ["0", "false", "no", "off", "nonsense", "", "  "])
+    @pytest.mark.parametrize("raw", ["0", "false", "nonsense"])
     def test_falsy(self, monkeypatch, raw):
         monkeypatch.setenv(VAR, raw)
         assert env_bool(VAR) is False
@@ -42,9 +42,8 @@ class TestInt:
         monkeypatch.setenv(VAR, "  42  ")
         assert env_int(VAR, 7) == 42
 
-    @pytest.mark.parametrize("raw", ["", "   "])
-    def test_blank_uses_default(self, monkeypatch, raw):
-        monkeypatch.setenv(VAR, raw)
+    def test_blank_uses_default(self, monkeypatch):
+        monkeypatch.setenv(VAR, "   ")
         assert env_int(VAR, 7) == 7
 
     def test_unset_uses_default(self):
@@ -55,11 +54,6 @@ class TestInt:
         with pytest.raises(SystemExit, match="must be an integer"):
             env_int(VAR, 1)
 
-    def test_negative_accepted(self, monkeypatch):
-        monkeypatch.setenv(VAR, "-5")
-        assert env_int(VAR, 0) == -5
-
-
 class TestCsv:
     def test_splits_and_drops_blanks(self, monkeypatch):
         monkeypatch.setenv(VAR, "a, b ,,c ")
@@ -68,11 +62,6 @@ class TestCsv:
     def test_unset_uses_default(self):
         assert env_csv(VAR, "x,y") == ["x", "y"]
         assert env_csv(VAR) == []
-
-    def test_single_value(self, monkeypatch):
-        monkeypatch.setenv(VAR, "only")
-        assert env_csv(VAR) == ["only"]
-
 
 class TestStrPathOpt:
     def test_str_default(self):

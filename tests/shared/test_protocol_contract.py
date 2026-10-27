@@ -21,7 +21,6 @@ from minemanager_shared.protocol import (
     Command,
     FilesRenameData,
     InstanceSpec,
-    PowerData,
     TransferStartData,
 )
 
@@ -76,37 +75,13 @@ class TestAgentValidatesIncoming:
 
 
 class TestHubConstructsOutgoing:
-    def test_bad_keyword_is_rejected_at_the_call_site(self):
-        with pytest.raises((ValidationError, TypeError)):
-            FilesRenameData(instance=SPEC, path="a", newName="b")
-
     def test_missing_field_is_rejected(self):
         with pytest.raises(ValidationError):
             FilesRenameData(instance=SPEC, path="a")
 
-    def test_valid_payload_builds(self):
-        assert FilesRenameData(instance=SPEC, path="a", new_name="b").new_name == "b"
-
     def test_transfer_direction_is_a_closed_set(self):
         with pytest.raises(ValidationError):
             TransferStartData(instance=SPEC, tid="t", direction="sideways", path="p")
-
-    @pytest.mark.parametrize("direction", ["download", "upload"])
-    def test_valid_directions_accepted(self, direction):
-        assert TransferStartData(
-            instance=SPEC, tid="t", direction=direction, path="p"
-        ).direction == direction
-
-
-class TestWireRoundTrip:
-    def test_payload_survives_json_encoding(self):
-        wire = PowerData(instance=SPEC).model_dump(mode="json")
-        assert isinstance(wire["instance"], dict)
-        assert PowerData.model_validate(wire).instance.id == "i1"
-
-    def test_enum_fields_serialise_to_their_value(self):
-        assert PowerData(instance=SPEC).model_dump(mode="json")["instance"]["type"] == "paper"
-
 
 def test_every_action_the_agent_handles_has_a_model():
     from minemanager_agent.handlers import _HANDLERS

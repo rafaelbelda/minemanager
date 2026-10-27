@@ -49,6 +49,7 @@ class FakeSupervisor:
         # What the real supervisor would have mirrored from the tmux pane.
         self.pane: list[str] = ["Error: LinkageError", "UnsupportedClassVersionError"]
         self.forgotten: list[str] = []
+        self.eula_seen_at_start: list[bool] = []
 
     async def pty_tail(self, instance_id: str) -> list[str]:
         return self.pane
@@ -67,6 +68,7 @@ class FakeSupervisor:
     async def start(self, spec):
         self.calls.append("start")
         root = Path(spec.root_dir)
+        self.eula_seen_at_start.append((root / "eula.txt").exists())
         if self.behaviour in ("eula_gate", "proxy"):
             for name in self.writes:
                 (root / name).write_text("generated\n", encoding="utf-8")
@@ -131,32 +133,24 @@ async def run(sup, stub_tmux, spec, **kw):
 
 
 class TestSuccessfulCreation:
-    async def test_the_jar_lands_in_the_new_directory(self, node_root, stub_tmux):
-        sup = FakeSupervisor(node_root)
-        spec = spec_for(node_root)
-        await run(sup, stub_tmux, spec)
-        assert (node_root / "survival" / "paper.jar").exists()
-
-    async def test_the_first_run_generates_the_configuration(self, node_root, stub_tmux):
+    async def test_a_server_is_installed_configured_and_left_stopped(self, node_root, stub_tmux):
         sup = FakeSupervisor(node_root)
         result = await run(sup, stub_tmux, spec_for(node_root))
+        root = node_root / "survival"
+        assert (root / "paper.jar").exists()
         assert result["config_files"] == ["server.properties"]
-        assert (node_root / "survival" / "server.properties").exists()
-
-    async def test_the_eula_is_written_after_the_configuration_run(self, node_root, stub_tmux):
-        """Written last on purpose: the first run stops at the gate instead of
-        carrying on into world generation."""
-        sup = FakeSupervisor(node_root)
-        await run(sup, stub_tmux, spec_for(node_root))
-        eula = node_root / "survival" / "eula.txt"
-        assert eula.read_text(encoding="utf-8") == "eula=true\n"
+        assert (root / "server.properties").exists()
+        # The EULA is written after the configuration run, so that run stops at
+        # the gate instead of carrying on into world generation.
+        assert (root / "eula.txt").read_text(encoding="utf-8") == "eula=true\n"
+        assert sup.eula_seen_at_start == [False]
         assert sup.calls == ["start", "stop"]
-
-    async def test_it_stops_after_the_first_run_by_default(self, node_root, stub_tmux):
-        sup = FakeSupervisor(node_root)
-        result = await run(sup, stub_tmux, spec_for(node_root))
         assert result["started"] is False
-        assert sup.calls.count("start") == 1
+        assert (result["version"], result["build"]) == ("1.21.8", "60")
+        # The monitor is held off: the configuration run ending would otherwise
+        # read as a crash. And a success is not forgotten.
+        assert sup.provisioned == ["i1"]
+        assert sup.forgotten == []
 
     async def test_run_after_starts_it_a_second_time(self, node_root, stub_tmux):
         sup = FakeSupervisor(node_root)
@@ -164,33 +158,16 @@ class TestSuccessfulCreation:
         assert result["started"] is True
         assert sup.calls == ["start", "stop", "start"]
 
-    async def test_the_monitor_is_held_off_during_creation(self, node_root, stub_tmux):
-        """The configuration run ends with the server gone, which the restart
-        policy would otherwise read as a crash."""
-        sup = FakeSupervisor(node_root)
-        await run(sup, stub_tmux, spec_for(node_root))
-        assert sup.provisioned == ["i1"]
-
-    async def test_the_installed_version_is_reported(self, node_root, stub_tmux):
-        sup = FakeSupervisor(node_root)
-        result = await run(sup, stub_tmux, spec_for(node_root))
-        assert (result["version"], result["build"]) == ("1.21.8", "60")
-
 
 class TestVelocity:
-    """A proxy has no EULA and keeps running once configured."""
-
-    async def test_it_is_stopped_once_its_config_appears(self, node_root, stub_tmux):
+    async def test_a_proxy_is_stopped_once_configured_and_gets_no_eula(
+        self, node_root, stub_tmux
+    ):
         sup = FakeSupervisor(node_root, behaviour="proxy", writes=("velocity.toml",))
         spec = spec_for(node_root, name="lobby", kind="velocity")
         result = await run(sup, stub_tmux, spec, accept_eula=False)
         assert result["config_files"] == ["velocity.toml"]
         assert sup.calls == ["start", "stop"]
-
-    async def test_no_eula_file_is_written(self, node_root, stub_tmux):
-        sup = FakeSupervisor(node_root, behaviour="proxy", writes=("velocity.toml",))
-        spec = spec_for(node_root, name="lobby", kind="velocity")
-        result = await run(sup, stub_tmux, spec, accept_eula=False)
         assert result["eula_accepted"] is False
         assert not (node_root / "lobby" / "eula.txt").exists()
 
@@ -238,6 +215,7 @@ class TestFailureCleanup:
             await run(sup, stub_tmux, spec_for(node_root))
         assert not (node_root / "survival").exists()
         assert "kill" in sup.calls
+        assert sup.forgotten == ["i1"]     # the hub un-declares it
 
     async def test_a_run_that_generates_no_config_fails(self, node_root, stub_tmux, monkeypatch):
         monkeypatch.setattr(provision, "FIRST_RUN_TIMEOUT_S", 0.05)
@@ -331,17 +309,3 @@ class TestFailureCleanup:
         assert result["started"] is False
         assert "no tmux" in result["start_error"]
         assert (node_root / "survival" / "paper.jar").exists()
-
-
-class TestBookkeeping:
-    async def test_a_failed_creation_is_forgotten(self, node_root, stub_tmux):
-        """The hub un-declares it, so the agent must not keep reporting it."""
-        sup = FakeSupervisor(node_root, behaviour="dies")
-        with pytest.raises(provision.ProvisionError):
-            await run(sup, stub_tmux, spec_for(node_root))
-        assert sup.forgotten == ["i1"]
-
-    async def test_a_successful_creation_is_kept(self, node_root, stub_tmux):
-        sup = FakeSupervisor(node_root)
-        await run(sup, stub_tmux, spec_for(node_root))
-        assert sup.forgotten == []

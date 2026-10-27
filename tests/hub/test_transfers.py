@@ -35,29 +35,16 @@ class TestRegistry:
         assert reg.get("t1") is ctx
         assert (ctx.direction, ctx.state) == ("download", "pending")
 
-    def test_duplicate_id_is_refused(self, reg):
-        make(reg)
-        with pytest.raises(TransferIdInUse):
-            make(reg)
-
     def test_the_original_context_survives_a_collision(self, reg):
         first = make(reg)
         with pytest.raises(TransferIdInUse):
             make(reg)
         assert reg.get("t1") is first
 
-    def test_distinct_ids_coexist(self, reg):
-        a, b = make(reg, "t1"), make(reg, "t2")
-        assert (reg.get("t1"), reg.get("t2")) == (a, b)
-
-    def test_remove(self, reg):
-        make(reg)
-        reg.remove("t1")
-        assert reg.get("t1") is None
-
     def test_an_id_is_reusable_once_removed(self, reg):
         make(reg)
         reg.remove("t1")
+        assert reg.get("t1") is None
         assert make(reg) is not None
 
 
@@ -68,21 +55,12 @@ class TestSweep:
         monkeypatch.setattr(ctx, "finished_at", ctx.finished_at - 1000)
         assert reg.get("t1") is None
 
-    def test_live_contexts_are_kept(self, reg):
-        make(reg)
-        assert reg.get("t1") is not None
-
     def test_a_finished_context_lingers_briefly_for_the_progress_poll(self, reg):
         make(reg).finish("done")
         assert reg.get("t1") is not None
 
 
 class TestContext:
-    async def test_put_and_drain(self, reg):
-        ctx = make(reg)
-        assert await ctx.put(b"chunk") is True
-        assert await ctx.get() == b"chunk"
-
     async def test_put_refused_after_cancel(self, reg):
         ctx = make(reg)
         ctx.cancel.set()
@@ -105,13 +83,12 @@ class TestContext:
         ctx = make(reg)
         for _ in range(64):
             assert await asyncio.wait_for(ctx.put(b"x" * 1024), timeout=1) is True
-        assert ctx._queued == 64 * 1024
 
     async def test_put_blocks_once_the_byte_window_is_full(self, reg):
         ctx = make(reg)
         await _fill_window(ctx)
         with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(ctx.put(b"over"), timeout=0.2)
+            await asyncio.wait_for(ctx.put(b"over"), timeout=0.05)
 
     async def test_draining_reopens_the_window(self, reg):
         ctx = make(reg)

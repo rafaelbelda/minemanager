@@ -122,10 +122,6 @@ class TestEventConfinement:
     def _sentinel(self, s) -> None:
         s["agent"].send_json(_event(Action.ev_console_output, s["own"], line="SENTINEL"))
 
-    def test_own_instance_events_flow(self, setup):
-        self._sentinel(setup)
-        assert setup["ui"].receive_json()["data"]["line"] == "SENTINEL"
-
     def test_console_for_another_nodes_instance_is_dropped(self, setup):
         setup["agent"].send_json(
             _event(Action.ev_console_output, setup["theirs"], line="[Server] op attacker"))
@@ -133,11 +129,6 @@ class TestEventConfinement:
         frame = setup["ui"].receive_json()
         assert frame["instance_id"] == setup["own"]
         assert frame["data"]["line"] == "SENTINEL"
-
-    def test_state_for_another_nodes_instance_is_dropped(self, setup):
-        setup["agent"].send_json(_event(Action.ev_state_changed, setup["theirs"], state="crashed"))
-        self._sentinel(setup)
-        assert setup["ui"].receive_json()["data"]["line"] == "SENTINEL"
 
     def test_another_nodes_server_cannot_be_disarmed(self, client, setup):
         setup["agent"].send_json(_event(

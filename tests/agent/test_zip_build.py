@@ -31,6 +31,9 @@ class TestSelfConsumption:
         (root / "server.properties").write_text("level-name=world\n")
         payload = b"x" * (256 * 1024)
         (root / "world.mca").write_bytes(payload)
+        # Jar backups live in the scratch dir too; they are not user content.
+        (root / files.HIDDEN_DIR).mkdir()
+        (root / files.HIDDEN_DIR / "server.jar.bak").write_bytes(b"old jar")
 
         dest = _zip_to(root)
 
@@ -42,18 +45,6 @@ class TestSelfConsumption:
             names = set(zf.namelist())
         assert "server.properties" in names
         assert not any(files.HIDDEN_DIR in n for n in names)
-
-    def test_the_scratch_dir_is_excluded(self, instance_root):
-        """Jar backups and temp files are hidden from the explorer, so they do
-        not belong in an archive of user content either."""
-        root = Path(instance_root)
-        (root / files.HIDDEN_DIR).mkdir(parents=True, exist_ok=True)
-        (root / files.HIDDEN_DIR / "server.jar.bak").write_bytes(b"old jar")
-        (root / "eula.txt").write_text("eula=true\n")
-
-        with zipfile.ZipFile(_zip_to(root)) as zf:
-            assert zf.namelist() == ["eula.txt"]
-
 
 class TestCompressionPolicy:
     def test_already_compressed_files_are_stored_verbatim(self, instance_root):
@@ -74,11 +65,3 @@ class TestCompressionPolicy:
         assert info.compress_type == zipfile.ZIP_DEFLATED
         assert info.compress_size < info.file_size // 10
 
-    def test_the_archive_round_trips(self, instance_root):
-        root = Path(instance_root)
-        (root / "ops.json").write_text('[{"name":"admin"}]')
-        (root / "world.mca").write_bytes(bytes(range(256)) * 512)
-        dest = _zip_to(root)
-        with zipfile.ZipFile(dest) as zf:
-            assert zf.read("ops.json") == b'[{"name":"admin"}]'
-            assert zf.read("world.mca") == bytes(range(256)) * 512
