@@ -88,11 +88,7 @@ def create_node(body: NodeCreate) -> EnrollmentOut:
 
 @router.post("/nodes/{node_id}/reenroll", response_model=EnrollmentOut)
 async def reenroll_node(node_id: str) -> EnrollmentOut:
-    """Mint a fresh enrollment token (e.g. after re-imaging a box).
-
-    Also the revocation path for a node suspected compromised: the old
-    credential stops working at once, including on a socket already open.
-    """
+    """Mint a fresh enrollment token and revoke the current credential."""
     settings = get_settings()
     token = tokens.generate_token()
     with session_scope() as db:

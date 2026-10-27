@@ -44,9 +44,7 @@ def now_ts() -> float:
     return time.time()
 
 
-#: An identifier that ends up in a file name (the agent's pty mirror), a tmux
-#: target and a URL path (transfers). Hub-minted ids are uuid4 hex; this only
-#: refuses what could address something else in any of those places.
+#: Used in file names, tmux targets and URL paths.
 SafeId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 
 
@@ -159,8 +157,7 @@ class Action(str, Enum):
 class Hello(BaseModel):
     """First frame from the agent when a connection opens."""
 
-    # Bounded: this is the one frame the hub parses before authenticating, and
-    # its strings are stored and served to every UI.
+    # Bounded: parsed before authentication.
     kind: Literal[FrameKind.hello] = FrameKind.hello
     protocol: str = Field(default=PROTOCOL_VERSION, max_length=32)
     agent_version: str = Field(max_length=64)

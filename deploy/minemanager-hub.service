@@ -28,7 +28,7 @@ Type=simple
 User=minemanager-hub
 Group=minemanager-hub
 
-# Holds MM_PROXY_SECRET. systemd reads it as root, so keep it root:root 0600.
+# Holds MM_PROXY_SECRET; keep it root:root 0600.
 EnvironmentFile=/etc/minemanager/hub.env
 
 ExecStart=/opt/minemanager/venv/bin/minemanager-hub
@@ -38,7 +38,6 @@ RestartSec=3
 TimeoutStopSec=3
 
 # Hardening. The hub needs to write only its data directory.
-# Check with: systemd-analyze security minemanager-hub
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -59,7 +58,6 @@ LockPersonality=true
 SystemCallArchitectures=native
 CapabilityBoundingSet=
 AmbientCapabilities=
-# The database is created group/world-unreadable.
 UMask=0027
 # Only the SQLite DB. Must match MM_DATA_DIR in hub.env.
 ReadWritePaths=/var/lib/minemanager

@@ -145,11 +145,9 @@ def _claim_agent_session(node_id: str, session_id: str | None) -> bool:
         return restarted
 
 
-#: An unauthenticated client must not hold a socket open without saying hello.
 _HELLO_TIMEOUT_S = 15.0
 
-#: What an agent may push. ``provision.done`` is raised by the hub itself, so an
-#: agent sending one would be forging the outcome of a creation.
+#: Events an agent may send (provision.done is hub-only).
 _AGENT_EVENTS = frozenset({
     Action.ev_console_output.value,
     Action.ev_state_changed.value,
@@ -158,12 +156,7 @@ _AGENT_EVENTS = frozenset({
 
 
 def _owns(conn: AgentConnection, instance_id: str) -> bool:
-    """Whether ``instance_id`` is declared on this connection's node.
-
-    The UI applies events by instance id whichever node's socket carried them,
-    so without this one compromised node could write another node's console,
-    fake its run state, and (via note_clean_exit) disarm its autostart.
-    """
+    """Whether ``instance_id`` is declared on this connection's node."""
     if instance_id in conn.owned_instances:
         return True
     with session_scope() as db:
@@ -193,7 +186,7 @@ def _admit_event(conn: AgentConnection, event: Event) -> Event | None:
 
 
 def _decode(message: dict) -> dict | None:
-    """One received WebSocket message as a JSON object, or None if it is not one."""
+    """A WebSocket message as a JSON object, or None."""
     raw = message.get("text")
     if raw is None and message.get("bytes") is not None:
         raw = message["bytes"].decode("utf-8", errors="replace")
@@ -275,7 +268,7 @@ async def agent_endpoint(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     except RuntimeError:
-        # Receiving on a socket the hub itself closed (revocation, replaced).
+        # The hub closed this socket itself.
         if not conn.closed:
             raise
     finally:

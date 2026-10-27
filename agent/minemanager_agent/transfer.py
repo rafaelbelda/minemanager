@@ -27,9 +27,7 @@ from minemanager_shared.protocol import TransferStartData
 # 1 ms stall, 256 KiB gives 16 MB/s and 1 MiB gives 63 MB/s.
 CHUNK = 1024 * 1024
 
-# No read/write limit: a multi-GB stream legitimately stalls for as long as the
-# browser on the far side applies backpressure. Connecting is bounded, so an
-# unreachable hub fails the transfer instead of parking it forever.
+# Streams may stall under backpressure; only connecting is bounded.
 _TIMEOUT = httpx.Timeout(None, connect=30.0)
 
 

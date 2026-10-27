@@ -18,8 +18,7 @@ class ProviderError(Exception):
     """A provider could not satisfy a request (unknown version, upstream down…)."""
 
 
-# Version and build ids are spliced into upstream URL paths. Real ones are
-# "1.21.8", "3.4.0", "60"; anything with a separator or ".." is refused.
+# Version/build ids go into upstream URL paths.
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 
 
@@ -30,12 +29,7 @@ def check_id(kind: str, value: str) -> str:
 
 
 def check_url(url: str, domains: tuple[str, ...]) -> str:
-    """Require ``url`` to be https on one of the vendor's own ``domains``.
-
-    The URL comes from upstream metadata and is fetched by the agent, inside
-    the node's network. Pinning it to the vendor keeps a tampered or broken
-    catalog from aiming that request anywhere else.
-    """
+    """Require ``url`` to be https on one of the vendor's ``domains``."""
     try:
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower()

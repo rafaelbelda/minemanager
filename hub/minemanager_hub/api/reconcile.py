@@ -41,7 +41,7 @@ def note_clean_exit(event: Event, node_id: str) -> None:
 
     The agent reports an observation; the decision to change declared state is
     taken here, because the hub owns declared state. Only the reporting node's
-    own instances are touched: one node's word says nothing about another's.
+    own instances are touched.
 
     The other paths that end a session do not set ``clean_exit``: a UI Stop
     clears the flag through its REST route, a UI Restart must not clear it, and

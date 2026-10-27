@@ -6,8 +6,7 @@ requires-python = ">=3.11"
 dependencies = [
     "minemanager-shared",
     "fastapi>=0.110",
-    # Floors for known vulnerabilities, not features: starlette < 1.3.1 (multipart
-    # and StaticFiles DoS among others), h11 < 0.16 (request smuggling).
+    # Security floors (known CVEs below these).
     "starlette>=1.3.1",
     "h11>=0.16.0",
     "uvicorn[standard]>=0.27",

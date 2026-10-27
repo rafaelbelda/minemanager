@@ -43,12 +43,7 @@ class UpdateError(Exception):
 
 
 class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
-    """Follow redirects only to https.
-
-    urllib's default follows https -> http, which would fetch the binary in
-    clear and let a redirect point the agent at plain-http hosts on its own
-    network. The checksum still guards the content, but neither is wanted.
-    """
+    """Follow redirects only to https (urllib's default allows https -> http)."""
 
     max_redirections = 5
 

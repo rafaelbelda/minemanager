@@ -53,13 +53,12 @@ class AgentConnection:
         self._close = close
         self._pending: dict[str, asyncio.Future[Response]] = {}
         self._send_lock = asyncio.Lock()
-        # Instance ids confirmed to belong to this node, so the per-event
-        # ownership check (agent_ws) costs a query only on first sight.
+        # Cache for agent_ws's per-event ownership check.
         self.owned_instances: set[str] = set()
         self.closed = False
 
     async def close(self) -> None:
-        """Drop the underlying socket, e.g. when the node's credential is revoked."""
+        """Drop the underlying socket."""
         self.closed = True
         self.fail_all(ConnectionError("agent connection closed by the hub"))
         if self._close is not None:
@@ -121,8 +120,7 @@ class AgentRegistry:
             # connection's in-flight commands are rejected rather than left to
             # time out on a socket nobody will read.
             previous.fail_all(ConnectionError("agent connection replaced by a newer one"))
-            # And closed: left open, its pump would keep feeding events in under
-            # this node's name from a socket the hub no longer commands.
+            # Closed too, or it keeps pushing events under this node's name.
             self._spawn_close(previous)
         self._agents[conn.node_id] = conn
 
@@ -132,11 +130,7 @@ class AgentRegistry:
             conn.fail_all(ConnectionError("agent disconnected"))
 
     async def disconnect(self, node_id: str) -> None:
-        """Unregister and close a node's live connection, if it has one.
-
-        For revocation: re-enrolling or deleting a node invalidates its
-        credential, which would otherwise only bite at the next reconnect.
-        """
+        """Unregister and close a node's live connection (revocation)."""
         conn = self._agents.pop(node_id, None)
         if conn is not None:
             await conn.close()
@@ -144,7 +138,7 @@ class AgentRegistry:
     def _spawn_close(self, conn: AgentConnection) -> None:
         try:
             task = asyncio.get_running_loop().create_task(conn.close())
-        except RuntimeError:          # no loop (sync tests): nothing to close
+        except RuntimeError:          # no running loop
             return
         self._closing.add(task)
         task.add_done_callback(self._closing.discard)

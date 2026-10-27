@@ -132,9 +132,7 @@ def _finish(plan, overwrite, write_one) -> dict:
                 target.mkdir(parents=True, exist_ok=True)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                # Into a sibling first, so a member that fails part-way (bad
-                # CRC, full disk) neither leaves a fragment nor truncates the
-                # file it was going to overwrite.
+                # Temp file first: a failed member must not truncate the target.
                 part = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
                 try:
                     write_one(part, rel)
@@ -204,8 +202,7 @@ def _do_gz(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
         return {"extracted": False, "conflicts": [joined], "conflict_count": 1}
     # A single gzip stream does not declare its uncompressed size up front (the
     # footer's ISIZE is only mod 2^32), so the budget is enforced while copying.
-    # Into a sibling first, as in _finish: a stream that fails part-way must not
-    # leave the file it was overwriting truncated.
+    # Temp file first, as in _finish.
     part = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
     written = 0
     try:

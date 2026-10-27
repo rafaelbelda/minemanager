@@ -7,7 +7,7 @@ dependencies = [
     "minemanager-shared",
     "websockets>=12",
     "httpx>=0.27",
-    "h11>=0.16.0",          # floor for a request-smuggling fix, via httpx
+    "h11>=0.16.0",          # security floor
 ]
 
 [project.scripts]

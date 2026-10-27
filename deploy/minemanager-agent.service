@@ -31,8 +31,7 @@ User=minemanager-agent
 Group=minemanager-agent
 
 # MM_HUB_URL, MM_AGENT_DATA_DIR, MM_ENROLL_TOKEN (first run only), etc.
-# Read by systemd as root; keep it root:root 0600 (the servers run as this
-# unit's user and must not read it).
+# Keep it root:root 0600; the servers run as this unit's user.
 EnvironmentFile=/etc/minemanager/agent.env
 
 ExecStart=/opt/minemanager/venv/bin/minemanager-agent
@@ -43,11 +42,8 @@ KillMode=mixed
 TimeoutStopSec=300
 
 # --- Hardening -------------------------------------------------------------
-# Everything here also confines the Minecraft servers, which are this unit's
-# children. Check with: systemd-analyze security minemanager-agent
-#
-# Deliberately absent: MemoryDenyWriteExecute (breaks the JVM's JIT) and
-# ProcSubset=pid (Java reads /proc/meminfo and /proc/cpuinfo).
+# Also confines the servers. No MemoryDenyWriteExecute (JVM JIT) or
+# ProcSubset=pid (Java reads /proc/meminfo).
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
@@ -62,12 +58,9 @@ RestrictNamespaces=true
 RestrictRealtime=true
 LockPersonality=true
 SystemCallArchitectures=native
-# No capabilities at all: the agent and its servers need none.
 CapabilityBoundingSet=
 AmbientCapabilities=
-# /dev with only the pseudo devices (null, urandom, the pty subsystem tmux uses).
 PrivateDevices=true
-# Other users' processes (the hub, on a shared box) are invisible to plugins.
 ProtectProc=invisible
 
 # PrivateTmp MUST stay off. tmux's socket lives under /tmp.

@@ -24,10 +24,8 @@ log = logging.getLogger("minemanager.hub")
 # the browser still cannot read the response without CORS.
 _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 
-# Header the reverse proxy sets once its own authentication has passed.
 PROXY_SECRET_HEADER = "x-minemanager-proxy-secret"
 
-# Shorter than this is guessable or a placeholder left in the example file.
 MIN_PROXY_SECRET_LEN = 32
 
 # Wildcard entry that turns the Host allowlist off entirely.
@@ -35,9 +33,7 @@ ANY_HOST = "*"
 
 
 def is_agent_path(path: str) -> bool:
-    """Paths authenticated by a node credential (see transfers._auth_agent and
-    the agent handshake) rather than by the proxy. Kept exact: a prefix such as
-    ``/ws/agent`` would also exempt ``/ws/agentX``."""
+    """Paths authenticated by a node credential rather than the proxy."""
     return path == "/ws/agent" or path.startswith("/api/internal/transfer/")
 
 
@@ -191,17 +187,10 @@ def check_proxy_config(settings) -> None:
 
 
 class ProxyGuard:
-    """Admit only requests the authenticating reverse proxy forwarded.
+    """Admit only requests carrying the proxy's shared secret.
 
-    The proxy proves it handled a request by adding the shared secret, which it
-    does only after its own authentication succeeded. A request that reached
-    the hub's port any other way (a local process, a WireGuard peer, a proxy
-    route that skipped auth) lacks it and is refused. Agent paths are exempt:
-    agents cannot pass interactive auth, and carry a node credential instead.
-
-    ``user_header`` names the header the proxy fills with the authenticated
-    user. It is only believed here, after the secret matched, so a client
-    cannot pick its own identity by sending the header itself.
+    Agent paths are exempt (node credential). ``user_header`` is trusted only
+    after the secret matched.
     """
 
     def __init__(self, app, secret: str | None, user_header: str | None = None) -> None:
@@ -246,9 +235,6 @@ class ProxyGuard:
         await self.app(scope, receive, send)
 
 
-# The UI is plain same-origin ES modules, stylesheets and fonts, and builds
-# every node through the DOM, so nothing inline is needed. connect-src 'self'
-# also stops a page from being pointed at another hub.
 _CSP = (
     "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
     "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; "
@@ -262,8 +248,7 @@ _SECURITY_HEADERS = (
     (b"cross-origin-opener-policy", b"same-origin"),
 )
 
-# Swagger UI and ReDoc load scripts from a CDN and inline, so the CSP would
-# blank them. They are off unless MM_ENABLE_DOCS.
+# Swagger UI/ReDoc need CDN and inline scripts.
 _NO_CSP_PATHS = ("/docs", "/redoc")
 
 

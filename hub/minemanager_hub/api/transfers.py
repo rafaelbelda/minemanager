@@ -31,8 +31,7 @@ from minemanager_shared.protocol import Action, TransferStartData
 
 router = APIRouter(prefix="/api", tags=["transfers"])
 
-# Client-chosen, and spliced into the URL the agent dials back on, so it must not
-# be able to carry a path or query of its own. Same rule as protocol.SafeId.
+# Ends up in the agent's callback URL; same rule as protocol.SafeId.
 _TID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 TidQuery = Annotated[str, Query(pattern=_TID_PATTERN)]
 TidPath = Annotated[str, Path(pattern=_TID_PATTERN)]

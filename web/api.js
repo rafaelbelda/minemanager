@@ -8,9 +8,7 @@
 
 const STORE_KEY = 'mm.hubBase';
 
-// A development aid only. Honoured on a deployed hub it would let one crafted
-// link repoint the UI, persistently, at any server: every console command, file
-// and enrollment token typed afterwards would go there.
+// Dev only: on a deployed hub, ?hub= would let a link repoint the UI elsewhere.
 const DEV_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
 
 function resolveBase() {

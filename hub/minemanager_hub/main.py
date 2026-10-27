@@ -72,10 +72,8 @@ async def lifespan(_app: FastAPI):
                  f" and {settings.proxy_user_header}" if settings.proxy_user_header else "")
     else:
         log.warning(
-            "MM_PROXY_SECRET is not set: the hub cannot tell requests that passed the "
-            "reverse proxy's authentication from ones that did not. Any process that can "
-            "connect to %s:%s, including a Minecraft server on this machine, has full "
-            "control of every node. Set MM_PROXY_SECRET (see deploy/README.md).",
+            "MM_PROXY_SECRET is not set: any process that can connect to %s:%s, "
+            "including a local Minecraft server, has full control. See deploy/README.md.",
             settings.host, settings.port,
         )
 
@@ -125,15 +123,14 @@ app.add_middleware(
     extra_origins=set(_settings.cors_origins),
     allow_api_clients=_settings.allow_api_clients,
 )
-# Outside the Origin check, inside the Host check: a rebinding attempt is
-# refused before anything else, and nothing unauthenticated reaches the app.
+# Between the Host and Origin checks.
 app.add_middleware(
     webguard.ProxyGuard,
     secret=_settings.proxy_secret,
     user_header=_settings.proxy_user_header,
 )
 app.add_middleware(webguard.HostGuard, allowed=_settings.allowed_hosts)
-# Outermost, so the guards' own rejections carry the headers too.
+# Outermost, so rejections get the headers too.
 app.add_middleware(webguard.SecurityHeaders)
 
 # Agent transport (agents dial in here).

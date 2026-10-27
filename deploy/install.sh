@@ -69,14 +69,12 @@ if [ "$DO_HUB" = 1 ]; then
   run chown "$HUB_USER:$HUB_USER" "$HUB_DATA"
   run chmod 0750 "$HUB_DATA"
 
-  # Env files are read by systemd as root before it drops privileges, so they
-  # are root-only: the service users never need to read them.
+  # Env files are root-only; systemd reads them as root.
   if [ -f "$ETC/hub.env" ]; then
     note "$ETC/hub.env exists, left alone"
   else
     run install -o root -g root -m 0600 "$REPO/deploy/hub.env.example" "$ETC/hub.env"
-    # The proxy secret is generated here and never printed. proxy.env holds the
-    # same value for the reverse proxy's environment (see deploy/Caddyfile).
+    # Secret is never printed; proxy.env is the reverse proxy's copy.
     if [ "$DRY" = 1 ]; then
       echo "  + generate MM_PROXY_SECRET into $ETC/hub.env and $ETC/proxy.env"
     else
@@ -102,8 +100,7 @@ if [ "$DO_AGENT" = 1 ]; then
   if [ -f "$ETC/agent.env" ]; then
     note "$ETC/agent.env exists, left alone"
   else
-    # Not group-readable by the agent user: every Minecraft server runs as
-    # that user, and this file holds the enrollment token while it is valid.
+    # Not readable by the agent user (= the servers): holds the enroll token.
     run install -o root -g root -m 0600 "$REPO/deploy/agent.env.example" "$ETC/agent.env"
     note "wrote $ETC/agent.env"
   fi
