@@ -28,6 +28,9 @@ Type=simple
 User=minemanager-hub
 Group=minemanager-hub
 
+# Where install.sh puts the UI. hub.env can override it.
+Environment=MM_WEB_DIR=/opt/minemanager/web
+
 # Holds MM_PROXY_SECRET; keep it root:root 0600.
 EnvironmentFile=/etc/minemanager/hub.env
 

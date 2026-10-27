@@ -23,9 +23,11 @@ sudo ./deploy/install.sh --hub --agent --dry-run   # preview
 sudo ./deploy/install.sh --hub --agent
 ```
 
-It creates the users and directories, installs a venv, generates the proxy
-secret, writes `/etc/minemanager/*.env` (root-only) and the systemd units while
-printing every step.
+It creates the users and directories, installs a venv and the UI (to
+`/opt/minemanager/web`), generates the proxy secret, writes
+`/etc/minemanager/*.env` (root-only) and the systemd units while printing every
+step. A re-run upgrades the code; restart the services afterwards (restarting
+the agent stops its servers).
 
 ## Configure
 
