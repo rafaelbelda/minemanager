@@ -20,7 +20,7 @@
 
 
 # MM_PROXY_SECRET comes from Caddy's environment: `sudo systemctl edit caddy`,
-# add `[Service]` / `EnvironmentFile=/etc/minemanager/proxy.env` or adapt a existing Caddyfile to this format.
+# add `[Service]` / `EnvironmentFile=/etc/minemanager/proxy.env`.
 
 minemanager.example.internal {          # must match MM_ALLOWED_HOSTS
 	@agent path /ws/agent /api/internal/transfer/*
