@@ -23,8 +23,9 @@ sudo ./deploy/install.sh --hub --agent --dry-run   # preview
 sudo ./deploy/install.sh --hub --agent
 ```
 
-It creates the users and directories, installs a venv, generates the vault key,
-writes `/etc/minemanager/*.env` and the systemd units while printing every step.
+It creates the users and directories, installs a venv, generates the proxy
+secret, writes `/etc/minemanager/*.env` (root-only) and the systemd units while
+printing every step.
 
 ## Configure
 
@@ -37,9 +38,44 @@ loopback only; anything else gets HTTP 400.
 sudo systemctl enable --now minemanager-hub
 ```
 
-Then, put your reverse proxy and authentication in front. **MineManager Hub does not authenticate end users itself.** For extra security, expose it only through WireGuard.
+Then, put your reverse proxy and authentication in front. **MineManager Hub does
+not authenticate end users itself.** For extra security, expose it only through
+WireGuard.
 
-See [`Caddyfile`](Caddyfile) for a working config. Caddy's defaults already
+### The proxy is the authentication, so the hub checks it was there
+
+Whoever reaches the hub's API has code execution on every node: a start command
+is a shell command. A proxy in front only protects the requests that go through
+it, and `127.0.0.1:8730` is reachable by every process on the hub's machine,
+including a Minecraft plugin when an agent runs there too.
+
+So the proxy adds a shared secret, `MM_PROXY_SECRET`, to every request it has
+authenticated, and the hub refuses any request without it. The installer
+generates the secret into `hub.env` and writes the same value to
+`/etc/minemanager/proxy.env` for the proxy. For Caddy:
+
+```bash
+sudo systemctl edit caddy        # add: [Service] / EnvironmentFile=/etc/minemanager/proxy.env
+```
+
+[`Caddyfile`](Caddyfile) is a working config with Authelia. Two things in it are
+load-bearing:
+
+- `/ws/agent` and `/api/internal/transfer/*` bypass Authelia (agents
+  authenticate with their node credential) and must never get the secret.
+- Everything else goes through `forward_auth` first and gets the secret only
+  after it, via `header_up`.
+
+Set `MM_PROXY_USER_HEADER=Remote-User` as well to require an authenticated user
+on every request and log who made each change. A hub bound to a non-loopback
+address refuses to start without `MM_PROXY_SECRET`.
+
+If the UI answers `401 This hub only accepts requests forwarded by its
+authenticating reverse proxy`, the proxy is not sending the secret.
+
+### Transfers
+
+Caddy's defaults already
 suit large transfers — no body buffering, no size limit, no timeouts — so the
 only thing to get wrong is adding `request_body max_size` or a transport
 `read_timeout`, either of which breaks multi-GB uploads. (nginx is the opposite:
@@ -88,9 +124,35 @@ The installer creates `minemanager-hub` and `minemanager-agent`.
 On a multi-node setup this matters: every Minecraft server runs as the agent's user,
 so any plugin already has code execution as that user. If the hub ran as the same user, a compromised plugin could get code execution across the whole fleet.
 
-On a single machine whose hub manages only itself there is nothing to escalate
-to, so one user is mostly fine; You **could** set `User=`/`Group=` in both units
-to the same account and give it both data directories.
+Keep them separate even on a single machine: the hub's database and
+`MM_PROXY_SECRET` are what stand between a plugin and every other node.
+
+## What a compromised server can and cannot do
+
+Treat every server jar and plugin as code that may be hostile.
+
+It **can**, on its own node: read and change every other instance there, read
+the agent's `identity.json` and so impersonate the node to the hub, and see the
+commands and file contents the hub sends that node. The agent and the servers
+share one Unix user and one systemd sandbox, so nothing on a node separates
+them; separating them would mean a user per instance, which this deployment
+model does not have.
+
+It **cannot**, after the hardening in this release: reach the hub's API (no
+proxy secret), act as another node (credentials are per node), write another
+node's console or run state or disarm its autostart (the hub drops events for
+instances the sending node does not host), forge a creation result, or keep a
+connection once you revoke the node.
+
+What follows for operators:
+
+- **One node per trust level.** Do not put a server running untrusted plugins
+  on the same node as one you need to protect.
+- **Revoke a suspect node** with *Re-enroll* in the UI: the credential is
+  invalidated and the live connection dropped at once. Then reinstall the box.
+- **Do not copy files** downloaded from a suspect node onto other nodes.
+- Run the hub and an agent on the same machine only with the two users and
+  `MM_PROXY_SECRET` in place.
 
 ## Notes
 

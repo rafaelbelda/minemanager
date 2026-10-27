@@ -1,13 +1,23 @@
 /* REST client for the MineManager hub.
  *
  * No app-layer auth: requests are same-origin behind the reverse proxy. For dev
- * against a hub on another port, pass `?hub=http://localhost:8730` (kept in
- * localStorage) and start the hub with MM_CORS_ORIGINS set.
+ * against a hub on another port, serve the UI from localhost, pass
+ * `?hub=http://localhost:8730` (kept in localStorage) and start the hub with
+ * MM_CORS_ORIGINS set. Ignored when the UI is not served from loopback.
  */
 
 const STORE_KEY = 'mm.hubBase';
 
+// A development aid only. Honoured on a deployed hub it would let one crafted
+// link repoint the UI, persistently, at any server: every console command, file
+// and enrollment token typed afterwards would go there.
+const DEV_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 function resolveBase() {
+  if (!DEV_HOSTS.has(location.hostname)) {
+    try { localStorage.removeItem(STORE_KEY); } catch { /* storage blocked */ }
+    return '';
+  }
   const q = new URLSearchParams(location.search).get('hub');
   if (q !== null) {
     const v = q.replace(/\/$/, '');

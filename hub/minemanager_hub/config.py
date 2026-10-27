@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from minemanager_shared.env import env_bool, env_csv, env_int, env_path, env_str
+from minemanager_shared.env import env_bool, env_csv, env_int, env_opt, env_path, env_str
 
 #: SQLite DB location. Matches the systemd unit; a hub pointed at a different
 #: directory silently opens an empty database.
@@ -71,6 +71,26 @@ class Settings:
     # Serve /docs, /redoc and /openapi.json. Off by default: with no app-layer
     # auth they hand anyone who reaches the hub a map of the attack surface.
     enable_docs: bool = field(default_factory=lambda: env_bool("MM_ENABLE_DOCS"))
+
+    # The trust boundary with the authenticating reverse proxy. The proxy adds
+    # this value as X-MineManager-Proxy-Secret, and only after its auth check
+    # passes. Without it, anything that can open a TCP connection to MM_HOST
+    # (a Minecraft plugin on this machine, a WireGuard peer) skips the proxy's
+    # authentication entirely, since the hub has none of its own.
+    proxy_secret: str | None = field(default_factory=lambda: env_opt("MM_PROXY_SECRET"))
+
+    # Header carrying the authenticated user's name (Authelia: Remote-User).
+    # Optional; when set it is required on every proxied request and logged on
+    # state changes. Trusted only on a request that carried the proxy secret.
+    proxy_user_header: str | None = field(
+        default_factory=lambda: env_opt("MM_PROXY_USER_HEADER")
+    )
+
+    # Run with no proxy secret on a non-loopback bind. Off: such a hub would
+    # hand full control to every host that can reach it.
+    allow_unauthenticated: bool = field(
+        default_factory=lambda: env_bool("MM_ALLOW_UNAUTHENTICATED")
+    )
 
     @property
     def db_path(self) -> Path:

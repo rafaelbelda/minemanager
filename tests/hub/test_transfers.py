@@ -148,3 +148,13 @@ class TestApi:
 
     def test_cancel_of_an_unknown_transfer_is_a_no_op(self, client):
         assert client.post("/api/transfers/never-existed/cancel").json() == {"ok": True}
+
+    def test_a_transfer_id_cannot_carry_a_path(self, client, instance_id):
+        # The id is spliced into the URL the agent dials back on (with its
+        # node credential attached), so it must not be able to re-aim it.
+        r = client.get(f"/api/instances/{instance_id}/files/download-stream",
+                       params={"path": "world", "tid": "../../nodes/x/reenroll"})
+        assert r.status_code == 422
+        r = client.post(f"/api/instances/{instance_id}/files/upload-stream",
+                        params={"path": "x", "tid": "a?b=c"}, content=b"")
+        assert r.status_code == 422

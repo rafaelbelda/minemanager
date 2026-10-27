@@ -18,7 +18,9 @@ Version 26.10.26. MIT.
   machine does. Crashed ones restart per their `restart_policy`.
 
 What it does not do: authenticate anyone. Put Authelia, or anything
-equivalent, in front of it, and expose it over WireGuard.
+equivalent, in front of it, have that proxy send `MM_PROXY_SECRET` so the hub
+can tell it was there, and expose it over WireGuard. See
+[`deploy/README.md`](deploy/README.md#the-proxy-is-the-authentication-so-the-hub-checks-it-was-there).
 
 ## How it is built
 

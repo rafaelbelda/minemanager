@@ -130,3 +130,90 @@ class TestBudget:
         with pytest.raises(ValueError):
             archive.extract(instance_root, "p.zip")
         assert not (instance_root / "a.txt").exists()
+
+    def test_an_understated_size_header_cannot_slip_past_the_budget(self, instance_root):
+        # A decompression bomb that declares a tiny size to pass the budget:
+        # zipfile stops at the declared size and the CRC then fails, so the
+        # extraction aborts and what it had begun writing is removed.
+        import io
+        import struct
+
+        real = 2 * 1024 * 1024
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("bomb.bin", b"\0" * real)
+        raw = buf.getvalue().replace(struct.pack("<I", real), struct.pack("<I", 10))
+        (instance_root / "p.zip").write_bytes(raw)
+
+        with pytest.raises(zipfile.BadZipFile):
+            archive.extract(instance_root, "p.zip")
+        assert not (instance_root / "bomb.bin").exists()
+
+
+class TestLinksAreNeverMaterialised:
+    """A link member would be a second, unchecked path out of the jail: the
+    member name is checked, but whatever is written through the link is not."""
+
+    def test_zip_symlink_member_is_skipped(self, instance_root):
+        import stat
+
+        with zipfile.ZipFile(instance_root / "p.zip", "w") as zf:
+            link = zipfile.ZipInfo("evil")
+            link.external_attr = (stat.S_IFLNK | 0o777) << 16
+            zf.writestr(link, "/etc/passwd")
+            zf.writestr("ok.txt", "fine")
+        result = archive.extract(instance_root, "p.zip")
+        assert result["extracted"] is True
+        assert not (instance_root / "evil").exists()
+        assert not (instance_root / "evil").is_symlink()
+        assert (instance_root / "ok.txt").read_text() == "fine"
+
+    @pytest.mark.parametrize("kind", [tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.CHRTYPE,
+                                      tarfile.FIFOTYPE])
+    def test_tar_link_and_device_members_are_skipped(self, instance_root, kind):
+        import io
+
+        with tarfile.open(instance_root / "p.tar", "w") as tf:
+            special = tarfile.TarInfo("evil")
+            special.type = kind
+            special.linkname = "/etc/passwd"
+            tf.addfile(special)
+            body = b"fine"
+            regular = tarfile.TarInfo("ok.txt")
+            regular.size = len(body)
+            tf.addfile(regular, io.BytesIO(body))
+        archive.extract(instance_root, "p.tar")
+        assert not (instance_root / "evil").exists()
+        assert not (instance_root / "evil").is_symlink()
+        assert (instance_root / "ok.txt").read_bytes() == b"fine"
+
+
+class TestFailedMemberLeavesNoDamage:
+    def test_a_file_being_overwritten_survives_a_corrupt_member(self, instance_root):
+        import io
+        import struct
+
+        (instance_root / "level.dat").write_bytes(b"precious world data")
+        real = 64 * 1024
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("level.dat", b"\1" * real)
+        raw = buf.getvalue().replace(struct.pack("<I", real), struct.pack("<I", 10))
+        (instance_root / "p.zip").write_bytes(raw)
+
+        with pytest.raises(zipfile.BadZipFile):
+            archive.extract(instance_root, "p.zip", overwrite=True)
+        assert (instance_root / "level.dat").read_bytes() == b"precious world data"
+        assert not list(instance_root.glob(".*.part"))
+
+    def test_a_file_being_overwritten_survives_an_oversized_gzip(self, instance_root, monkeypatch):
+        import gzip
+
+        monkeypatch.setattr(archive, "MAX_EXTRACT_BYTES", 1024)
+        (instance_root / "server.properties").write_text("motd=keep me")
+        (instance_root / "server.properties.gz").write_bytes(gzip.compress(b"x" * 4096))
+
+        with pytest.raises(ValueError, match="extraction"):
+            archive.extract(instance_root, "server.properties.gz", overwrite=True)
+        assert (instance_root / "server.properties").read_text() == "motd=keep me"
+        assert not list(instance_root.glob(".*.part"))

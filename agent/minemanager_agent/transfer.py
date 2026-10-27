@@ -27,6 +27,11 @@ from minemanager_shared.protocol import TransferStartData
 # 1 ms stall, 256 KiB gives 16 MB/s and 1 MiB gives 63 MB/s.
 CHUNK = 1024 * 1024
 
+# No read/write limit: a multi-GB stream legitimately stalls for as long as the
+# browser on the far side applies backpressure. Connecting is bounded, so an
+# unreachable hub fails the transfer instead of parking it forever.
+_TIMEOUT = httpx.Timeout(None, connect=30.0)
+
 
 class TransferError(Exception):
     pass
@@ -80,7 +85,7 @@ async def _run_download(http_base: str, tid: str, root: str, path: str, headers:
                 yield b
 
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(
                 f"{http_base}/api/internal/transfer/{tid}",
                 content=body(),
@@ -103,7 +108,7 @@ async def _run_upload(http_base: str, tid: str, root: str, path: str, headers: d
     work.mkdir(parents=True, exist_ok=True)
     tmp = work / f"ul-{uuid.uuid4().hex}.tmp"
     try:
-        async with httpx.AsyncClient(timeout=None) as client:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             async with client.stream("GET", f"{http_base}/api/internal/transfer/{tid}",
                                      headers=headers) as resp:
                 resp.raise_for_status()

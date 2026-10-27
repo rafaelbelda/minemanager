@@ -1,21 +1,60 @@
-# MineManager Hub — Caddy reverse proxy.
+# MineManager Hub — Caddy reverse proxy with Authelia in front.
 #
 # Caddy's defaults already suit large transfers: it does not buffer request or
 # response bodies to disk, imposes no body-size limit, and sets no read/write
-# timeout. So this is mostly a plain reverse_proxy. Do not add `request_body
-# max_size` or a transport `read_timeout` — either one breaks multi-GB uploads.
+# timeout. Do not add `request_body max_size` or a transport `read_timeout` —
+# either one breaks multi-GB uploads.
 #
-# Put your authentication (Authelia et al.) in front; the hub does not
-# authenticate end users itself.
+# The hub does not authenticate users itself, so this file IS the access
+# control. Two kinds of client reach it:
+#
+#   - agents, on /ws/agent and /api/internal/transfer/*. They cannot pass an
+#     interactive login and authenticate to the hub with their node
+#     credential, so they bypass Authelia.
+#   - everything else (UI, API, UI WebSockets): Authelia first, and only then
+#     the proxy secret, which is how the hub knows the request was checked.
+#
+# The secret must match MM_PROXY_SECRET in /etc/minemanager/hub.env. Caddy reads
+# it from its own environment: `sudo systemctl edit caddy` and add
+#
+#   [Service]
+#   EnvironmentFile=/etc/minemanager/proxy.env
+#
+# (install.sh writes proxy.env, root-only, next to hub.env).
 
 minemanager.example.internal {          # must match MM_ALLOWED_HOSTS
-	# Compress the UI, never the transfer endpoints: those bodies are already
-	# compressed archives, and encoding one drops Content-Length and with it the
-	# browser's progress bar.
-	@compressible not path /api/instances/*/files/download* /api/internal/transfer/*
-	encode @compressible gzip
+	@agent path /ws/agent /api/internal/transfer/*
+	handle @agent {
+		reverse_proxy 127.0.0.1:8730 {
+			# Never vouch for a request Authelia did not see.
+			header_up -X-MineManager-Proxy-Secret
+		}
+	}
 
-	# WebSockets (agent transport, console + event streams) need no special
-	# handling — Caddy v2 proxies them automatically.
-	reverse_proxy 127.0.0.1:8730
+	handle {
+		# `route` keeps this order. Identity headers a client sent itself are
+		# dropped before Authelia supplies the real ones.
+		route {
+			request_header -Remote-User
+			request_header -Remote-Groups
+			request_header -Remote-Email
+			request_header -Remote-Name
+
+			forward_auth authelia:9091 {
+				uri /api/authz/forward-auth
+				copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+			}
+
+			# Compress the UI, never the transfer endpoints: those bodies are
+			# already compressed archives, and encoding one drops Content-Length
+			# and with it the browser's progress bar.
+			@compressible not path /api/instances/*/files/download*
+			encode @compressible gzip
+
+			# WebSockets (console + event streams) need no special handling.
+			reverse_proxy 127.0.0.1:8730 {
+				header_up X-MineManager-Proxy-Secret {$MM_PROXY_SECRET}
+			}
+		}
+	}
 }

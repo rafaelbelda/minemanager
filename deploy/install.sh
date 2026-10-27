@@ -69,11 +69,23 @@ if [ "$DO_HUB" = 1 ]; then
   run chown "$HUB_USER:$HUB_USER" "$HUB_DATA"
   run chmod 0750 "$HUB_DATA"
 
+  # Env files are read by systemd as root before it drops privileges, so they
+  # are root-only: the service users never need to read them.
   if [ -f "$ETC/hub.env" ]; then
     note "$ETC/hub.env exists, left alone"
   else
-    run install -o root -g "$HUB_USER" -m 0640 "$REPO/deploy/hub.env.example" "$ETC/hub.env"
-    note "wrote $ETC/hub.env"
+    run install -o root -g root -m 0600 "$REPO/deploy/hub.env.example" "$ETC/hub.env"
+    # The proxy secret is generated here and never printed. proxy.env holds the
+    # same value for the reverse proxy's environment (see deploy/Caddyfile).
+    if [ "$DRY" = 1 ]; then
+      echo "  + generate MM_PROXY_SECRET into $ETC/hub.env and $ETC/proxy.env"
+    else
+      secret="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
+      sed -i "s|^MM_PROXY_SECRET=.*|MM_PROXY_SECRET=$secret|" "$ETC/hub.env"
+      ( umask 077; printf 'MM_PROXY_SECRET=%s\n' "$secret" > "$ETC/proxy.env" )
+      unset secret
+    fi
+    note "wrote $ETC/hub.env and $ETC/proxy.env (generated MM_PROXY_SECRET)"
   fi
   run install -m 0644 "$REPO/deploy/minemanager-hub.service" /etc/systemd/system/
 fi
@@ -90,7 +102,9 @@ if [ "$DO_AGENT" = 1 ]; then
   if [ -f "$ETC/agent.env" ]; then
     note "$ETC/agent.env exists, left alone"
   else
-    run install -o root -g "$AGENT_USER" -m 0640 "$REPO/deploy/agent.env.example" "$ETC/agent.env"
+    # Not group-readable by the agent user: every Minecraft server runs as
+    # that user, and this file holds the enrollment token while it is valid.
+    run install -o root -g root -m 0600 "$REPO/deploy/agent.env.example" "$ETC/agent.env"
     note "wrote $ETC/agent.env"
   fi
   run install -m 0644 "$REPO/deploy/minemanager-agent.service" /etc/systemd/system/
@@ -104,7 +118,8 @@ if [ "$DO_HUB" = 1 ]; then
   note "1. sudoedit $ETC/hub.env"
   note "   set MM_ALLOWED_HOSTS to the hostname clients use, or the hub 400s every request"
   note "2. sudo systemctl enable --now minemanager-hub"
-  note "3. put your reverse proxy + auth in front; expose only over WireGuard"
+  note "3. put your reverse proxy + auth in front (deploy/Caddyfile); give it"
+  note "   $ETC/proxy.env as an EnvironmentFile. Expose only over WireGuard"
 fi
 if [ "$DO_AGENT" = 1 ]; then
   note "$([ "$DO_HUB" = 1 ] && echo 4 || echo 1). sudoedit $ETC/agent.env  -> set MM_HUB_URL"

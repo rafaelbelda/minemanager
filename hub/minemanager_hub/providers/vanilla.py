@@ -9,10 +9,19 @@ Shapes:
 
 from __future__ import annotations
 
-from minemanager_hub.providers.base import Build, Download, Provider, ProviderError, Version
+from minemanager_hub.providers.base import (
+    Build,
+    Download,
+    Provider,
+    ProviderError,
+    Version,
+    check_id,
+    check_url,
+)
 from minemanager_hub.providers.http import get_json
 
 _MANIFEST = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
+_DOMAINS = ("mojang.com",)
 
 
 class VanillaProvider(Provider):
@@ -35,16 +44,18 @@ class VanillaProvider(Provider):
         return []
 
     async def resolve(self, version: str, build: str | None) -> Download:
+        check_id("version", version)
         data = await self._manifest()
         entry = next((v for v in data.get("versions", []) if v["id"] == version), None)
         if entry is None:
             raise ProviderError(f"unknown Minecraft version {version}")
-        meta = await get_json(entry["url"], ttl=3600)  # per-version metadata is immutable
+        # per-version metadata is immutable
+        meta = await get_json(check_url(entry["url"], _DOMAINS), ttl=3600)
         server = (meta.get("downloads") or {}).get("server")
         if not server or "url" not in server:
             raise ProviderError(f"Mojang has no server jar for {version}")
         return Download(
-            url=server["url"],
+            url=check_url(server["url"], _DOMAINS),
             filename="server.jar",
             version=version,
             build=None,

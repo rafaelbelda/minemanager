@@ -27,7 +27,7 @@ from __future__ import annotations
 import time
 import uuid
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,12 @@ def new_id() -> str:
 def now_ts() -> float:
     """Current unix timestamp (seconds, float)."""
     return time.time()
+
+
+#: An identifier that ends up in a file name (the agent's pty mirror), a tmux
+#: target and a URL path (transfers). Hub-minted ids are uuid4 hex; this only
+#: refuses what could address something else in any of those places.
+SafeId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 
 
 # --------------------------------------------------------------------------- #
@@ -153,19 +159,26 @@ class Action(str, Enum):
 class Hello(BaseModel):
     """First frame from the agent when a connection opens."""
 
+    # Bounded: this is the one frame the hub parses before authenticating, and
+    # its strings are stored and served to every UI.
     kind: Literal[FrameKind.hello] = FrameKind.hello
-    protocol: str = PROTOCOL_VERSION
-    agent_version: str
-    node_id: Optional[str] = None          # set on re-connect; None on first enroll
-    enrollment_token: Optional[str] = None  # one-time token, first enroll only
-    credential: Optional[str] = None        # long-lived per-agent token on reconnect
-    hostname: str
-    session_id: Optional[str] = None
-    capabilities: list[str] = Field(default_factory=list)
+    protocol: str = Field(default=PROTOCOL_VERSION, max_length=32)
+    agent_version: str = Field(max_length=64)
+    # set on re-connect; None on first enroll
+    node_id: Optional[str] = Field(default=None, max_length=64)
+    # one-time token, first enroll only
+    enrollment_token: Optional[str] = Field(default=None, max_length=256)
+    # long-lived per-agent token on reconnect
+    credential: Optional[str] = Field(default=None, max_length=256)
+    hostname: str = Field(max_length=255)
+    session_id: Optional[str] = Field(default=None, max_length=64)
+    capabilities: list[Annotated[str, Field(max_length=32)]] = Field(
+        default_factory=list, max_length=32
+    )
     # The agent's own instance root, which it enforces against this local value
     # rather than anything the hub sends. None = none configured, which
     # disables provisioning for the node.
-    root_dir: Optional[str] = None
+    root_dir: Optional[str] = Field(default=None, max_length=4096)
 
 
 class Welcome(BaseModel):
@@ -232,7 +245,7 @@ class InstanceSpec(BaseModel):
     its own copy in sync.
     """
 
-    id: str
+    id: SafeId
     type: InstanceType
     name: str
     root_dir: str
@@ -362,7 +375,7 @@ class FilesExtractData(InstanceCommand):
 
 
 class TransferStartData(InstanceCommand):
-    tid: str
+    tid: SafeId
     # Closed set: anything else must not reach the upload path.
     direction: Literal["download", "upload"]
     path: str
@@ -372,7 +385,7 @@ class TransferStartData(InstanceCommand):
 class InstanceStatesData(BaseModel):
     """instance.states; node-scoped, so no instance spec."""
 
-    ids: list[str] = Field(default_factory=list)
+    ids: list[SafeId] = Field(default_factory=list, max_length=10_000)
 
 
 # --------------------------------------------------------------------------- #

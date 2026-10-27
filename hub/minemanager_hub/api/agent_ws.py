@@ -17,6 +17,8 @@ Flow per connection:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import logging
 import time
 from datetime import datetime, timezone
@@ -30,6 +32,7 @@ from minemanager_hub.db.models import Instance, Node
 from minemanager_hub.db.session import session_scope
 from minemanager_hub.security import tokens
 from minemanager_shared.protocol import (
+    Action,
     Event,
     Hello,
     Response,
@@ -142,16 +145,76 @@ def _claim_agent_session(node_id: str, session_id: str | None) -> bool:
         return restarted
 
 
+#: An unauthenticated client must not hold a socket open without saying hello.
+_HELLO_TIMEOUT_S = 15.0
+
+#: What an agent may push. ``provision.done`` is raised by the hub itself, so an
+#: agent sending one would be forging the outcome of a creation.
+_AGENT_EVENTS = frozenset({
+    Action.ev_console_output.value,
+    Action.ev_state_changed.value,
+    Action.ev_heartbeat.value,
+})
+
+
+def _owns(conn: AgentConnection, instance_id: str) -> bool:
+    """Whether ``instance_id`` is declared on this connection's node.
+
+    The UI applies events by instance id whichever node's socket carried them,
+    so without this one compromised node could write another node's console,
+    fake its run state, and (via note_clean_exit) disarm its autostart.
+    """
+    if instance_id in conn.owned_instances:
+        return True
+    with session_scope() as db:
+        inst = db.get(Instance, instance_id)
+        owned = inst is not None and inst.node_id == conn.node_id
+    if owned:
+        conn.owned_instances.add(instance_id)
+    return owned
+
+
+def _admit_event(conn: AgentConnection, event: Event) -> Event | None:
+    """The event as it may be applied and forwarded, or None to drop it."""
+    if event.action not in _AGENT_EVENTS:
+        return None
+    if event.action == Action.ev_heartbeat.value:
+        instances = event.data.get("instances")
+        if not isinstance(instances, dict):
+            return event
+        kept = {iid: st for iid, st in instances.items()
+                if isinstance(iid, str) and _owns(conn, iid)}
+        if len(kept) == len(instances):
+            return event
+        return event.model_copy(update={"data": {**event.data, "instances": kept}})
+    if not event.instance_id or not _owns(conn, event.instance_id):
+        return None
+    return event
+
+
+def _decode(message: dict) -> dict | None:
+    """One received WebSocket message as a JSON object, or None if it is not one."""
+    raw = message.get("text")
+    if raw is None and message.get("bytes") is not None:
+        raw = message["bytes"].decode("utf-8", errors="replace")
+    try:
+        value = json.loads(raw) if raw is not None else None
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 @router.websocket("/agent")
 async def agent_endpoint(ws: WebSocket) -> None:
     await ws.accept()
 
     # --- handshake ---
     try:
-        raw = await ws.receive_json()
+        raw = await asyncio.wait_for(ws.receive_json(), timeout=_HELLO_TIMEOUT_S)
         frame = parse_frame(raw)
     except Exception:
-        await ws.close(code=1002)
+        with contextlib.suppress(Exception):
+            await ws.close(code=1002)
         return
 
     if not isinstance(frame, Hello):
@@ -172,7 +235,8 @@ async def agent_endpoint(ws: WebSocket) -> None:
     restarted = _claim_agent_session(node_id, frame.session_id)
     _warn_about_stranded_instances(node_id)   # after the root was mirrored
 
-    conn = AgentConnection(node_id=node_id, send=ws.send_json)
+    conn = AgentConnection(node_id=node_id, send=ws.send_json,
+                           close=lambda: ws.close(code=1008))
     registry.register(conn)
     _touch_last_seen(node_id, force=True)
 
@@ -185,8 +249,13 @@ async def agent_endpoint(ws: WebSocket) -> None:
 
     # --- frame pump ---
     try:
-        while True:
-            raw = await ws.receive_json()
+        while not conn.closed:
+            message = await ws.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            raw = _decode(message)
+            if raw is None:
+                continue
             try:
                 frame = parse_frame(raw)
             except Exception:
@@ -194,14 +263,21 @@ async def agent_endpoint(ws: WebSocket) -> None:
             if isinstance(frame, Response):
                 conn.resolve(frame)
             elif isinstance(frame, Event):
+                event = _admit_event(conn, frame)
+                if event is None:
+                    continue
                 # Read before fan-out: an event can carry a declared-state
                 # consequence, and subscribers are UI sockets that cannot
                 # apply it.
-                reconcile.note_clean_exit(frame)
-                registry.publish(node_id, frame)
+                reconcile.note_clean_exit(event, node_id)
+                registry.publish(node_id, event)
                 _touch_last_seen(node_id)
     except WebSocketDisconnect:
         pass
+    except RuntimeError:
+        # Receiving on a socket the hub itself closed (revocation, replaced).
+        if not conn.closed:
+            raise
     finally:
         # Nothing will read this socket again, so a restore still working
         # through its stagger would send starts nobody can answer.

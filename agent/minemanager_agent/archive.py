@@ -10,9 +10,11 @@ GZ, and RAR when the node has the ``rarfile`` lib + ``unrar`` tool.
 from __future__ import annotations
 
 import gzip
+import os
 import shutil
 import stat
 import tarfile
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -130,7 +132,16 @@ def _finish(plan, overwrite, write_one) -> dict:
                 target.mkdir(parents=True, exist_ok=True)
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
-                write_one(target, rel)
+                # Into a sibling first, so a member that fails part-way (bad
+                # CRC, full disk) neither leaves a fragment nor truncates the
+                # file it was going to overwrite.
+                part = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
+                try:
+                    write_one(part, rel)
+                    if part.exists():
+                        os.replace(part, target)
+                finally:
+                    part.unlink(missing_ok=True)
                 if target not in preexisting:
                     created.append(target)
                 count += 1
@@ -193,9 +204,12 @@ def _do_gz(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
         return {"extracted": False, "conflicts": [joined], "conflict_count": 1}
     # A single gzip stream does not declare its uncompressed size up front (the
     # footer's ISIZE is only mod 2^32), so the budget is enforced while copying.
+    # Into a sibling first, as in _finish: a stream that fails part-way must not
+    # leave the file it was overwriting truncated.
+    part = target.with_name(f".{target.name}.{uuid.uuid4().hex}.part")
     written = 0
     try:
-        with gzip.open(archive, "rb") as src, open(target, "wb") as dst:
+        with gzip.open(archive, "rb") as src, open(part, "wb") as dst:
             while True:
                 chunk = src.read(1024 * 1024)
                 if not chunk:
@@ -207,10 +221,9 @@ def _do_gz(archive: Path, root, dest_rel: str, overwrite: bool) -> dict:
                         f"limit (MM_MAX_EXTRACT_BYTES)"
                     )
                 dst.write(chunk)
-    except Exception:
-        if not preexisting:      # never delete a file that was already there
-            target.unlink(missing_ok=True)
-        raise
+        os.replace(part, target)
+    finally:
+        part.unlink(missing_ok=True)
     return {"extracted": True, "count": 1}
 
 

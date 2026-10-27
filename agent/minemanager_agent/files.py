@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import posixpath
 import shutil
 import zipfile
 from pathlib import Path
@@ -76,9 +77,11 @@ def resolve_instance_root(node_root: str | Path | None, instance_root: str) -> P
 
     ``node_root`` of None means no root is configured and nothing is enforced.
     """
-    # os.path.isabs, not Path.is_absolute: nodes are POSIX, and a leading "/" is
-    # absolute there even when the tests run on Windows.
-    if not os.path.isabs(instance_root or ""):
+    # Nodes are POSIX, where the two checks agree. posixpath as well because a
+    # leading "/" is absolute there even when the tests run on Windows, whose
+    # os.path.isabs("/srv") is False from Python 3.13 on.
+    raw = instance_root or ""
+    if not (posixpath.isabs(raw) or os.path.isabs(raw)):
         raise JailError(f"instance root must be an absolute path: {instance_root!r}")
     candidate = Path(instance_root).expanduser()
 

@@ -36,11 +36,12 @@ log = logging.getLogger("minemanager.hub")
 _START_TIMEOUT_S = 60.0
 
 
-def note_clean_exit(event: Event) -> None:
+def note_clean_exit(event: Event, node_id: str) -> None:
     """Disarm an instance the agent saw shut itself down on purpose.
 
     The agent reports an observation; the decision to change declared state is
-    taken here, because the hub owns declared state.
+    taken here, because the hub owns declared state. Only the reporting node's
+    own instances are touched: one node's word says nothing about another's.
 
     The other paths that end a session do not set ``clean_exit``: a UI Stop
     clears the flag through its REST route, a UI Restart must not clear it, and
@@ -52,7 +53,7 @@ def note_clean_exit(event: Event) -> None:
         return
     with session_scope() as db:
         inst = db.get(Instance, event.instance_id)
-        if inst is not None and inst.start_with_node:
+        if inst is not None and inst.node_id == node_id and inst.start_with_node:
             inst.start_with_node = False
             log.info("%s was shut down from its console; will not start with the node", inst.name)
 

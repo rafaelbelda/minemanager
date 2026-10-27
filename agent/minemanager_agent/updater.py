@@ -42,6 +42,26 @@ class UpdateError(Exception):
     pass
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to https.
+
+    urllib's default follows https -> http, which would fetch the binary in
+    clear and let a redirect point the agent at plain-http hosts on its own
+    network. The checksum still guards the content, but neither is wanted.
+    """
+
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        scheme = urllib.parse.urlparse(newurl).scheme.lower()
+        if scheme != "https":
+            raise UpdateError(f"refusing a redirect to {scheme or 'an unknown scheme'!r}: https required")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_HttpsOnlyRedirects)
+
+
 def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
               timeout: float, max_bytes: int) -> int:
     """Blocking streamed download with time + size guards and checksum verify.
@@ -67,7 +87,7 @@ def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
     started = time.monotonic()
     total = 0
     try:
-        with urllib.request.urlopen(req, timeout=SOCKET_TIMEOUT_S) as resp, dest.open("wb") as fh:
+        with _opener.open(req, timeout=SOCKET_TIMEOUT_S) as resp, dest.open("wb") as fh:
             while True:
                 if time.monotonic() - started > timeout:
                     raise UpdateError("download exceeded the time budget")

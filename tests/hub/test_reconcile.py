@@ -459,7 +459,7 @@ class TestConsoleShutdownDisarms:
     def test_a_clean_exit_disarms_the_instance(self, client, node_id, instance_id):
         _arm(client, instance_id)
 
-        reconcile.note_clean_exit(self._exit_event(instance_id, clean=True))
+        reconcile.note_clean_exit(self._exit_event(instance_id, clean=True), node_id)
 
         row = client.get(f"/api/nodes/{node_id}/instances").json()[0]
         assert row["start_with_node"] is False
@@ -469,7 +469,7 @@ class TestConsoleShutdownDisarms:
         # whole point of the flag.
         _arm(client, instance_id)
 
-        reconcile.note_clean_exit(self._exit_event(instance_id, clean=False))
+        reconcile.note_clean_exit(self._exit_event(instance_id, clean=False), node_id)
 
         row = client.get(f"/api/nodes/{node_id}/instances").json()[0]
         assert row["start_with_node"] is True
@@ -478,23 +478,34 @@ class TestConsoleShutdownDisarms:
         _arm(client, instance_id)
 
         reconcile.note_clean_exit(
-            Event(action=Action.ev_heartbeat.value, data={"clean_exit": True})
+            Event(action=Action.ev_heartbeat.value, data={"clean_exit": True}), node_id
         )
         reconcile.note_clean_exit(
             Event(action=Action.ev_console_output.value, instance_id=instance_id,
-                  data={"line": "stop", "clean_exit": True})
+                  data={"line": "stop", "clean_exit": True}), node_id
         )
 
         row = client.get(f"/api/nodes/{node_id}/instances").json()[0]
         assert row["start_with_node"] is True
 
-    def test_an_event_without_an_instance_is_ignored(self, client):
+    def test_an_event_without_an_instance_is_ignored(self, client, node_id):
         reconcile.note_clean_exit(
-            Event(action=Action.ev_state_changed.value, data={"clean_exit": True})
+            Event(action=Action.ev_state_changed.value, data={"clean_exit": True}), node_id
         )
 
-    def test_an_unknown_instance_is_ignored(self, client):
-        reconcile.note_clean_exit(self._exit_event("nope", clean=True))
+    def test_an_unknown_instance_is_ignored(self, client, node_id):
+        reconcile.note_clean_exit(self._exit_event("nope", clean=True), node_id)
+
+    def test_another_node_cannot_disarm_it(self, client, node_id, instance_id):
+        # A compromised node reporting a "clean exit" for a server it does not
+        # host must not change that server's declared state.
+        _arm(client, instance_id)
+        other = client.post("/api/nodes", json={"name": "box-b"}).json()["node_id"]
+
+        reconcile.note_clean_exit(self._exit_event(instance_id, clean=True), other)
+
+        row = client.get(f"/api/nodes/{node_id}/instances").json()[0]
+        assert row["start_with_node"] is True
 
     async def test_a_disarmed_instance_then_stays_down_across_a_restart(
         self, client, node_id, instance_id, agent
@@ -502,7 +513,7 @@ class TestConsoleShutdownDisarms:
         # End to end for the behaviour asked for: console stop, then the node
         # reboots, and the server is still down.
         _arm(client, instance_id)
-        reconcile.note_clean_exit(self._exit_event(instance_id, clean=True))
+        reconcile.note_clean_exit(self._exit_event(instance_id, clean=True), node_id)
 
         await reconcile.restore(node_id, agent, agent_restarted=True)
 

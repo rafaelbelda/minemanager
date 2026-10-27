@@ -82,7 +82,13 @@ async def node_instance_states(node_id: str) -> dict:
         )
     except (CommandTimeout, ConnectionError):
         return {"states": {}}
-    return resp.data if resp.ok else {"states": {}}
+    states = resp.data.get("states") if resp.ok else None
+    if not isinstance(states, dict):
+        return {"states": {}}
+    # Only what was asked about: the UI applies these by instance id, so an
+    # agent naming another node's instances would rewrite their state there.
+    wanted = set(ids)
+    return {"states": {iid: st for iid, st in states.items() if iid in wanted}}
 
 
 # --- Power -----------------------------------------------------------------

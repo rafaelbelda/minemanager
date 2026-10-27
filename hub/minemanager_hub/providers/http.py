@@ -57,6 +57,10 @@ async def get_json(url: str, *, ttl: float = 300.0) -> Any:
         return cached
     try:
         resp = await _get_client().get(url)
+        # Catalogs carry the checksums the agent verifies against, so none may
+        # arrive over a redirect that dropped TLS.
+        if any(r.url.scheme != "https" for r in (*resp.history, resp)):
+            raise ProviderError(f"upstream redirected {url} off https")
         resp.raise_for_status()
         data = resp.json()
     except httpx.HTTPStatusError as exc:

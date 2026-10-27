@@ -15,9 +15,10 @@ that tears both hops down. Backpressure across each TCP hop keeps memory flat.
 from __future__ import annotations
 
 import asyncio
+from typing import Annotated
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.responses import StreamingResponse
 
 from minemanager_hub.agents.registry import CommandTimeout, registry
@@ -29,6 +30,12 @@ from minemanager_hub.transfers import TransferIdInUse, transfers
 from minemanager_shared.protocol import Action, TransferStartData
 
 router = APIRouter(prefix="/api", tags=["transfers"])
+
+# Client-chosen, and spliced into the URL the agent dials back on, so it must not
+# be able to carry a path or query of its own. Same rule as protocol.SafeId.
+_TID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
+TidQuery = Annotated[str, Query(pattern=_TID_PATTERN)]
+TidPath = Annotated[str, Path(pattern=_TID_PATTERN)]
 
 _HEADER_TIMEOUT = 300.0          # wait for the agent to connect + send headers
 _CMD_TIMEOUT = 12 * 3600.0       # the control command lives for the whole transfer
@@ -54,7 +61,7 @@ def _auth_agent(request: Request, expected_node: str) -> None:
 
 # --- browser-facing --------------------------------------------------------
 @router.get("/instances/{instance_id}/files/download-stream")
-async def download_stream(instance_id: str, path: str, tid: str) -> StreamingResponse:
+async def download_stream(instance_id: str, path: str, tid: TidQuery) -> StreamingResponse:
     conn, spec = agent_and_spec(instance_id)
     ctx = _new_transfer(tid, node_id=conn.node_id, direction="download", path=path)
 
@@ -114,7 +121,7 @@ async def download_stream(instance_id: str, path: str, tid: str) -> StreamingRes
 
 
 @router.post("/instances/{instance_id}/files/upload-stream")
-async def upload_stream(instance_id: str, path: str, tid: str, request: Request) -> dict:
+async def upload_stream(instance_id: str, path: str, tid: TidQuery, request: Request) -> dict:
     conn, spec = agent_and_spec(instance_id)
     ctx = _new_transfer(tid, node_id=conn.node_id, direction="upload", path=path)
     ctx.filename = path.rsplit("/", 1)[-1]
@@ -158,7 +165,7 @@ async def upload_stream(instance_id: str, path: str, tid: str, request: Request)
 
 
 @router.get("/transfers/{tid}")
-def transfer_status(tid: str) -> dict:
+def transfer_status(tid: TidPath) -> dict:
     ctx = transfers.get(tid)
     if ctx is None:
         # Either not started yet or already swept; the UI handles this state.
@@ -167,7 +174,7 @@ def transfer_status(tid: str) -> dict:
 
 
 @router.post("/transfers/{tid}/cancel")
-async def transfer_cancel(tid: str) -> dict:
+async def transfer_cancel(tid: TidPath) -> dict:
     #Cancel an in-flight transfer
     
     ctx = transfers.get(tid)
