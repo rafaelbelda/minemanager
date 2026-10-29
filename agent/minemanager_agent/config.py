@@ -72,6 +72,12 @@ class AgentConfig:
     def pty_dir(self) -> Path:
         return self.data_dir / "pty"
 
+    @property
+    def java_dir(self) -> Path:
+        """Managed Java runtimes. Inside the data dir because that is already a
+        ReadWritePaths entry of the unit, and outside /home (ProtectHome)."""
+        return self.data_dir / "java"
+
     def ensure_root(self) -> None:
         """Create the node root if one is configured, or exit explaining why not.
 

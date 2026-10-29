@@ -98,6 +98,7 @@ async def create_server(node_id: str, body: ServerCreate) -> InstanceOut:
                 root_dir=root_dir,
                 start_command=serverjar.build_start_command(software, body.memory),
                 jar_path=jar_name,
+                java_home=body.java_home,
                 restart_policy=body.restart_policy.value,
                 start_with_node=body.run_after,
             )

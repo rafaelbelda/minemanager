@@ -157,4 +157,15 @@ export const api = {
     get(`/api/providers/${q(software)}/versions/${q(version)}/builds`),
   updateInstanceVersion: (id, version, build) =>
     post(`/api/instances/${id}/update`, build == null ? { version } : { version, build }),
+
+  // Java runtimes, per node. With software + version, each runtime also says
+  // whether it can run that server, and one is recommended.
+  javaCompat: () => get('/api/java/compat'),
+  listJava: (nodeId, software, version) => {
+    const qs = software && version ? `?software=${q(software)}&version=${q(version)}` : '';
+    return get(`/api/nodes/${nodeId}/java${qs}`);
+  },
+  registerJava: (nodeId, javaHome) => post(`/api/nodes/${nodeId}/java`, { java_home: javaHome }),
+  removeJava: (nodeId, javaHome) => del(`/api/nodes/${nodeId}/java?java_home=${q(javaHome)}`),
+  installJava: (nodeId, feature) => post(`/api/nodes/${nodeId}/java/install`, { feature }),
 };

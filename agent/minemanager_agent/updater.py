@@ -105,6 +105,10 @@ def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
     return total
 
 
+#: Public name for other installers (Java runtimes) that need the same guards.
+download_verified = _download
+
+
 def _prune_backups(backups: Path, jar_base: str, keep: int) -> None:
     files = sorted(backups.glob(f"{jar_base}.*.bak"))
     for old in files[:-keep] if len(files) > keep else []:

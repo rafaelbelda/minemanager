@@ -143,6 +143,7 @@ function navigate(sel, { push = true } = {}) {
   render();
   setNav(false);   // a choice was made; the drawer has done its job
   if (sel.type === 'instance' && changedInstance) loadTab();
+  if (sel.type === 'node' && sel.nodeId) { loadNodeJava(sel.nodeId); loadJavaCompat(); }
 }
 
 const selectHub = () => navigate({ type: 'hub' });
@@ -621,6 +622,8 @@ function renderNode() {
 
   fill($('node-enroll-section'),
     state.enrollment && state.enrollment.nodeId === node.id ? enrollSection() : null);
+
+  renderJava(node);
 }
 
 function buildInstanceRows(node, insts) {
@@ -649,6 +652,324 @@ function powerButton(inst, op, glyph, title, disabled, extra = '') {
     title, disabled, type: 'button', 'aria-label': `${title} ${inst.name}`,
     onclick: (ev) => { ev.stopPropagation(); doPower(inst, op, ev.currentTarget); },
   }, glyph);
+}
+
+/* --- java runtimes -------------------------------------------------------- */
+
+// node id -> { data, loading, error }. Live-only: the agent is the authority.
+const javaByNode = new Map();
+let javaCompat = null;          // /api/java/compat, fetched once
+let javaInstalling = null;      // { nodeId, feature } while an install runs
+
+const JAVA_SOURCE = { managed: 'Installed', system: 'Found', manual: 'Added' };
+
+function shortVendor(v) {
+  if (!v) return '';
+  if (/adoptium/i.test(v)) return 'Temurin';
+  return v.replace(/,?\s*(Inc\.?|Corporation|Ltd\.?)$/i, '').trim();
+}
+
+/** "Java 21.0.5+11 · Temurin", or why it cannot be named. */
+function javaName(r) {
+  if (r.probed === false) return 'Not checked (node offline)';
+  if (!r.major) return 'Unknown runtime';    // the reason is shown beneath
+  const vendor = shortVendor(r.vendor);
+  return `Java ${r.version || r.major}${vendor ? ` · ${vendor}` : ''}`;
+}
+
+const javaTitle = (r) => javaName(r) + (r.default ? ' (Default)' : '');
+
+async function loadNodeJava(nodeId) {
+  const prev = javaByNode.get(nodeId);
+  if (prev?.loading) return;
+  javaByNode.set(nodeId, { data: prev?.data || null, loading: true, error: null });
+  if (state.sel.nodeId === nodeId) render();
+  let next;
+  try {
+    next = { data: await api.listJava(nodeId), loading: false, error: null };
+  } catch (err) {
+    next = { data: prev?.data || null, loading: false, error: describe(err) };
+  }
+  javaByNode.set(nodeId, next);
+  if (state.sel.nodeId === nodeId) render();
+}
+
+async function loadJavaCompat() {
+  if (javaCompat) return;
+  try {
+    javaCompat = await api.javaCompat();
+    render();
+  } catch { /* the table is a reference; the rest works without it */ }
+}
+
+function renderJava(node) {
+  const entry = javaByNode.get(node.id);
+  const data = entry?.data;
+  // Listed while the node was offline (or before it came back): look again.
+  if (data && data.online !== node.online && !entry.loading && !entry.error) loadNodeJava(node.id);
+
+  const busy = !!entry?.loading;
+  const installing = javaInstalling?.nodeId === node.id;
+  $('node-java-rescan').disabled = !node.online || busy;
+  $('node-java-add').disabled = !node.online;
+  $('node-java-install').disabled = !node.online || installing || !data?.installable;
+  $('node-java-install').textContent = installing ? `Installing Java ${javaInstalling.feature}…` : 'Install Java';
+  $('node-java-install').title = data && !data.installable && node.online
+    ? `Temurin has no runtime for this node's platform (${data.platform?.os}/${data.platform?.arch || '?'})`
+    : '';
+
+  const sig = JSON.stringify([node.online, busy, entry?.error, data]);
+  repaint($('node-java-rows'), sig, () => buildJavaRows(node, entry));
+
+  if (javaCompat) repaint($('node-java-compat'), 'compat', () => buildCompatTable(javaCompat));
+}
+
+function buildJavaRows(node, entry) {
+  if (!entry || (entry.loading && !entry.data)) return el('div.empty', { text: 'Looking for Java on this node…' });
+  if (entry.error && !entry.data) return el('div.empty', { text: entry.error });
+  const data = entry.data;
+  const rows = data.runtimes || [];
+  const out = [];
+  if (!data.online) {
+    out.push(el('div.empty', { text: 'Node offline. Only runtimes added by path are listed, unchecked.' }));
+  } else if (!rows.length) {
+    out.push(el('div.empty', { text: 'No Java found on this node. Install one, or add its path.' }));
+  }
+  for (const r of rows) {
+    const removable = r.source === 'managed' || r.source === 'manual';
+    const used = r.used_by || [];
+    // A runtime that cannot be used is greyed out, its reason in red.
+    const dim = r.error || r.probed === false;
+    out.push(el(`div.table-row.java-row${dim ? '.java-off' : ''}`, {},
+      el('span.cell-name', {},
+        el('span.java-name', {},
+          el('span.java-title', {},
+            el('span.java-text', { text: javaName(r), title: r.version || '' }),
+            r.default && el('span.java-default', { text: '(Default)' })),
+          r.error && el('span.java-error', { text: r.error }),
+          used.length > 0 && el('span.java-used', { text: `used by ${used.join(', ')}` }))),
+      el('span.cell-type', { text: JAVA_SOURCE[r.source] || r.source }),
+      el('span.cell-root', { text: r.home, title: r.home }),
+      el('span.cell-ctl', {},
+        removable && el('button.btn-icon', {
+          type: 'button',
+          title: r.source === 'managed' ? 'Delete this runtime from the node' : 'Forget this path',
+          'aria-label': `Remove ${r.home}`,
+          disabled: r.source === 'managed' && !node.online,
+          onclick: () => removeJava(node, r),
+        }, '✕'))));
+  }
+  return out;
+}
+
+function buildCompatTable(compat) {
+  const names = { vanilla: 'Minecraft (Vanilla, Paper)', velocity: 'Velocity' };
+  return ['vanilla', 'velocity'].map((software) => {
+    const rules = compat.rules[software] || [];
+    return el('div.compat-group', {},
+      el('div.compat-title', { text: names[software] }),
+      rules.map((rule, i) => {
+        const range = i === 0 ? `Older than ${rules[1]?.since}` : `From ${rule.since}`;
+        const needs = rule.minimum === rule.recommended
+          ? `Java ${rule.recommended}`
+          : `Java ${rule.recommended} (needs ${rule.minimum}+)`;
+        return el('div.compat-row', {}, el('span', { text: range }), el('span', { text: needs }));
+      }));
+  });
+}
+
+async function installJava(node) {
+  const data = javaByNode.get(node.id)?.data;
+  const managed = new Set((data?.runtimes || []).filter((r) => r.source === 'managed').map((r) => r.major));
+  const features = data?.managed || [8, 17, 21, 25];
+  const values = await dialog({
+    title: `Install Java on ${node.name}`,
+    description: 'Downloads an Eclipse Temurin JRE from Adoptium, checks its SHA-256 and '
+               + "unpacks it into the agent's data directory. Reinstalling updates it in "
+               + 'place; servers pick the update up on their next start.',
+    confirmText: 'Install',
+    fields: [{
+      name: 'feature', label: 'Release', type: 'select', value: String(features[features.length - 1]),
+      options: features.slice().reverse().map((f) => ({
+        value: String(f), label: `Java ${f}${managed.has(f) ? ' (installed; update it)' : ''}`,
+      })),
+    }],
+  });
+  if (!values) return;
+  const feature = Number(values.feature);
+  javaInstalling = { nodeId: node.id, feature };
+  render();
+  toast(`Installing Java ${feature} on ${node.name}. This takes a minute.`, 'info');
+  try {
+    const res = await api.installJava(node.id, feature);
+    toast(`Java ${res.runtime?.version || feature} installed on ${node.name}`, 'ok');
+  } catch (err) {
+    toast(describe(err), 'error');
+  } finally {
+    javaInstalling = null;
+    loadNodeJava(node.id);
+  }
+}
+
+async function addJavaPath(node) {
+  const values = await dialog({
+    title: `Add Java on ${node.name}`,
+    description: 'The directory that contains bin/java. It is checked on the node before it is added.',
+    confirmText: 'Add',
+    fields: [{ name: 'path', label: 'Java directory', placeholder: '/opt/jdk-21', mono: true }],
+    validate: (v) => (v.path.trim().startsWith('/') ? null : 'Use an absolute path, such as /opt/jdk-21.'),
+  });
+  if (!values) return;
+  try {
+    const res = await api.registerJava(node.id, values.path.trim());
+    toast(`${javaName(res.runtime)} added`, 'ok');
+  } catch (err) {
+    toast(describe(err), 'error');
+  }
+  loadNodeJava(node.id);
+}
+
+async function removeJava(node, r) {
+  const managed = r.source === 'managed';
+  const ok = await confirmDialog({
+    title: managed ? `Delete ${javaName(r)}?` : `Forget ${r.home}?`,
+    description: managed
+      ? `Deletes ${r.home} from the node. Refused while an instance is set to it.`
+      : 'Removes it from this list. The directory on the node is left alone, and '
+        + 'instances already set to it keep using it.',
+    confirmText: managed ? 'Delete' : 'Forget',
+  });
+  if (!ok) return;
+  try {
+    await api.removeJava(node.id, r.home);
+    toast(managed ? 'Runtime deleted' : 'Path forgotten', 'ok');
+  } catch (err) {
+    toast(describe(err), 'error');
+  }
+  loadNodeJava(node.id);
+}
+
+/**
+ * Options for a "which Java" select, from a listJava() result. The node's
+ * default runtime is the value '' (follow the node default) and is labelled
+ * "(Default)". `preferred` is what a new server should start on: the default
+ * when there is one, else the only or the recommended runtime.
+ */
+function javaChoices(res) {
+  const usable = (res?.runtimes || []).filter((r) => r.major && !r.error);
+  const options = usable.map((r) => {
+    let label = javaTitle(r);
+    const bad = r.compatible === false;
+    if (bad) label += ` (too old, needs ${res.requirement.minimum}+)`;
+    else if (r.home === res.recommended_home) label += ' (recommended)';
+    return { value: r.default ? '' : r.home, label, bad };
+  });
+  const def = usable.find((r) => r.default);
+  if (!def) {
+    // A default that exists but cannot run says so, rather than "none".
+    const broken = (res?.runtimes || []).find((r) => r.default);
+    options.unshift(broken
+      ? { value: '', label: `Node default (unusable: ${broken.error})`, bad: true }
+      : { value: '', label: "Node default (no java on the agent's PATH)", bad: !!res?.online });
+  }
+  const preferred = def ? '' : usable.length ? (res.recommended_home || usable[0].home) : '';
+  return { options, preferred };
+}
+
+/**
+ * The line under a Java picker: what the server needs, and what is wrong.
+ * `bad` marks a choice that will not start the server, shown in red. It
+ * warns, never blocks: running a server on another Java is allowed.
+ */
+function javaNote(res, value, what, idle = 'Takes effect the next time this instance starts.') {
+  if (!res) return { text: 'Looking for Java on the node…' };
+  if (!res.online) return { text: "Node offline: its Java runtimes can't be listed." };
+  const usable = (res.runtimes || []).filter((r) => r.major && !r.error);
+  const picked = usable.find((r) => (value === '' ? r.default : r.home === value));
+  const req = res.requirement;
+  const parts = [];
+  let bad = false;
+  if (value === '' && !picked && usable.length) {
+    parts.push("The node has no working default Java: pick one, or this server won't start.");
+    bad = true;
+  }
+  if (req && what) {
+    parts.push(`${what} needs Java ${req.minimum} or newer.`);
+    if (picked && picked.major < req.minimum) {
+      parts.push('The selected Java is too old: the server will not start.');
+      bad = true;
+    } else if (req.legacy && picked && picked.major > 8) {
+      parts.push('Built for Java 8: newer Java can break old plugins and mods.');
+    }
+    if (usable.length && !usable.some((r) => r.major >= req.minimum)) {
+      parts.push(`Install Java ${req.recommended} from the node page first.`);
+    }
+  }
+  if (!usable.length) {
+    parts.push('No Java on this node yet. Install one from the node page.');
+    bad = true;
+  }
+  return { text: parts.join(' ') || idle, bad };
+}
+
+/** Show a javaNote() under its picker, and mark the picker when it is bad. */
+function showJavaNote(noteEl, selectEl, note) {
+  noteEl.textContent = note.text;
+  noteEl.classList.toggle('field-warn', !!note.bad);
+  selectEl.classList.toggle('input-warn', !!note.bad);
+}
+
+/** Paint the too-old options red in an open list. */
+function markJavaOptions(selectEl, options) {
+  const bad = new Set(options.filter((o) => o.bad).map((o) => o.value));
+  for (const o of selectEl.options) o.classList.toggle('opt-bad', bad.has(o.value));
+}
+
+/** Instance settings: fill the Java picker for `inst` from its node. */
+async function fillJavaSetting(inst) {
+  const sel = $('set-java');
+  const pathEl = $('set-java-path');
+  const note = $('set-java-note');
+  const current = inst.java_home || '';
+  fill(sel, el('option', { value: current, text: current || 'Node default' }));
+  sel.onchange = null;
+  pathEl.value = '';
+  show(pathEl, false);
+  showJavaNote(note, sel, javaNote(null));
+
+  let res;
+  try {
+    res = await api.listJava(inst.node_id, inst.type, inst.version);
+  } catch (err) {
+    // The current choice stays selected, so saving keeps it.
+    showJavaNote(note, sel, { text: `Couldn't list this node's Java: ${describe(err)}` });
+    return;
+  }
+  if (curInst()?.id !== inst.id) return;       // moved on while waiting
+  const { options } = javaChoices(res);
+  if (current && !options.some((o) => o.value === current)) {
+    options.push({ value: current, label: `Custom: ${current}` });
+  }
+  options.push({ value: '__custom', label: 'Other path…' });
+  fill(sel, options.map((o) => el('option', { value: o.value, selected: o.value === current }, o.label)));
+  sel.value = current;
+  markJavaOptions(sel, options);
+  const what = inst.version ? `${cap(inst.type)} ${inst.version}` : null;
+  const update = () => {
+    show(pathEl, sel.value === '__custom');
+    showJavaNote(note, sel, sel.value === '__custom'
+      ? { text: 'The directory that contains bin/java, on the node.' }
+      : javaNote(res, sel.value, what));
+  };
+  sel.onchange = update;
+  update();
+}
+
+/** What the Java picker in Settings currently says, as a java_home. */
+function javaSettingValue() {
+  const v = $('set-java').value;
+  if (v === '__custom') return $('set-java-path').value.trim() || null;
+  return v || null;
 }
 
 /* --- render: instance view ----------------------------------------------- */
@@ -1571,7 +1892,7 @@ function fillSettings(inst) {
   $('set-root').value = inst.root_dir;
   $('set-cmd').value = inst.start_command;
   $('set-jar').value = inst.jar_path || '';
-  $('set-java').value = inst.java_home || '';
+  fillJavaSetting(inst);
   $('set-restart').value = inst.restart_policy || 'on_crash';
   setToggle($('set-startwith'), inst.start_with_node);
 }
@@ -1587,7 +1908,7 @@ async function saveInstance() {
     // Empty means: derive it from the start command (hub serverjar.py).
     jar_path: $('set-jar').value.trim() || null,
     // Empty means: use whatever java the node's PATH resolves to.
-    java_home: $('set-java').value.trim() || null,
+    java_home: javaSettingValue(),
     restart_policy: $('set-restart').value,
     start_with_node: $('set-startwith').classList.contains('on'),
   };
@@ -1900,6 +2221,8 @@ async function addInstance(node) {
       { name: 'build', label: 'Build', type: 'select', options: [] },
       { name: 'root_dir', label: 'Root directory', placeholder: '/srv/minecraft/survival',
         mono: true, hint: 'Must already exist on the node, with the server in it.' },
+      { name: 'java', label: 'Java', type: 'select',
+        options: [{ value: '', label: 'Looking for Java on the node…' }] },
       { name: 'ram', label: 'Max memory (-Xmx)', value: '4G', mono: true,
         hint: 'Drag the slider, or type an exact value such as 6144M.' },
       { name: 'restart_policy', label: 'If the server exits on its own', type: 'select',
@@ -1991,18 +2314,58 @@ async function addInstance(node) {
         }
       };
 
-      input('mode').addEventListener('change', applyMode);
-      input('type').addEventListener('change', () => {
+      // Java: listed against the chosen version so too-old runtimes say so.
+      // The user's pick survives a re-list; until they pick, it follows the
+      // node default (or the only / recommended runtime when there is none).
+      const javaNoteEl = el('div.field-note');
+      row('java').append(javaNoteEl);
+      let javaSeq = 0;
+      let javaRes = null;
+      let javaPicked = false;
+      const javaWhat = () => (get('mode') === 'new' && get('version')
+        ? `${cap(get('type'))} ${get('version')}` : null);
+      const paintJavaNote = () => showJavaNote(javaNoteEl, input('java'),
+        javaNote(javaRes, get('java'), javaWhat(), 'Can be changed later in Settings.'));
+      const loadJava = async () => {
+        const ticket = ++javaSeq;
+        const what = javaWhat();
+        let res;
+        try {
+          res = await api.listJava(node.id, what ? get('type') : null, what ? get('version') : null);
+        } catch (err) {
+          if (ticket !== javaSeq) return;
+          // Still creatable: it falls back to the node default.
+          javaRes = null;
+          setOptions('java', [{ value: '', label: 'Node default' }], '');
+          showJavaNote(javaNoteEl, input('java'),
+            { text: `Couldn't list this node's Java: ${describe(err)}` });
+          return;
+        }
+        if (ticket !== javaSeq) return;
+        javaRes = res;
+        const { options, preferred } = javaChoices(res);
+        const keep = javaPicked && options.some((o) => o.value === get('java'));
+        setOptions('java', options, keep ? get('java') : preferred);
+        markJavaOptions(input('java'), options);
+        paintJavaNote();
+      };
+      input('java').addEventListener('change', () => { javaPicked = true; paintJavaNote(); });
+
+      input('mode').addEventListener('change', () => { applyMode(); loadJava(); });
+      input('type').addEventListener('change', async () => {
         applyMode();                 // the EULA question is per type; answer now
-        loadVersions(get('type'));
+        await loadVersions(get('type'));
+        loadJava();
       });
       input('version').addEventListener('change', () => {
         if (hasBuilds) loadBuilds(get('type'), get('version'), fetchSeq);
+        loadJava();
       });
 
       showTarget();
       applyMode();
-      if (hasRoot) loadVersions(get('type'));
+      if (hasRoot) loadVersions(get('type')).then(loadJava);
+      else loadJava();
     },
   });
   if (!values) return;
@@ -2016,6 +2379,7 @@ async function addInstance(node) {
           version: values.version,
           build: values.build || null,
           memory: values.ram,
+          java_home: values.java || null,
           restart_policy: values.restart_policy,
           accept_eula: values.accept_eula,
           run_after: values.run_after,
@@ -2025,6 +2389,7 @@ async function addInstance(node) {
           type: values.type,
           root_dir: values.root_dir.trim(),
           memory: values.ram,
+          java_home: values.java || null,
           restart_policy: values.restart_policy,
         });
     // 202: the row is declared and the build continues hub-side. The outcome
@@ -2119,6 +2484,9 @@ function bind() {
   $('node-reenroll').onclick = () => { const n = curNode(); if (n) reenrollNode(n); };
   $('node-delete').onclick = () => { const n = curNode(); if (n) deleteNode(n); };
   $('node-add-inst').onclick = () => { const n = curNode(); if (n) addInstance(n); };
+  $('node-java-rescan').onclick = () => { const n = curNode(); if (n) loadNodeJava(n.id); };
+  $('node-java-add').onclick = () => { const n = curNode(); if (n) addJavaPath(n); };
+  $('node-java-install').onclick = () => { const n = curNode(); if (n) installJava(n); };
 
   $('act-start').onclick = () => { const i = curInst(); if (i) doPower(i, 'start'); };
   $('act-stop').onclick = () => { const i = curInst(); if (i) doPower(i, 'stop'); };

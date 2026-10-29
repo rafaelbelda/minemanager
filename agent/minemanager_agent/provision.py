@@ -28,7 +28,7 @@ import shutil
 import time
 from pathlib import Path
 
-from minemanager_agent import files, tmux, updater
+from minemanager_agent import files, java, tmux, updater
 from minemanager_shared.protocol import EULA_TYPES, InstanceSpec, UpdateDownload
 
 log = logging.getLogger("minemanager.agent")
@@ -64,6 +64,9 @@ async def _failed(sup, spec: InstanceSpec, message: str) -> ProvisionError:
     lines = await sup.pty_tail(spec.id)
     if not lines:
         return ProvisionError(message)
+    hint = java.mismatch_hint(lines)
+    if hint:
+        message = f"{message}. {hint}"
     tail = "\n".join(lines[-_ERROR_TAIL_LINES:])
     return ProvisionError(f"{message}\n--- last terminal output ---\n{tail}")
 

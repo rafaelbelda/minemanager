@@ -93,6 +93,15 @@ point it at a parent that covers them all, or move them first — the hub logs
 which instances a root leaves out when the agent connects, and the UI marks
 them.
 
+**Java.** Each node lists its Java runtimes on its page in the UI: what the agent
+finds under `/usr/lib/jvm`, `/usr/java`, `/opt` and `/usr/local`, the `java` on
+its `PATH` (shown as *(Default)*, used by instances with no Java chosen), and
+any directory you add by path. *Install Java* fetches an Eclipse Temurin JRE
+(8, 17, 21 or 25) from Adoptium, verifies its SHA-256 and unpacks it into
+`$MM_AGENT_DATA_DIR/java/`, which is already writable, so the unit needs no
+change. `ProtectHome=true` hides `/home` from the agent and its servers, so a
+runtime under SDKMAN or `~/.jdks` cannot be used; move it to `/opt`.
+
 ## Check
 
 ```bash

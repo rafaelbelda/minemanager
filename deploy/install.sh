@@ -53,9 +53,10 @@ python3 -c 'import ensurepip, venv' 2>/dev/null \
   || need "python3 venv support is required (apt install python3-venv)"
 [ "$DO_AGENT" = 0 ] || command -v tmux >/dev/null \
   || need "tmux is required on a node (apt install tmux / dnf install tmux)"
-# Not fatal: an instance can name its own JDK (java_home).
+# Not fatal: Java can be installed per node from the UI, and each instance
+# picks its own runtime.
 [ "$DO_AGENT" = 0 ] || command -v java >/dev/null \
-  || echo "  ! no java on PATH; servers will need a per-instance java_home"
+  || echo "  ! no java on PATH; install one from the node's page in the UI"
 
 # --- code ------------------------------------------------------------------
 say "Installing code into $VENV"

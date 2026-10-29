@@ -884,3 +884,57 @@ h2.label { margin: 0 0 12px; font-weight: 400; }
   .table-head span:nth-child(2), .table-row .cell-type { display: none; }
   .summary dd { font-size: 18px; }
 }
+
+/* node view: Java runtimes */
+.java-table { margin-bottom: 10px; }
+.java-table .table-row { cursor: default; }
+.java-name { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.java-head { margin-top: 30px; flex-wrap: wrap; }
+.java-head .label { white-space: nowrap; }
+.java-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.java-title { display: flex; gap: 6px; min-width: 0; }
+.java-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.java-default { flex: none; color: var(--ok); font-weight: 500; }
+.java-error { font-weight: 400; font-size: 11.5px; color: var(--err-fg); white-space: normal !important; }
+.java-used { font-weight: 400; font-size: 11px; color: var(--dim); }
+/* A runtime that cannot be used: greyed out, its reason still in red. */
+.java-off .java-text, .java-off .cell-type, .java-off .cell-root,
+.java-off .java-default, .java-off .java-used { color: var(--dim-3); }
+
+/* Pickers: a choice that will not start the server. Warns, never blocks. */
+.field-note.field-warn { color: var(--err-fg); }
+.input.input-warn, .input.input-warn:focus { border-color: var(--err); }
+option.opt-bad { color: var(--err-fg); }
+
+/* (i) beside a section label; the explanation shows on hover or focus. */
+.info-tip { position: relative; display: inline-flex; margin-right: auto; }
+.section-head .info-tip + .spacer { display: none; }
+.info-btn {
+  width: 16px; height: 16px; padding: 0; border-radius: 50%;
+  border: 1px solid var(--line-2); background: transparent; color: var(--dim);
+  font-family: var(--mono); font-size: 10px; line-height: 14px; cursor: help;
+}
+.info-btn:hover, .info-btn:focus-visible { color: var(--fg-2); border-color: var(--dim); outline: none; }
+.info-pop {
+  position: absolute; left: -8px; top: calc(100% + 8px); z-index: 20;
+  width: min(340px, calc(100vw - 32px)); padding: 10px 12px;
+  background: var(--panel); border: 1px solid var(--line-2); border-radius: var(--r-ctl);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  font-size: 12px; line-height: 1.55; color: var(--fg-2); text-transform: none; letter-spacing: 0;
+  visibility: hidden; opacity: 0; transition: opacity .12s;
+}
+.info-pop code { font-family: var(--mono); font-size: 11px; }
+.info-tip:hover .info-pop, .info-btn:focus + .info-pop { visibility: visible; opacity: 1; }
+.java-compat { margin-bottom: 8px; font-size: 12.5px; }
+.java-compat summary { cursor: pointer; color: var(--muted); padding: 4px 0; }
+.compat-group { margin: 10px 0 4px; max-width: 460px; }
+.compat-title {
+  font-family: var(--mono); font-size: 9.5px; letter-spacing: .1em;
+  color: var(--dim); text-transform: uppercase; margin-bottom: 6px;
+}
+.compat-row {
+  display: flex; justify-content: space-between; gap: 16px;
+  padding: 5px 0; border-bottom: 1px solid var(--line-3);
+}
+.compat-row span:first-child { font-family: var(--mono); font-size: 11.5px; color: var(--fg-2); }
+#set-java-path { margin-top: 8px; }

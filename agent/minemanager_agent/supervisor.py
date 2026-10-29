@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from minemanager_agent import logtail, tmux, updater
+from minemanager_agent import java, logtail, tmux, updater
 from minemanager_shared.protocol import (
     Action,
     ConsoleOutputData,
@@ -151,10 +151,11 @@ def launch_command(spec: InstanceSpec) -> str:
 
 class Supervisor:
     def __init__(self, emit: EmitFn, pty_dir: Path | None = None,
-                 node_root: Path | None = None):
+                 node_root: Path | None = None, java_dir: Path | None = None):
         self._emit = emit
         self._pty_dir = pty_dir
         self.node_root = node_root        # every instance must live under this
+        self.java_dir = java_dir          # managed Java runtimes (see java.py)
         self._instances: dict[str, ManagedInstance] = {}
         self._monitor: asyncio.Task | None = None
         self._started_at = time.monotonic()
@@ -527,7 +528,10 @@ class Supervisor:
         if not lines:
             return
         mi.pty_replayed = True
-        for line in ("--- last terminal output before exit ---", *lines):
+        # Java's error for too old a runtime is a stack trace; say it plainly.
+        hint = java.mismatch_hint(lines)
+        extra = (f"[MineManager] {hint}",) if hint else ()
+        for line in ("--- last terminal output before exit ---", *lines, *extra):
             await self._emit(
                 Event(
                     action=Action.ev_console_output.value,

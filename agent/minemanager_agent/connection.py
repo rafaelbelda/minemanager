@@ -45,7 +45,9 @@ class Connection:
         self._send_lock = asyncio.Lock()
         self._inflight: set[asyncio.Task] = set()
         # The supervisor emits events through this connection.
-        self.supervisor = Supervisor(self._emit_event, config.pty_dir, config.root_dir)
+        self.supervisor = Supervisor(
+            self._emit_event, config.pty_dir, config.root_dir, config.java_dir
+        )
 
     async def _emit_event(self, event: Event) -> None:
         ws = self._ws

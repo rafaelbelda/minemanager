@@ -14,6 +14,8 @@ Version 26.10.26. MIT.
   The jar swap is transactional — download, checksum, backup, atomic replace,
   rollback on failure.
 - Provisioning: create a new server under a node's root from the UI.
+- Java: each node lists the runtimes it has, and installs Temurin 8, 17, 21 or
+  25 on demand. Each server picks one; the UI says which its version needs.
 - Reboot survival: instances marked *start with node* come back when the
   machine does. Crashed ones restart per their `restart_policy`.
 

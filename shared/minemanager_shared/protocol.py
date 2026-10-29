@@ -139,6 +139,12 @@ class Action(str, Enum):
     # Introspection ---------------------------------------------------------
     instance_states = "instance.states"   # batch: real run-state for a set of ids
 
+    # Java runtimes (node-scoped) --------------------------------------------
+    java_list = "java.list"         # detect + probe; also reports the platform
+    java_probe = "java.probe"       # inspect one operator-supplied directory
+    java_install = "java.install"   # download + unpack a managed runtime
+    java_remove = "java.remove"     # delete a managed runtime (managed dir only)
+
     # ---- Event actions (agent -> hub, unsolicited) ------------------------
     ev_console_output = "console.output"
     ev_state_changed = "state.changed"
@@ -270,6 +276,36 @@ class UpdateDownload(BaseModel):
     build: Optional[str] = None
 
 
+#: A JDK/JRE directory as the hub may name it: absolute, and free of anything
+#: that would mangle the shell-quoted launch line. The agent re-checks it.
+JavaHome = Annotated[
+    str, Field(min_length=2, max_length=1024, pattern=r"^/[^;&|$`<>\n\r\t\"'\\]*$")
+]
+
+
+class JavaRuntimeInfo(BaseModel):
+    """One Java runtime on a node, as the agent found it."""
+
+    home: str                       # directory containing bin/java
+    major: Optional[int] = None     # 8, 17, 21, ...; None when probing failed
+    version: Optional[str] = None   # full version string, e.g. "21.0.5+11"
+    vendor: Optional[str] = None
+    image: Optional[Literal["jdk", "jre"]] = None
+    # "managed" = installed by MineManager into the agent's java dir;
+    # "system" = found by the scan; "manual" = named by the hub.
+    source: Literal["managed", "system", "manual"]
+    # The ``java`` an instance with no java_home gets (the agent's PATH).
+    default: bool = False
+    error: Optional[str] = None     # why it is unusable, when it is
+
+
+class JavaPlatform(BaseModel):
+    """What a download has to match. Adoptium's own vocabulary."""
+
+    os: str                          # "linux" | "alpine-linux" | "mac" | ...
+    arch: Optional[str] = None       # "x64" | "aarch64" | ... ; None = unsupported
+
+
 class UpdateApplyData(BaseModel):
     """Payload for the ``update.apply`` command (hub -> agent).
 
@@ -383,6 +419,26 @@ class InstanceStatesData(BaseModel):
     """instance.states; node-scoped, so no instance spec."""
 
     ids: list[SafeId] = Field(default_factory=list, max_length=10_000)
+
+
+class JavaListData(BaseModel):
+    """java.list; node-scoped. ``extra`` are the operator's registered paths,
+    probed alongside the scan so the agent keeps no list of its own."""
+
+    extra: list[JavaHome] = Field(default_factory=list, max_length=64)
+
+
+class JavaProbeData(BaseModel):
+    java_home: JavaHome
+
+
+class JavaInstallData(BaseModel):
+    feature: int = Field(ge=8, le=99)    # the major version being installed
+    download: UpdateDownload
+
+
+class JavaRemoveData(BaseModel):
+    java_home: JavaHome
 
 
 # --------------------------------------------------------------------------- #
