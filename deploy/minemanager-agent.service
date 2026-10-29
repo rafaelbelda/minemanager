@@ -63,16 +63,20 @@ AmbientCapabilities=
 PrivateDevices=true
 ProtectProc=invisible
 
-# PrivateTmp MUST stay off. tmux's socket lives under /tmp.
+# Shared /tmp, so `sudo -u minemanager-agent tmux -L minemanager attach` from a
+# login shell finds the same socket the agent created.
 PrivateTmp=false
 
-# The hardening above makes the whole filesystem read-only, so
-# without this the agent cannot write its own data dir, let alone a world.
-# List the agent's state dir plus every directory your servers live in.
+# ProtectSystem=strict makes the whole filesystem read-only, /tmp included, so
+# list everything the agent and its servers write to:
+#   - the agent's state dir and every directory your servers live in
+#   - /tmp: tmux's socket dir (/tmp/tmux-<uid>), and the JVM's java.io.tmpdir,
+#     where Netty, sqlite-jdbc and many plugins unpack native libraries
+#   - /var/tmp: some plugins and tools use it as a larger scratch space
 #
 # NOTE: this is also the boundary that limits the damage from an over-broad
 # instance root_dir. Keep it as narrow as your layout allows.
-ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft
+ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft /tmp /var/tmp
 
 [Install]
 WantedBy=multi-user.target
