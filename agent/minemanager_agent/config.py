@@ -99,6 +99,12 @@ class AgentConfig:
                 f"cannot create the node root {self.root_dir} ({exc}). Set MM_ROOT_DIR to a "
                 f"directory this agent's user may write to."
             ) from None
+        if not os.access(self.root_dir, os.W_OK):
+            log.warning(
+                "node root %s is not writable: new servers cannot be created here. Check its "
+                "owner, and that it is listed in ReadWritePaths of minemanager-agent.service.",
+                self.root_dir,
+            )
 
     def ensure_dirs(self) -> None:
         """Create the data dir, or exit saying what to do about it."""

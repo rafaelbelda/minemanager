@@ -157,7 +157,7 @@ def _is_file(path: Path) -> bool:
         return False
 
 
-def _hidden_by_sandbox(home: str) -> bool:
+def hidden_by_sandbox(home: str) -> bool:
     return home == "/home" or home.startswith(("/home/", "/root/", "/run/user/"))
 
 
@@ -180,7 +180,7 @@ def _probe(info: JavaRuntimeInfo) -> JavaRuntimeInfo:
     path = Path(home)
     exe = path / "bin" / "java"
     if not _is_file(exe):
-        if _hidden_by_sandbox(home):
+        if hidden_by_sandbox(home):
             info.error = (f"{home} is not visible to the agent: its systemd unit sets "
                           "ProtectHome=true. Move the runtime outside /home, e.g. to /opt.")
         elif not path.exists():

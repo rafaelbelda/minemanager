@@ -116,9 +116,16 @@ def root_dir_problem(root_dir: str) -> str | None:
     """Why ``root_dir`` is unusable as a working directory, or None if it is fine."""
     path = Path(root_dir)
     if not path.is_dir():
+        if java.hidden_by_sandbox(root_dir):
+            return (f"root directory is not visible to the agent: {root_dir} (its systemd "
+                    f"unit sets ProtectHome=true; move the server outside /home)")
         return f"root directory does not exist on this node: {root_dir}"
     if not os.access(path, os.R_OK | os.X_OK):
         return f"root directory is not readable by the agent: {root_dir}"
+    # EROFS also fails this: a directory missing from the unit's ReadWritePaths.
+    if not os.access(path, os.W_OK):
+        return (f"root directory is not writable by the agent: {root_dir} (wrong owner, "
+                f"or not listed in ReadWritePaths of minemanager-agent.service)")
     return None
 
 

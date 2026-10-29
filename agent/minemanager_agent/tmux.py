@@ -14,6 +14,7 @@ session invisible to the agent.
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 
 
@@ -26,6 +27,11 @@ SESSION_PREFIX = "mm"
 # in the mirrored pane and be replayed as if the server had printed it.
 _PLACEHOLDER = "sh -c 'read _'"
 
+# tmux runs every pane command and pipe through the server's default-shell,
+# taken from $SHELL or the passwd entry. The agent's system user has
+# /usr/sbin/nologin there, which would refuse every command, so pin a real one.
+_ENV = {**os.environ, "SHELL": "/bin/sh"}
+
 
 class TmuxError(Exception):
     pass
@@ -35,6 +41,7 @@ async def _run(*args: str) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         "tmux", "-L", SOCKET,
         *args,
+        env=_ENV,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
