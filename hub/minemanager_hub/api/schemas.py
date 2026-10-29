@@ -9,6 +9,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from minemanager_shared.java import MANAGED_FEATURES
 from minemanager_shared.protocol import EULA_TYPES, InstanceType, RestartPolicy
 
 
@@ -248,6 +249,7 @@ class ServerCreate(BaseModel):
     version: str
     build: Optional[str] = None      # required only for software that has builds
     memory: Optional[str] = _MEMORY
+    java_home: Optional[str] = _JAVA_HOME
     restart_policy: RestartPolicy = RestartPolicy.on_crash
     accept_eula: bool = False
     run_after: bool = False
@@ -268,6 +270,11 @@ class ServerCreate(BaseModel):
     def _check_memory(cls, value: Optional[str]) -> Optional[str]:
         return _clean_memory(value)
 
+    @field_validator("java_home")
+    @classmethod
+    def _check_java_home(cls, value: Optional[str]) -> Optional[str]:
+        return _clean_java_home(value)
+
     @model_validator(mode="after")
     def _check_eula(self) -> "ServerCreate":
         # Refused here as well as on the agent: by the time the agent sees it a
@@ -278,3 +285,32 @@ class ServerCreate(BaseModel):
                 "server; set accept_eula"
             )
         return self
+
+
+# --- Java runtimes ---------------------------------------------------------
+class JavaRegister(BaseModel):
+    """Register a runtime directory on a node by hand."""
+
+    java_home: str
+
+    @field_validator("java_home")
+    @classmethod
+    def _check_java_home(cls, value: str) -> str:
+        cleaned = _clean_java_home(value)
+        if cleaned is None:
+            raise ValueError("java_home may not be empty")
+        return cleaned
+
+
+class JavaInstall(BaseModel):
+    feature: int = Field(description="Java feature release to install, e.g. 21")
+
+    @field_validator("feature")
+    @classmethod
+    def _check_feature(cls, value: int) -> int:
+        if value not in MANAGED_FEATURES:
+            raise ValueError(
+                f"MineManager installs Java {', '.join(map(str, MANAGED_FEATURES))}; "
+                "register other releases by path"
+            )
+        return value

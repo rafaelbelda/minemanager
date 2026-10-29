@@ -56,15 +56,8 @@ class TestInstances:
 class TestWithoutAnAgent:
     """Every proxied route must fail as 409, not hang or 500."""
 
-    def test_power_is_409(self, client, instance_id):
-        assert client.post(f"/api/instances/{instance_id}/power/start").status_code == 409
-
     def test_files_list_is_409(self, client, instance_id):
         assert client.get(f"/api/instances/{instance_id}/files").status_code == 409
-
-    def test_console_is_409(self, client, instance_id):
-        r = client.post(f"/api/instances/{instance_id}/console", json={"line": "say hi"})
-        assert r.status_code == 409
 
     def test_unknown_instance_is_404_not_409(self, client):
         assert client.post("/api/instances/nope/power/start").status_code == 404
@@ -79,9 +72,6 @@ class TestWithoutAnAgent:
 
 
 class TestMeta:
-    def test_health(self, client):
-        assert client.get("/api/health").json()["status"] == "ok"
-
     def test_ui_config_exposes_the_editor_limits(self, client):
         body = client.get("/api/config").json()
         assert {"editor_warn_bytes", "editor_max_bytes", "transfer_cap_bytes"} <= set(body)

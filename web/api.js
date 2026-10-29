@@ -1,13 +1,21 @@
 /* REST client for the MineManager hub.
  *
  * No app-layer auth: requests are same-origin behind the reverse proxy. For dev
- * against a hub on another port, pass `?hub=http://localhost:8730` (kept in
- * localStorage) and start the hub with MM_CORS_ORIGINS set.
+ * against a hub on another port, serve the UI from localhost, pass
+ * `?hub=http://localhost:8730` (kept in localStorage) and start the hub with
+ * MM_CORS_ORIGINS set. Ignored when the UI is not served from loopback.
  */
 
 const STORE_KEY = 'mm.hubBase';
 
+// Dev only: on a deployed hub, ?hub= would let a link repoint the UI elsewhere.
+const DEV_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 function resolveBase() {
+  if (!DEV_HOSTS.has(location.hostname)) {
+    try { localStorage.removeItem(STORE_KEY); } catch { /* storage blocked */ }
+    return '';
+  }
   const q = new URLSearchParams(location.search).get('hub');
   if (q !== null) {
     const v = q.replace(/\/$/, '');
@@ -149,4 +157,15 @@ export const api = {
     get(`/api/providers/${q(software)}/versions/${q(version)}/builds`),
   updateInstanceVersion: (id, version, build) =>
     post(`/api/instances/${id}/update`, build == null ? { version } : { version, build }),
+
+  // Java runtimes, per node. With software + version, each runtime also says
+  // whether it can run that server, and one is recommended.
+  javaCompat: () => get('/api/java/compat'),
+  listJava: (nodeId, software, version) => {
+    const qs = software && version ? `?software=${q(software)}&version=${q(version)}` : '';
+    return get(`/api/nodes/${nodeId}/java${qs}`);
+  },
+  registerJava: (nodeId, javaHome) => post(`/api/nodes/${nodeId}/java`, { java_home: javaHome }),
+  removeJava: (nodeId, javaHome) => del(`/api/nodes/${nodeId}/java?java_home=${q(javaHome)}`),
+  installJava: (nodeId, feature) => post(`/api/nodes/${nodeId}/java/install`, { feature }),
 };

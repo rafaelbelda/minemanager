@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from typing import Any, Callable
 
 from minemanager_shared.protocol import Command, Event, Response
@@ -42,11 +42,28 @@ class AgentConnection:
     keeps this class transport-agnostic and easy to test.
     """
 
-    def __init__(self, node_id: str, send: Callable[[dict[str, Any]], "asyncio.Future | Any"]):
+    def __init__(
+        self,
+        node_id: str,
+        send: Callable[[dict[str, Any]], "asyncio.Future | Any"],
+        close: Callable[[], Awaitable[None]] | None = None,
+    ):
         self.node_id = node_id
         self._send = send
+        self._close = close
         self._pending: dict[str, asyncio.Future[Response]] = {}
         self._send_lock = asyncio.Lock()
+        # Cache for agent_ws's per-event ownership check.
+        self.owned_instances: set[str] = set()
+        self.closed = False
+
+    async def close(self) -> None:
+        """Drop the underlying socket."""
+        self.closed = True
+        self.fail_all(ConnectionError("agent connection closed by the hub"))
+        if self._close is not None:
+            with contextlib.suppress(Exception):
+                await self._close()
 
     async def _write(self, frame_dict: dict[str, Any]) -> None:
         async with self._send_lock:
@@ -90,6 +107,7 @@ class AgentConnection:
 class AgentRegistry:
     def __init__(self) -> None:
         self._agents: dict[str, AgentConnection] = {}
+        self._closing: set[asyncio.Task] = set()   # strong refs to close() tasks
         # node_id -> set of subscriber sinks
         self._subscribers: dict[str, set[EventSink]] = {}
 
@@ -102,12 +120,28 @@ class AgentRegistry:
             # connection's in-flight commands are rejected rather than left to
             # time out on a socket nobody will read.
             previous.fail_all(ConnectionError("agent connection replaced by a newer one"))
+            # Closed too, or it keeps pushing events under this node's name.
+            self._spawn_close(previous)
         self._agents[conn.node_id] = conn
 
     def unregister(self, node_id: str) -> None:
         conn = self._agents.pop(node_id, None)
         if conn is not None:
             conn.fail_all(ConnectionError("agent disconnected"))
+
+    async def disconnect(self, node_id: str) -> None:
+        """Unregister and close a node's live connection (revocation)."""
+        conn = self._agents.pop(node_id, None)
+        if conn is not None:
+            await conn.close()
+
+    def _spawn_close(self, conn: AgentConnection) -> None:
+        try:
+            task = asyncio.get_running_loop().create_task(conn.close())
+        except RuntimeError:          # no running loop
+            return
+        self._closing.add(task)
+        task.add_done_callback(self._closing.discard)
 
     def get(self, node_id: str) -> AgentConnection | None:
         return self._agents.get(node_id)

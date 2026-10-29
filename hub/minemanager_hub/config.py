@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from minemanager_shared.env import env_bool, env_csv, env_int, env_path, env_str
+from minemanager_shared.env import env_bool, env_csv, env_int, env_opt, env_path, env_str
 
 #: SQLite DB location. Matches the systemd unit; a hub pointed at a different
 #: directory silently opens an empty database.
@@ -71,6 +71,21 @@ class Settings:
     # Serve /docs, /redoc and /openapi.json. Off by default: with no app-layer
     # auth they hand anyone who reaches the hub a map of the attack surface.
     enable_docs: bool = field(default_factory=lambda: env_bool("MM_ENABLE_DOCS"))
+
+    # Sent by the reverse proxy after it authenticates a request. Without it,
+    # anything that can reach MM_HOST bypasses the proxy's auth.
+    proxy_secret: str | None = field(default_factory=lambda: env_opt("MM_PROXY_SECRET"))
+
+    # Authenticated-user header (e.g. Remote-User). Required and logged when
+    # set; trusted only alongside the proxy secret.
+    proxy_user_header: str | None = field(
+        default_factory=lambda: env_opt("MM_PROXY_USER_HEADER")
+    )
+
+    # Allow a non-loopback bind without a proxy secret.
+    allow_unauthenticated: bool = field(
+        default_factory=lambda: env_bool("MM_ALLOW_UNAUTHENTICATED")
+    )
 
     @property
     def db_path(self) -> Path:

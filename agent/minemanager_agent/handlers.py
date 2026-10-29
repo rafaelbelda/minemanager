@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 
 from pydantic import BaseModel, ValidationError
 
-from minemanager_agent import archive, files, provision, transfer
+from minemanager_agent import archive, files, java, provision, transfer
 from minemanager_agent.supervisor import Supervisor
 from minemanager_shared.protocol import (
     Action,
@@ -33,6 +33,10 @@ from minemanager_shared.protocol import (
     FilesWriteData,
     InstanceCreateData,
     InstanceStatesData,
+    JavaInstallData,
+    JavaListData,
+    JavaProbeData,
+    JavaRemoveData,
     LogsTailData,
     PowerData,
     Response,
@@ -135,6 +139,31 @@ async def _instance_states(d: InstanceStatesData, sup: Supervisor) -> dict:
     return {"states": await sup.states_for(d.ids)}
 
 
+# -- java runtimes (node-scoped) --------------------------------------------
+def _java_dir(sup: Supervisor):
+    if sup.java_dir is None:
+        raise java.JavaError("this agent has no directory for managed Java runtimes")
+    return sup.java_dir
+
+
+async def _java_list(d: JavaListData, sup: Supervisor) -> dict:
+    return await _off(java.discover, sup.java_dir, d.extra)
+
+
+async def _java_probe(d: JavaProbeData, sup: Supervisor) -> dict:
+    return {"runtime": (await _off(java.probe, d.java_home)).model_dump(mode="json")}
+
+
+async def _java_install(d: JavaInstallData, sup: Supervisor) -> dict:
+    return await _off(
+        java.install, _java_dir(sup), d.feature, d.download.model_dump(mode="json")
+    )
+
+
+async def _java_remove(d: JavaRemoveData, sup: Supervisor) -> dict:
+    return await _off(java.remove, _java_dir(sup), d.java_home)
+
+
 _HANDLERS: dict[str, tuple[type[BaseModel], Handler]] = {
     Action.power_start.value: (PowerData, _power_start),
     Action.power_stop.value: (PowerData, _power_stop),
@@ -154,6 +183,10 @@ _HANDLERS: dict[str, tuple[type[BaseModel], Handler]] = {
     Action.instance_create.value: (InstanceCreateData, _instance_create),
     Action.transfer_start.value: (TransferStartData, _transfer_start),
     Action.instance_states.value: (InstanceStatesData, _instance_states),
+    Action.java_list.value: (JavaListData, _java_list),
+    Action.java_probe.value: (JavaProbeData, _java_probe),
+    Action.java_install.value: (JavaInstallData, _java_install),
+    Action.java_remove.value: (JavaRemoveData, _java_remove),
 }
 
 
@@ -194,6 +227,8 @@ async def handle(cmd: Command, sup: Supervisor) -> Response:
     except archive.UnsupportedArchive as exc:
         return Response.failure(cmd.id, str(exc))
     except provision.ProvisionError as exc:
+        return Response.failure(cmd.id, str(exc))
+    except java.JavaError as exc:
         return Response.failure(cmd.id, str(exc))
     except Exception as exc:  # noqa: BLE001 - surface any handler error to the hub
         return Response.failure(cmd.id, f"{type(exc).__name__}: {exc}")

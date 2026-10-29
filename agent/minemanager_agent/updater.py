@@ -42,6 +42,21 @@ class UpdateError(Exception):
     pass
 
 
+class _HttpsOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Follow redirects only to https (urllib's default allows https -> http)."""
+
+    max_redirections = 5
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        scheme = urllib.parse.urlparse(newurl).scheme.lower()
+        if scheme != "https":
+            raise UpdateError(f"refusing a redirect to {scheme or 'an unknown scheme'!r}: https required")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_opener = urllib.request.build_opener(_HttpsOnlyRedirects)
+
+
 def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
               timeout: float, max_bytes: int) -> int:
     """Blocking streamed download with time + size guards and checksum verify.
@@ -67,7 +82,7 @@ def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
     started = time.monotonic()
     total = 0
     try:
-        with urllib.request.urlopen(req, timeout=SOCKET_TIMEOUT_S) as resp, dest.open("wb") as fh:
+        with _opener.open(req, timeout=SOCKET_TIMEOUT_S) as resp, dest.open("wb") as fh:
             while True:
                 if time.monotonic() - started > timeout:
                     raise UpdateError("download exceeded the time budget")
@@ -88,6 +103,10 @@ def _download(url: str, dest: Path, *, algo: str | None, expected: str | None,
     if got != expected.lower():
         raise UpdateError(f"checksum mismatch (expected {expected[:12]}..., got {got[:12]}...)")
     return total
+
+
+#: Public name for other installers (Java runtimes) that need the same guards.
+download_verified = _download
 
 
 def _prune_backups(backups: Path, jar_base: str, keep: int) -> None:

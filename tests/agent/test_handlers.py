@@ -79,8 +79,9 @@ class TestPowerRouting:
 class TestFileRouting:
     async def test_list_returns_entries(self, sup, spec, instance_root):
         (instance_root / "server.properties").write_text("motd=hi")
+        # No path: it defaults to the instance root.
         resp = await run(sup, Action.files_list.value, {
-            "instance": spec.model_dump(mode="json"), "path": ".",
+            "instance": spec.model_dump(mode="json"),
         })
         assert resp.ok is True
         assert [e["name"] for e in resp.data["entries"]] == ["server.properties"]
@@ -122,6 +123,7 @@ class TestErrorMapping:
             "instance": spec.model_dump(mode="json"), "path": "a.rar",
         })
         assert resp.ok is False
+        assert "RAR" in resp.error
 
     async def test_transfer_without_identity_fails_cleanly(self, sup, spec):
         resp = await run(sup, Action.transfer_start.value, {
@@ -131,12 +133,15 @@ class TestErrorMapping:
         assert resp.ok is False
         assert "identity" in resp.error
 
-    async def test_a_handler_error_never_escapes_as_an_exception(self, sup, spec):
+    async def test_an_unexpected_error_never_escapes_as_an_exception(self, sup, spec):
         """Whatever goes wrong, the agent answers the correlated command."""
-        resp = await run(sup, Action.files_delete.value, {
-            "instance": spec.model_dump(mode="json"), "path": "missing", "recursive": False,
-        })
-        assert resp.ok is False and resp.error
+        async def boom(_spec):
+            raise RuntimeError("tmux exploded")
+
+        sup.start = boom
+        resp = await run(sup, Action.power_start.value, {"instance": spec.model_dump(mode="json")})
+        assert resp.ok is False
+        assert resp.error == "RuntimeError: tmux exploded"
 
 
 class TestDefaults:
@@ -145,10 +150,6 @@ class TestDefaults:
         assert resp.ok is True
         assert resp.data["path"] == "logs/latest.log"
         assert resp.data["missing"] is True
-
-    async def test_files_list_defaults_to_the_root(self, sup, spec):
-        resp = await run(sup, Action.files_list.value, {"instance": spec.model_dump(mode="json")})
-        assert resp.ok is True
 
     async def test_instance_states_defaults_to_no_ids(self, sup):
         resp = await run(sup, Action.instance_states.value, {})

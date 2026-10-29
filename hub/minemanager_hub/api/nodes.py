@@ -87,8 +87,8 @@ def create_node(body: NodeCreate) -> EnrollmentOut:
 
 
 @router.post("/nodes/{node_id}/reenroll", response_model=EnrollmentOut)
-def reenroll_node(node_id: str) -> EnrollmentOut:
-    """Mint a fresh enrollment token (e.g. after re-imaging a box)."""
+async def reenroll_node(node_id: str) -> EnrollmentOut:
+    """Mint a fresh enrollment token and revoke the current credential."""
     settings = get_settings()
     token = tokens.generate_token()
     with session_scope() as db:
@@ -98,18 +98,20 @@ def reenroll_node(node_id: str) -> EnrollmentOut:
         node.enroll_token_hash = tokens.hash_token(token)
         node.enroll_expires_at = time.time() + settings.enrollment_ttl_s
         node.credential_hash = None
+    await registry.disconnect(node_id)
     return EnrollmentOut(
         node_id=node_id, enrollment_token=token, expires_in_s=settings.enrollment_ttl_s
     )
 
 
 @router.delete("/nodes/{node_id}", status_code=204)
-def delete_node(node_id: str) -> None:
+async def delete_node(node_id: str) -> None:
     with session_scope() as db:
         node = db.get(Node, node_id)
         if node is None:
             raise HTTPException(404, "node not found")
         db.delete(node)
+    await registry.disconnect(node_id)
 
 
 def _checked_root(node_root: str | None, instance_root: str) -> str:

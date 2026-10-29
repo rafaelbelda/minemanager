@@ -20,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from minemanager_hub import __version__
-from minemanager_hub.api import agent_ws, control, nodes, servers, transfers, versions
+from minemanager_hub.api import agent_ws, control, java, nodes, servers, transfers, versions
 from minemanager_hub.config import get_settings
 from minemanager_hub.db.session import init_db
 from minemanager_hub.providers.http import aclose as close_provider_http
@@ -67,6 +67,16 @@ async def lifespan(_app: FastAPI):
             settings.host,
         )
 
+    if settings.proxy_secret:
+        log.info("proxy trust: requests must carry %s%s", webguard.PROXY_SECRET_HEADER,
+                 f" and {settings.proxy_user_header}" if settings.proxy_user_header else "")
+    else:
+        log.warning(
+            "MM_PROXY_SECRET is not set: any process that can connect to %s:%s, "
+            "including a local Minecraft server, has full control. See deploy/README.md.",
+            settings.host, settings.port,
+        )
+
     init_db()                                # logs the DB path + node count
     log.info("web: %s", _web_dir_status)
     yield
@@ -74,6 +84,7 @@ async def lifespan(_app: FastAPI):
 
 
 _settings = get_settings()
+webguard.check_proxy_config(_settings)       # exits on an unsafe combination
 
 # Resolved before the app exists so `lifespan` can log it: the mount itself has
 # to happen after every router is registered, but the *decision* does not.
@@ -112,7 +123,15 @@ app.add_middleware(
     extra_origins=set(_settings.cors_origins),
     allow_api_clients=_settings.allow_api_clients,
 )
+# Between the Host and Origin checks.
+app.add_middleware(
+    webguard.ProxyGuard,
+    secret=_settings.proxy_secret,
+    user_header=_settings.proxy_user_header,
+)
 app.add_middleware(webguard.HostGuard, allowed=_settings.allowed_hosts)
+# Outermost, so rejections get the headers too.
+app.add_middleware(webguard.SecurityHeaders)
 
 # Agent transport (agents dial in here).
 app.include_router(agent_ws.router, prefix="/ws")
@@ -122,6 +141,7 @@ app.include_router(control.router)
 app.include_router(versions.router)
 app.include_router(servers.router)
 app.include_router(transfers.router)
+app.include_router(java.router)
 
 
 @app.get("/api/health")

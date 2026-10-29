@@ -23,8 +23,11 @@ sudo ./deploy/install.sh --hub --agent --dry-run   # preview
 sudo ./deploy/install.sh --hub --agent
 ```
 
-It creates the users and directories, installs a venv, generates the vault key,
-writes `/etc/minemanager/*.env` and the systemd units while printing every step.
+It creates the users and directories, installs a venv and the UI (to
+`/opt/minemanager/web`), generates the proxy secret, writes
+`/etc/minemanager/*.env` (root-only) and the systemd units while printing every
+step. A re-run upgrades the code; restart the services afterwards (restarting
+the agent stops its servers).
 
 ## Configure
 
@@ -37,9 +40,26 @@ loopback only; anything else gets HTTP 400.
 sudo systemctl enable --now minemanager-hub
 ```
 
-Then, put your reverse proxy and authentication in front. **MineManager Hub does not authenticate end users itself.** For extra security, expose it only through WireGuard.
+Then, put your reverse proxy and authentication in front. **MineManager Hub does
+not authenticate end users itself.** For extra security, expose it only through
+WireGuard.
 
-See [`Caddyfile`](Caddyfile) for a working config. Caddy's defaults already
+### Proxy secret
+
+`127.0.0.1:8730` is reachable by any local process, so the proxy adds
+`MM_PROXY_SECRET` to requests it has authenticated and the hub refuses the
+rest. The installer writes it to `hub.env` and `/etc/minemanager/proxy.env`;
+give the latter to Caddy (`sudo systemctl edit caddy` →
+`EnvironmentFile=/etc/minemanager/proxy.env`). In [`Caddyfile`](Caddyfile),
+agent paths bypass Authelia and never get the secret; everything else gets it
+only after `forward_auth`.
+
+Optionally set `MM_PROXY_USER_HEADER=Remote-User` to require and log the user.
+A `401` on every UI request means the proxy is not sending the secret.
+
+### Transfers
+
+Caddy's defaults already
 suit large transfers — no body buffering, no size limit, no timeouts — so the
 only thing to get wrong is adding `request_body max_size` or a transport
 `read_timeout`, either of which breaks multi-GB uploads. (nginx is the opposite:
@@ -73,6 +93,15 @@ point it at a parent that covers them all, or move them first — the hub logs
 which instances a root leaves out when the agent connects, and the UI marks
 them.
 
+**Java.** Each node lists its Java runtimes on its page in the UI: what the agent
+finds under `/usr/lib/jvm`, `/usr/java`, `/opt` and `/usr/local`, the `java` on
+its `PATH` (shown as *(Default)*, used by instances with no Java chosen), and
+any directory you add by path. *Install Java* fetches an Eclipse Temurin JRE
+(8, 17, 21 or 25) from Adoptium, verifies its SHA-256 and unpacks it into
+`$MM_AGENT_DATA_DIR/java/`, which is already writable, so the unit needs no
+change. `ProtectHome=true` hides `/home` from the agent and its servers, so a
+runtime under SDKMAN or `~/.jdks` cannot be used; move it to `/opt`.
+
 ## Check
 
 ```bash
@@ -88,9 +117,16 @@ The installer creates `minemanager-hub` and `minemanager-agent`.
 On a multi-node setup this matters: every Minecraft server runs as the agent's user,
 so any plugin already has code execution as that user. If the hub ran as the same user, a compromised plugin could get code execution across the whole fleet.
 
-On a single machine whose hub manages only itself there is nothing to escalate
-to, so one user is mostly fine; You **could** set `User=`/`Group=` in both units
-to the same account and give it both data directories.
+Keep them separate even on a single machine.
+
+## Compromised servers
+
+Servers share the agent's user, so a hostile plugin controls its whole node
+(other instances, the node credential) but not the hub or other nodes.
+
+- Keep untrusted servers on their own node.
+- Revoke a suspect node with *Re-enroll*; its connection drops immediately.
+- Don't copy files from a suspect node to other nodes.
 
 ## Notes
 

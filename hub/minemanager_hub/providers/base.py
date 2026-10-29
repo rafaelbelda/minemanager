@@ -7,13 +7,41 @@ specifics.
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
+from urllib.parse import urlparse
 
 
 class ProviderError(Exception):
     """A provider could not satisfy a request (unknown version, upstream down…)."""
+
+
+# Version/build ids go into upstream URL paths.
+_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
+
+
+def check_id(kind: str, value: str) -> str:
+    if not _ID_RE.match(value or "") or ".." in value:
+        raise ProviderError(f"invalid {kind}: {value!r}")
+    return value
+
+
+def check_url(url: str, domains: tuple[str, ...]) -> str:
+    """Require ``url`` to be https on one of the vendor's ``domains``."""
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        raise ProviderError(f"upstream sent a malformed URL: {url!r}") from None
+    if parsed.scheme != "https":
+        raise ProviderError(f"upstream sent a non-https URL: {url!r}")
+    if not any(host == d or host.endswith("." + d) for d in domains):
+        raise ProviderError(
+            f"upstream sent a URL outside {', '.join(domains)}: {url!r}"
+        )
+    return url
 
 
 @dataclass

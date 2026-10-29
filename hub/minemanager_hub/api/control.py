@@ -82,7 +82,12 @@ async def node_instance_states(node_id: str) -> dict:
         )
     except (CommandTimeout, ConnectionError):
         return {"states": {}}
-    return resp.data if resp.ok else {"states": {}}
+    states = resp.data.get("states") if resp.ok else None
+    if not isinstance(states, dict):
+        return {"states": {}}
+    # Only this node's instances.
+    wanted = set(ids)
+    return {"states": {iid: st for iid, st in states.items() if iid in wanted}}
 
 
 # --- Power -----------------------------------------------------------------

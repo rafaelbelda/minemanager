@@ -13,10 +13,19 @@ Shapes (v3):
 
 from __future__ import annotations
 
-from minemanager_hub.providers.base import Build, Download, Provider, ProviderError, Version
+from minemanager_hub.providers.base import (
+    Build,
+    Download,
+    Provider,
+    ProviderError,
+    Version,
+    check_id,
+    check_url,
+)
 from minemanager_hub.providers.http import get_json
 
 _BASE = "https://fill.papermc.io/v3/projects"
+_DOWNLOAD_DOMAINS = ("papermc.io",)
 
 
 def _is_stable_version(v: str) -> bool:
@@ -43,6 +52,7 @@ class PaperProvider(Provider):
         return out
 
     async def _raw_builds(self, version: str) -> list[dict]:
+        check_id("version", version)
         data = await get_json(f"{_BASE}/{self.project}/versions/{version}/builds", ttl=120)
         if not isinstance(data, list):
             raise ProviderError(f"no builds for {self.label} {version}")
@@ -60,6 +70,7 @@ class PaperProvider(Provider):
         if not raw:
             raise ProviderError(f"no builds available for {self.label} {version}")
         if build:
+            check_id("build", build)
             chosen = next((b for b in raw if str(b["id"]) == str(build)), None)
             if chosen is None:
                 raise ProviderError(f"build {build} not found for {self.label} {version}")
@@ -71,7 +82,7 @@ class PaperProvider(Provider):
         if not dl or "url" not in dl:
             raise ProviderError(f"no downloadable jar for {self.label} {version} build {chosen['id']}")
         return Download(
-            url=dl["url"],
+            url=check_url(dl["url"], _DOWNLOAD_DOMAINS),
             filename=dl.get("name", f"{self.project}-{version}-{chosen['id']}.jar"),
             version=version,
             build=str(chosen["id"]),

@@ -27,7 +27,7 @@ from __future__ import annotations
 import time
 import uuid
 from enum import Enum
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -42,6 +42,10 @@ def new_id() -> str:
 def now_ts() -> float:
     """Current unix timestamp (seconds, float)."""
     return time.time()
+
+
+#: Used in file names, tmux targets and URL paths.
+SafeId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
 
 
 # --------------------------------------------------------------------------- #
@@ -135,6 +139,12 @@ class Action(str, Enum):
     # Introspection ---------------------------------------------------------
     instance_states = "instance.states"   # batch: real run-state for a set of ids
 
+    # Java runtimes (node-scoped) --------------------------------------------
+    java_list = "java.list"         # detect + probe; also reports the platform
+    java_probe = "java.probe"       # inspect one operator-supplied directory
+    java_install = "java.install"   # download + unpack a managed runtime
+    java_remove = "java.remove"     # delete a managed runtime (managed dir only)
+
     # ---- Event actions (agent -> hub, unsolicited) ------------------------
     ev_console_output = "console.output"
     ev_state_changed = "state.changed"
@@ -153,19 +163,25 @@ class Action(str, Enum):
 class Hello(BaseModel):
     """First frame from the agent when a connection opens."""
 
+    # Bounded: parsed before authentication.
     kind: Literal[FrameKind.hello] = FrameKind.hello
-    protocol: str = PROTOCOL_VERSION
-    agent_version: str
-    node_id: Optional[str] = None          # set on re-connect; None on first enroll
-    enrollment_token: Optional[str] = None  # one-time token, first enroll only
-    credential: Optional[str] = None        # long-lived per-agent token on reconnect
-    hostname: str
-    session_id: Optional[str] = None
-    capabilities: list[str] = Field(default_factory=list)
+    protocol: str = Field(default=PROTOCOL_VERSION, max_length=32)
+    agent_version: str = Field(max_length=64)
+    # set on re-connect; None on first enroll
+    node_id: Optional[str] = Field(default=None, max_length=64)
+    # one-time token, first enroll only
+    enrollment_token: Optional[str] = Field(default=None, max_length=256)
+    # long-lived per-agent token on reconnect
+    credential: Optional[str] = Field(default=None, max_length=256)
+    hostname: str = Field(max_length=255)
+    session_id: Optional[str] = Field(default=None, max_length=64)
+    capabilities: list[Annotated[str, Field(max_length=32)]] = Field(
+        default_factory=list, max_length=32
+    )
     # The agent's own instance root, which it enforces against this local value
     # rather than anything the hub sends. None = none configured, which
     # disables provisioning for the node.
-    root_dir: Optional[str] = None
+    root_dir: Optional[str] = Field(default=None, max_length=4096)
 
 
 class Welcome(BaseModel):
@@ -232,7 +248,7 @@ class InstanceSpec(BaseModel):
     its own copy in sync.
     """
 
-    id: str
+    id: SafeId
     type: InstanceType
     name: str
     root_dir: str
@@ -258,6 +274,36 @@ class UpdateDownload(BaseModel):
     checksum_algo: Optional[Literal["sha256", "sha1"]] = None
     version: str                     # what we're installing (for display/record)
     build: Optional[str] = None
+
+
+#: A JDK/JRE directory as the hub may name it: absolute, and free of anything
+#: that would mangle the shell-quoted launch line. The agent re-checks it.
+JavaHome = Annotated[
+    str, Field(min_length=2, max_length=1024, pattern=r"^/[^;&|$`<>\n\r\t\"'\\]*$")
+]
+
+
+class JavaRuntimeInfo(BaseModel):
+    """One Java runtime on a node, as the agent found it."""
+
+    home: str                       # directory containing bin/java
+    major: Optional[int] = None     # 8, 17, 21, ...; None when probing failed
+    version: Optional[str] = None   # full version string, e.g. "21.0.5+11"
+    vendor: Optional[str] = None
+    image: Optional[Literal["jdk", "jre"]] = None
+    # "managed" = installed by MineManager into the agent's java dir;
+    # "system" = found by the scan; "manual" = named by the hub.
+    source: Literal["managed", "system", "manual"]
+    # The ``java`` an instance with no java_home gets (the agent's PATH).
+    default: bool = False
+    error: Optional[str] = None     # why it is unusable, when it is
+
+
+class JavaPlatform(BaseModel):
+    """What a download has to match. Adoptium's own vocabulary."""
+
+    os: str                          # "linux" | "alpine-linux" | "mac" | ...
+    arch: Optional[str] = None       # "x64" | "aarch64" | ... ; None = unsupported
 
 
 class UpdateApplyData(BaseModel):
@@ -362,7 +408,7 @@ class FilesExtractData(InstanceCommand):
 
 
 class TransferStartData(InstanceCommand):
-    tid: str
+    tid: SafeId
     # Closed set: anything else must not reach the upload path.
     direction: Literal["download", "upload"]
     path: str
@@ -372,7 +418,27 @@ class TransferStartData(InstanceCommand):
 class InstanceStatesData(BaseModel):
     """instance.states; node-scoped, so no instance spec."""
 
-    ids: list[str] = Field(default_factory=list)
+    ids: list[SafeId] = Field(default_factory=list, max_length=10_000)
+
+
+class JavaListData(BaseModel):
+    """java.list; node-scoped. ``extra`` are the operator's registered paths,
+    probed alongside the scan so the agent keeps no list of its own."""
+
+    extra: list[JavaHome] = Field(default_factory=list, max_length=64)
+
+
+class JavaProbeData(BaseModel):
+    java_home: JavaHome
+
+
+class JavaInstallData(BaseModel):
+    feature: int = Field(ge=8, le=99)    # the major version being installed
+    download: UpdateDownload
+
+
+class JavaRemoveData(BaseModel):
+    java_home: JavaHome
 
 
 # --------------------------------------------------------------------------- #

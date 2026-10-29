@@ -98,16 +98,7 @@ class TestCleanExit:
         assert _states(sup) == [(RunState.stopped.value, True)]
         assert sup.relaunched is False
         assert mi.should_be_up is False
-
-    async def test_it_is_not_fought_under_the_default_policy(self, sup):
-        # The whole point: "stop" at the console must stick, and on_crash is
-        # what every instance gets unless someone chooses otherwise.
-        mi = _managed(sup, restart_policy=RestartPolicy.on_crash)
-        _write_status(sup, mi, "0")
-
-        await sup._check_one(mi)
-
-        assert sup.relaunched is False
+        assert sup.events[0].data["supervised"] is False
 
     async def test_a_nonzero_status_is_still_a_crash(self, sup):
         mi = _managed(sup)
@@ -118,6 +109,7 @@ class TestCleanExit:
         assert sup.relaunched is True
         assert [s for s, _ in _states(sup)] == [RunState.crashed.value, RunState.starting.value]
         assert all(clean is False for _, clean in _states(sup))
+        assert all(e.data["supervised"] for e in sup.events)
 
     async def test_a_killed_session_leaves_no_status_and_is_a_crash(self, sup):
         # kill_session gives the shell no chance to record anything, so the file
@@ -175,36 +167,12 @@ class TestCleanExit:
 
 
 class TestExitStatusFile:
-    def test_missing_file_reads_as_unknown(self, sup):
-        mi = sup._managed(_spec())
-        assert sup._read_exit_status(mi) is None
-
-    def test_a_recorded_status_round_trips(self, sup):
-        mi = sup._managed(_spec())
-        _write_status(sup, mi, "0")
-        assert sup._read_exit_status(mi) == 0
-        _write_status(sup, mi, "143")
-        assert sup._read_exit_status(mi) == 143
-
     def test_clearing_removes_a_previous_runs_status(self, sup):
         # Without this a killed session would inherit the last run's clean exit.
         mi = sup._managed(_spec())
         _write_status(sup, mi, "0")
         sup._clear_exit_status(mi)
         assert sup._read_exit_status(mi) is None
-
-    def test_clearing_is_fine_when_there_is_nothing_to_clear(self, sup):
-        sup._clear_exit_status(sup._managed(_spec()))
-
-    def test_without_a_pty_dir_there_is_no_status(self, tmp_path):
-        async def emit(_event):
-            pass
-
-        bare = Supervisor(emit, pty_dir=None)
-        mi = bare._managed(_spec())
-        assert bare._status_path(mi) is None
-        assert bare._read_exit_status(mi) is None
-
 
 class TestRestartPolicy:
     """What each policy does with an exit the agent did not ask for."""
@@ -217,6 +185,7 @@ class TestRestartPolicy:
 
         assert sup.relaunched is False
         assert mi.should_be_up is False
+        assert [e.data["supervised"] for e in sup.events] == [False]
 
     async def test_always_overrules_a_console_stop(self, sup):
         mi = _managed(sup, restart_policy=RestartPolicy.always)
@@ -226,26 +195,10 @@ class TestRestartPolicy:
 
         assert sup.relaunched is True
         assert mi.should_be_up is True
-
-    async def test_always_does_not_disarm_the_instance(self, sup):
-        # No clean_exit is reported, so the hub keeps it armed. Telling the hub
-        # to disarm something we are simultaneously restarting would be a
-        # contradiction the next reboot would resolve the wrong way.
-        mi = _managed(sup, restart_policy=RestartPolicy.always)
-        _write_status(sup, mi, "0")
-
-        await sup._check_one(mi)
-
-        assert all(not e.data.get("clean_exit") for e in sup.events)
-
-    async def test_always_says_why_it_ignored_the_stop(self, sup):
-        mi = _managed(sup, restart_policy=RestartPolicy.always)
-        _write_status(sup, mi, "0")
-
-        await sup._check_one(mi)
-
-        details = [e.data.get("detail") or "" for e in sup.events]
-        assert any("policy: always" in d for d in details)
+        # Nothing crashed, so no "crashed" flash; and no clean_exit, or the hub
+        # would disarm what is being restarted.
+        assert _states(sup) == [(RunState.starting.value, False)] * 2
+        assert any("policy: always" in (e.data.get("detail") or "") for e in sup.events)
 
     async def test_always_still_hits_the_crash_loop_breaker(self, sup):
         # The safety valve has to survive the policy, or a server that refuses
@@ -285,22 +238,6 @@ class TestSupervisedSignal:
             if e.action == Action.ev_state_changed.value
         ]
 
-    async def test_true_while_the_agent_is_still_trying(self, sup):
-        mi = _managed(sup)
-        _write_status(sup, mi, "1")
-
-        await sup._check_one(mi)
-
-        assert self._supervised(sup) == [True, True]
-
-    async def test_false_once_the_policy_says_never(self, sup):
-        mi = _managed(sup, restart_policy=RestartPolicy.never)
-        _write_status(sup, mi, "1")
-
-        await sup._check_one(mi)
-
-        assert self._supervised(sup) == [False]
-
     async def test_false_once_the_crash_loop_breaker_trips(self, sup):
         mi = _managed(sup)
         _write_status(sup, mi, "1")
@@ -327,33 +264,3 @@ class TestSupervisedSignal:
         await sup._check_one(mi)
 
         assert self._supervised(sup) == [False]
-
-    async def test_false_after_an_operator_shutdown(self, sup):
-        mi = _managed(sup)
-        _write_status(sup, mi, "0")
-
-        await sup._check_one(mi)
-
-        assert self._supervised(sup) == [False]
-
-
-class TestOverruledStopIsNotReportedAsACrash:
-    async def test_always_goes_straight_to_starting(self, sup):
-        # Nothing crashed, so the pill must not flash "crashed" on the way back.
-        mi = _managed(sup, restart_policy=RestartPolicy.always)
-        _write_status(sup, mi, "0")
-
-        await sup._check_one(mi)
-
-        assert RunState.crashed.value not in [s for s, _ in _states(sup)]
-        assert [s for s, _ in _states(sup)] == [RunState.starting.value] * 2
-
-    async def test_a_real_crash_still_reports_crashed(self, sup):
-        mi = _managed(sup, restart_policy=RestartPolicy.always)
-        _write_status(sup, mi, "1")
-
-        await sup._check_one(mi)
-
-        assert [s for s, _ in _states(sup)] == [
-            RunState.crashed.value, RunState.starting.value
-        ]

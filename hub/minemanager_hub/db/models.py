@@ -61,6 +61,9 @@ class Node(Base):
     instances: Mapped[list["Instance"]] = relationship(
         back_populates="node", cascade="all, delete-orphan"
     )
+    java_runtimes: Mapped[list["JavaRuntime"]] = relationship(
+        back_populates="node", cascade="all, delete-orphan"
+    )
 
 
 class Instance(Base):
@@ -115,3 +118,22 @@ class Instance(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     node: Mapped[Node] = relationship(back_populates="instances")
+
+
+class JavaRuntime(Base):
+    """A Java directory the operator registered on a node by hand.
+
+    Only manual entries are stored: detected and managed runtimes are runtime
+    state the agent reports on every listing. The agent probes these alongside
+    its own scan, so it keeps no list of its own.
+    """
+
+    __tablename__ = "java_runtimes"
+    __table_args__ = (Index("uq_java_node_home", "node_id", "java_home", unique=True),)
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    node_id: Mapped[str] = mapped_column(ForeignKey("nodes.id", ondelete="CASCADE"))
+    java_home: Mapped[str] = mapped_column(String(1024), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    node: Mapped[Node] = relationship(back_populates="java_runtimes")

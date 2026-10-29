@@ -109,6 +109,35 @@
             <div id="node-inst-rows"></div>
           </div>
           <div id="node-enroll-section"></div>
+
+          <div class="section-head java-head">
+            <h2 class="label">JAVA</h2>
+            <span class="info-tip">
+              <button class="info-btn" type="button" aria-label="About Java on this node"
+                      aria-describedby="java-tip">i</button>
+              <span class="info-pop" role="tooltip" id="java-tip">
+                Servers with no Java chosen use the node's default. The agent cannot see
+                <code>/home</code> (its unit sets ProtectHome), so keep runtimes under
+                <code>/opt</code> or <code>/usr/lib/jvm</code>. Installed runtimes are Eclipse
+                Temurin JREs, verified by SHA-256.
+              </span>
+            </span>
+            <span class="spacer"></span>
+            <button class="btn btn-sm" id="node-java-rescan">Rescan</button>
+            <button class="btn btn-sm" id="node-java-add">+ Add path</button>
+            <button class="btn btn-sm btn-primary" id="node-java-install">Install Java</button>
+          </div>
+          <div class="table java-table">
+            <div class="table-head" role="row">
+              <span>RUNTIME</span><span>SOURCE</span><span>PATH</span><span class="sr-only">Controls</span>
+            </div>
+            <div id="node-java-rows"></div>
+          </div>
+          <details class="java-compat">
+            <summary>Which Java does each version need?</summary>
+            <div id="node-java-compat"></div>
+          </details>
+
           <div class="danger-row">
             <div>
               <div class="t">Delete this node</div>
@@ -286,6 +315,17 @@
               </section>
 
               <section class="form">
+                <h2 class="label">JAVA</h2>
+                <div>
+                  <label class="field-label" for="set-java">Run with</label>
+                  <select class="input" id="set-java"></select>
+                  <input class="input mono hidden" id="set-java-path" type="text" autocomplete="off"
+                         spellcheck="false" placeholder="/opt/jdk-21" aria-label="Java directory">
+                  <div class="field-note" id="set-java-note">Takes effect the next time this instance starts.</div>
+                </div>
+              </section>
+
+              <section class="form">
                 <h2 class="label">STARTUP</h2>
                 <div class="switch-row">
                   <div>
@@ -314,11 +354,6 @@
                   <label class="field-label" for="set-jar">Jar path</label>
                   <input class="input mono" id="set-jar" type="text" autocomplete="off" spellcheck="false"
                          placeholder="taken from the start command">
-                </div>
-                <div>
-                  <label class="field-label" for="set-java">Java directory</label>
-                  <input class="input mono" id="set-java" type="text" autocomplete="off" spellcheck="false"
-                         placeholder="the node's default Java">
                 </div>
               </details>
 
