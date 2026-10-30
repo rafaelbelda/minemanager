@@ -82,6 +82,25 @@ class Settings:
         default_factory=lambda: env_opt("MM_PROXY_USER_HEADER")
     )
 
+    # Who the user is, beyond their login name. Set by the same proxy on the
+    # same request, so they are believed on the same terms as the user header
+    # and only alongside it. The defaults are Authelia's forward-auth names;
+    # override one when a proxy spells it differently. A header the proxy does
+    # not send reads as absent, so nothing needs switching off.
+    proxy_name_header: str = field(
+        default_factory=lambda: env_str("MM_PROXY_NAME_HEADER", "Remote-Name")
+    )
+    proxy_groups_header: str = field(
+        default_factory=lambda: env_str("MM_PROXY_GROUPS_HEADER", "Remote-Groups")
+    )
+
+    # Where the proxy's own sign-out lives (Authelia: https://<portal>/logout).
+    # The hub cannot end a session it never issued, so the menu item is only
+    # offered when there is somewhere to send the browser.
+    proxy_logout_url: str | None = field(
+        default_factory=lambda: env_opt("MM_PROXY_LOGOUT_URL")
+    )
+
     # Allow a non-loopback bind without a proxy secret.
     allow_unauthenticated: bool = field(
         default_factory=lambda: env_bool("MM_ALLOW_UNAUTHENTICATED")
@@ -90,6 +109,13 @@ class Settings:
     @property
     def db_path(self) -> Path:
         return self.data_dir / "minemanager.db"
+
+    @property
+    def proxy_profile_headers(self) -> dict[str, str]:
+        """Attribute name -> header, for the ones actually configured."""
+        pairs = (("name", self.proxy_name_header),
+                 ("groups", self.proxy_groups_header))
+        return {attr: header.strip() for attr, header in pairs if header and header.strip()}
 
     @property
     def db_url(self) -> str:

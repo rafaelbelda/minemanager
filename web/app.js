@@ -70,6 +70,8 @@ const state = {
   // File-explorer thresholds from /api/config (overwritten at boot).
   config: { editor_warn_bytes: 2_000_000, editor_max_bytes: 5_000_000, transfer_cap_bytes: 8_388_608 },
   transfers: new Map(),   // tid -> live transfer (for the bottom-right pills)
+  // Whoever the reverse proxy authenticated; null when it forwards nobody.
+  account: null,
   // Version tab (catalog is provider-driven; software-agnostic).
   version: {
     instId: null, loading: false, error: null,
@@ -220,11 +222,68 @@ function scheduleRefresh() {
   );
 }
 
+/** Name the signed-in user, or stay out of the way where there is no proxy. */
+function setAccount(account) {
+  state.account = account?.user ? account : null;
+  const pill = $('account');
+  const label = state.account ? (state.account.name || state.account.user) : '';
+  $('account-name').textContent = label;
+  pill.title = label ? `Signed in as ${label}` : '';
+  show(pill, Boolean(label));
+  if (!state.account) closeAccountMenu();
+}
+
+let _acctCleanup = null;
+function closeAccountMenu() {
+  $('acct-menu').classList.remove('open');
+  $('account').setAttribute('aria-expanded', 'false');
+  if (_acctCleanup) { _acctCleanup(); _acctCleanup = null; }
+}
+
+/** The pill's menu: who you are, then the things you can do about it. */
+function toggleAccountMenu() {
+  const menu = $('acct-menu');
+  if (menu.classList.contains('open')) { closeAccountMenu(); return; }
+  const acct = state.account;
+  if (!acct) return;
+
+  $('acct-id-name').textContent = acct.name || acct.user;
+  // The username is a second line only when it is not already the heading.
+  $('acct-id-user').textContent = acct.name ? acct.user : '';
+  show($('acct-id-user'), Boolean(acct.name));
+  const groups = acct.groups || [];
+  fill($('acct-groups'), groups.map(
+    (g) => el(`span.acct-group${g === 'admin' ? '.admin' : ''}`, {}, g)));
+  show($('acct-groups'), groups.length > 0);
+  // Only the proxy can end the session it issued, so this is a link to it.
+  show($('acct-signout'), Boolean(acct.logout_url));
+
+  const pill = $('account');
+  menu.classList.add('open');
+  pill.setAttribute('aria-expanded', 'true');
+  const anchor = pill.getBoundingClientRect();
+  const box = menu.getBoundingClientRect();
+  menu.style.top = `${anchor.bottom + 6}px`;
+  menu.style.left = `${Math.max(8, Math.min(anchor.right - box.width, innerWidth - box.width - 8))}px`;
+
+  const onDown = (e) => { if (!menu.contains(e.target) && !pill.contains(e.target)) closeAccountMenu(); };
+  const onKey = (e) => { if (e.key === 'Escape') closeAccountMenu(); };
+  document.addEventListener('mousedown', onDown, true);
+  document.addEventListener('keydown', onKey, true);
+  window.addEventListener('resize', closeAccountMenu);
+  _acctCleanup = () => {
+    document.removeEventListener('mousedown', onDown, true);
+    document.removeEventListener('keydown', onKey, true);
+    window.removeEventListener('resize', closeAccountMenu);
+  };
+}
+
 /** Hub poll. The page only says anything when the hub cannot be reached. */
 async function refreshHealth() {
   try {
     const h = await api.health();
     $('brand-ver').textContent = `v${h.version}`;
+    setAccount(h.account);
     show($('hub-down'), false);
   } catch {
     show($('hub-down'), true);
@@ -2466,6 +2525,12 @@ function bind() {
   $('hub-origin').textContent = originLabel;
 
   $('btn-add-node').onclick = addNode;
+  $('account').onclick = toggleAccountMenu;
+  $('acct-signout').onclick = () => {
+    const url = state.account?.logout_url;
+    closeAccountMenu();
+    if (url) location.assign(url);
+  };
   $('row-hub').onclick = selectHub;
   $('row-hub').onkeydown = (ev) => {
     if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); selectHub(); }

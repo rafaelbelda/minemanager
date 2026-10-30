@@ -167,6 +167,12 @@ def check_proxy_config(settings) -> None:
             f"MM_PROXY_SECRET is too short ({len(secret)} characters; at least "
             f"{MIN_PROXY_SECRET_LEN}). Generate one with: openssl rand -hex 32"
         )
+    logout = getattr(settings, "proxy_logout_url", None)
+    if logout and urlparse(logout).scheme not in ("http", "https"):
+        raise SystemExit(
+            f"MM_PROXY_LOGOUT_URL must be an http(s) URL, not {logout!r}. The UI navigates "
+            f"the browser to it."
+        )
     if settings.proxy_user_header and not secret:
         raise SystemExit(
             "MM_PROXY_USER_HEADER is set without MM_PROXY_SECRET. Any client could then "
@@ -193,11 +199,27 @@ class ProxyGuard:
     after the secret matched.
     """
 
-    def __init__(self, app, secret: str | None, user_header: str | None = None) -> None:
+    def __init__(self, app, secret: str | None, user_header: str | None = None,
+                 profile_headers: dict[str, str] | None = None) -> None:
         self.app = app
         self.secret = secret.encode("utf-8") if secret else None   # vs raw header bytes
         self.user_header = user_header.strip().lower().encode("latin-1") if user_header else None
+        self.profile_headers = {
+            attr: header.strip().lower().encode("latin-1")
+            for attr, header in (profile_headers or {}).items()
+        }
         self._warned = False
+
+    def _account(self, scope, user: str) -> dict:
+        """The authenticated user plus whatever attributes the proxy sent."""
+        account = {"user": user, "name": None, "groups": []}
+        for attr, header in self.profile_headers.items():
+            value = _header(scope, header).strip()
+            if attr == "groups":
+                account["groups"] = [g.strip() for g in value.split(",") if g.strip()]
+            elif value:
+                account[attr] = value
+        return account
 
     async def __call__(self, scope, receive, send):
         if (
@@ -229,6 +251,8 @@ class ProxyGuard:
                               "The reverse proxy forwarded this request without an "
                               "authenticated user.")
                 return
+            # Read back by /api/health, which is how the UI names the account.
+            scope.setdefault("state", {})["proxy_account"] = self._account(scope, user)
             if scope.get("method", "") in _UNSAFE_METHODS:
                 log.info("%s %s by %r", scope["method"], scope.get("path", ""), user)
 

@@ -23,6 +23,21 @@ from minemanager_hub.security.webguard import PROXY_SECRET_HEADER, ProxyGuard
 
 SECRET = "s" * 40
 
+PROFILE_HEADERS = {"name": "Remote-Name", "groups": "Remote-Groups"}
+
+
+def _account_seen_by(headers, **guard):
+    """The account the guard puts on the scope for a request, or None."""
+    seen = {}
+
+    async def echo(request):
+        seen["account"] = request.scope.get("state", {}).get("proxy_account")
+        return PlainTextResponse("ok")
+
+    app = Starlette(routes=[Route("/api/nodes", echo)])
+    TestClient(ProxyGuard(app, **guard)).get("/api/nodes", headers=headers)
+    return seen.get("account")
+
 
 def _app(**guard) -> TestClient:
     async def ok(request):
@@ -81,6 +96,42 @@ class TestProxyGuard:
         r = c.get("/api/nodes", headers={PROXY_SECRET_HEADER: SECRET, "remote-user": "alice"})
         assert r.status_code == 200
 
+    def test_the_authenticated_user_reaches_the_app(self):
+        # /api/health reads it back from the scope to name the account in the UI.
+        account = _account_seen_by(
+            {PROXY_SECRET_HEADER: SECRET, "remote-user": "alice"},
+            secret=SECRET, user_header="Remote-User",
+        )
+        assert account["user"] == "alice"
+
+    def test_profile_headers_fill_out_the_account(self):
+        account = _account_seen_by(
+            {PROXY_SECRET_HEADER: SECRET, "remote-user": "alice",
+             "remote-name": "Alice Liddell", "remote-groups": "admin, minemanager ,"},
+            secret=SECRET, user_header="Remote-User",
+            profile_headers=PROFILE_HEADERS,
+        )
+        assert account == {"user": "alice", "name": "Alice Liddell",
+                           "groups": ["admin", "minemanager"]}
+
+    def test_absent_profile_headers_leave_the_user_alone(self):
+        account = _account_seen_by(
+            {PROXY_SECRET_HEADER: SECRET, "remote-user": "alice"},
+            secret=SECRET, user_header="Remote-User",
+            profile_headers=PROFILE_HEADERS,
+        )
+        assert account == {"user": "alice", "name": None, "groups": []}
+
+    def test_profile_headers_are_believed_only_with_the_user(self):
+        # Without a configured user header nothing is read, so a client cannot
+        # smuggle a display name past a hub that trusts no identity at all.
+        account = _account_seen_by(
+            {PROXY_SECRET_HEADER: SECRET, "remote-user": "mallory",
+             "remote-name": "Administrator"},
+            secret=SECRET, profile_headers=PROFILE_HEADERS,
+        )
+        assert account is None
+
     def test_a_user_header_alone_proves_nothing(self):
         # Identity is believed only alongside the secret, so a client cannot
         # authenticate by naming a user itself.
@@ -90,7 +141,7 @@ class TestProxyGuard:
 
 def _settings(**kw):
     base = dict(proxy_secret=None, proxy_user_header=None, host="127.0.0.1",
-                allow_unauthenticated=False)
+                allow_unauthenticated=False, proxy_logout_url=None)
     base.update(kw)
     return SimpleNamespace(**base)
 
@@ -113,6 +164,14 @@ class TestStartupChecks:
     def test_a_user_header_without_a_secret_is_refused(self):
         with pytest.raises(SystemExit, match="MM_PROXY_SECRET"):
             webguard.check_proxy_config(_settings(proxy_user_header="Remote-User"))
+
+    def test_a_logout_url_the_browser_would_execute_is_refused(self):
+        with pytest.raises(SystemExit, match="MM_PROXY_LOGOUT_URL"):
+            webguard.check_proxy_config(_settings(proxy_logout_url="javascript:alert(1)"))
+
+    def test_a_real_logout_url_starts(self):
+        webguard.check_proxy_config(
+            _settings(proxy_logout_url="https://login.example.com/logout"))
 
     def test_a_good_secret_on_any_bind_starts(self):
         webguard.check_proxy_config(_settings(host="10.0.0.5", proxy_secret=SECRET))

@@ -22,6 +22,41 @@
     </div>
     <div class="spacer"></div>
     <button class="btn btn-primary" id="btn-add-node">+ Add node</button>
+    <!-- Who the reverse proxy says you are; absent when it forwards no user. -->
+    <button class="account hidden" id="account" aria-expanded="false" aria-haspopup="true">
+      <svg class="account-icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+        <circle cx="12" cy="8.5" r="3.5"/>
+        <path d="M5.5 19.5c0-3.4 3-5.2 6.5-5.2s6.5 1.8 6.5 5.2"/>
+      </svg>
+      <span class="account-name" id="account-name"></span>
+      <span class="account-caret" aria-hidden="true">
+        <svg width="10" height="10" viewBox="0 0 12 12"><path d="M7.5 2.5L4 6l3.5 3.5"/></svg>
+      </span>
+    </button>
+    <div class="acct-menu" id="acct-menu" role="menu">
+      <div class="acct-id">
+        <div class="acct-id-name" id="acct-id-name"></div>
+        <div class="acct-id-sub hidden" id="acct-id-user"></div>
+        <div class="acct-groups hidden" id="acct-groups"></div>
+      </div>
+      <div class="acct-sep"></div>
+      <div class="acct-item disabled" role="menuitem" aria-disabled="true">
+        <div class="acct-item-content">Preferences</div>
+      </div>
+      <div class="acct-item danger hidden" id="acct-signout" role="menuitem" tabindex="0">
+        <div class="acct-item-content">
+          <span class="acct-item-icon">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+          </span>
+          Sign out
+        </div>
+      </div>
+    </div>
   </header>
 
   <!-- Shown only when the hub is unreachable. -->

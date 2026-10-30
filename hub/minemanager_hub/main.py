@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -128,6 +128,7 @@ app.add_middleware(
     webguard.ProxyGuard,
     secret=_settings.proxy_secret,
     user_header=_settings.proxy_user_header,
+    profile_headers=_settings.proxy_profile_headers,
 )
 app.add_middleware(webguard.HostGuard, allowed=_settings.allowed_hosts)
 # Outermost, so rejections get the headers too.
@@ -145,8 +146,13 @@ app.include_router(java.router)
 
 
 @app.get("/api/health")
-def health() -> dict:
-    return {"status": "ok", "version": __version__}
+def health(request: Request) -> dict:
+    # ``account`` is whoever the proxy authenticated, or null where the hub runs
+    # without MM_PROXY_USER_HEADER. The UI polls this already.
+    account = request.scope.get("state", {}).get("proxy_account")
+    if account is not None:
+        account = {**account, "logout_url": get_settings().proxy_logout_url}
+    return {"status": "ok", "version": __version__, "account": account}
 
 
 class _SpaStatic:
