@@ -224,7 +224,14 @@ function scheduleRefresh() {
 
 /** Name the signed-in user, or stay out of the way where there is no proxy. */
 function setAccount(account) {
-  state.account = account?.user ? account : null;
+  const acct = account?.user ? { ...account } : null;
+  // Authelia's displayname defaults to the username. A name that only repeats
+  // it is not a display name, so drop it and let both the pill and the menu
+  // fall back to the username alone.
+  if (acct?.name && acct.name.trim().toLowerCase() === acct.user.trim().toLowerCase()) {
+    acct.name = null;
+  }
+  state.account = acct;
   const pill = $('account');
   const label = state.account ? (state.account.name || state.account.user) : '';
   $('account-name').textContent = label;
