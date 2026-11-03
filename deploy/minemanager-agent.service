@@ -78,5 +78,10 @@ PrivateTmp=false
 # instance root_dir. Keep it as narrow as your layout allows.
 ReadWritePaths=/var/lib/minemanager-agent /srv/minecraft /tmp /var/tmp
 
+# tmux (libutempter) registers each pane in utmp/wtmp via a setgid-utmp helper,
+# which NoNewPrivileges disables ("utempter: pututline: Permission denied").
+# deploy/install.sh adds a drop-in granting group utmp when the distro has one;
+# without it the message is cosmetic.
+
 [Install]
 WantedBy=multi-user.target

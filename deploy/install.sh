@@ -137,6 +137,20 @@ if [ "$DO_AGENT" = 1 ]; then
     note "wrote $ETC/agent.env"
   fi
   run install -m 0644 "$REPO/deploy/minemanager-agent.service" /etc/systemd/system/
+
+  DROPIN=/etc/systemd/system/minemanager-agent.service.d/utmp.conf
+  if getent group utmp >/dev/null 2>&1; then
+    run mkdir -p "$(dirname "$DROPIN")"
+    if [ "$DRY" = 1 ]; then
+      echo "  + write $DROPIN"
+    else
+      printf '%s\n' '[Service]' 'SupplementaryGroups=utmp' \
+        'ReadWritePaths=-/run/utmp -/var/log/wtmp' > "$DROPIN"
+    fi
+    note "tmux utmp access enabled ($DROPIN)"
+  else
+    run rm -f "$DROPIN"
+  fi
 fi
 
 run systemctl daemon-reload
