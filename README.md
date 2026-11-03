@@ -3,7 +3,7 @@
 Self-hosted control plane for a Minecraft network — Paper/Vanilla servers and
 Velocity proxies — across one or more Linux machines.
 
-Version 26.10.26. MIT.
+Version 26.11.03. MIT.
 
 ## What it does
 

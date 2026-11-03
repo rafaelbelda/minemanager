@@ -8,6 +8,6 @@ which is what catches a half-finished upgrade: the two sides are installed from
 the same source and are expected to move together.
 """
 
-__version__ = "26.10.26"
+__version__ = "26.11.03"
 
 PROTOCOL_VERSION = "1"
